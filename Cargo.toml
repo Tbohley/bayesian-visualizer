@@ -1,0 +1,13 @@
+[package]
+name = "bayesian-visualizer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.19.0", features = ["dynamic_linking", "mesh_picking", "debug"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
