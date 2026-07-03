@@ -41,7 +41,7 @@ struct UnfinishedLink;
 struct Selected;
 
 
-//custom arrow mesh
+//custom arrow mesh constructor function
 fn arrow_mesh(length: f32) -> Mesh {
     let hw = length / 2.0;
     let hs = ARROW_THICKNESS / 2.0;
@@ -104,15 +104,16 @@ fn on_node_drag (
 ) {
     println!("Node drag event");
     {
+        //update node position
         if let Ok(mut ent) = transforms.get_mut(event.event_target()) {
-        ent.translation.x += event.delta.x;     //update node position
+        ent.translation.x += event.delta.x;     
         ent.translation.y -= event.delta.y;
     }
 }
+    //update all connected arrow positions/meshes
     for (link_entity, link_component) in graph_links.iter_mut() { 
-        if event.event_target() == link_component.from || event.event_target() == link_component.to.unwrap() {  //update all connected arrow positions/meshes
+        if event.event_target() == link_component.from || event.event_target() == link_component.to.unwrap() {
             let (new_transform, new_mesh) = link_transform_helper(&link_component, &transforms, &mut meshes).unwrap();
-
             if let Ok(mut link_transform) = transforms.get_mut(link_entity) {
                 if let Ok(mut link_mesh) = mesh_query.get_mut(link_entity) {
                     *link_transform = new_transform;
@@ -123,6 +124,7 @@ fn on_node_drag (
     }
 }
 
+//rename selected node to single-letter name from keyboard
 fn on_keypress(
     mut kbd: MessageReader<KeyboardInput>,
     mut commands: Commands,
@@ -133,31 +135,33 @@ fn on_keypress(
     let Some(single) = selected else {
         return;
     };
-
     let (entity, _selected_comp) = single.into_inner();
 
+    //for all keyboard inputs while node is selected
     for event in kbd.read() {
         if !event.state.is_pressed() {
             continue;
         }
-
         let Some(text) = &event.text else {
             continue;
         };
+        //only alphabetic, numbers reserved for unnamed nodes
         if text.len() != 1 || !text.chars().all(|c| c.is_alphabetic()) {
             continue;
         }
-
+        //find UnnamedNode (child entity of node w/display text) and delete
         for (unnamed_entity, _unnamed_node, parent) in unnamed.iter_mut() {
             if parent.parent() == entity {
                 commands.entity(unnamed_entity).despawn();
             }
         }
+        //find NamedNode text entity (if editing an already named node) and delete
         for (named_entity, _named_node, parent) in named.iter_mut() {
             if parent.parent() == entity {
                 commands.entity(named_entity).despawn();
             }
         }
+        //spawn new NamedNode child with new name/text
         commands.entity(entity).with_child((
             NamedNode(text.to_string()),
             Text2d::new(text.to_string()),
@@ -181,31 +185,34 @@ fn on_node_click(
     transforms: Query<&mut Transform>,
     selected: Option<Single<(Entity, &mut Selected)>>
 ){
-    if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]){        //if it is a shift click:
+    //if it is a shift click:
+    if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]){
         println!("Node shift click event");
 
-        if let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {  //if there is an unfinished GraphLink, complete it.
+        //if there is an unfinished GraphLink, complete it.
+        if let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {
 
             commands.entity(unfinished_ent).remove::<UnfinishedLink>();
 
-            if ends.from == event.event_target() { //if user tries to create a link from a node to itself
+            //if user tries to create a link from a node to itself
+            if ends.from == event.event_target() { 
                 commands.entity(unfinished_ent).despawn();
                 return;
             }
-
             ends.to = Some(event.event_target());
-
             println!("Completed a GraphLink");
 
+            //add arrow
             if let Some((arrow_transform, arrow_mesh)) = link_transform_helper(&ends, &transforms, &mut meshes) {
                 commands.entity(unfinished_ent).insert((
                     arrow_mesh,
-                    MeshMaterial2d(materials.add(ARROW_COLOR)),     //add arrow
+                    MeshMaterial2d(materials.add(ARROW_COLOR)),
                     arrow_transform,
                 ));
             }
             
-        }else{      //otherwise, create an invisible UnfinishedLink 
+        //otherwise, create an invisible UnfinishedLink
+        }else{ 
             commands.spawn((
                 GraphLink{
                     from: event.event_target(),
@@ -215,19 +222,23 @@ fn on_node_click(
             ));
             println!("Created an UnfinishedLink");
         }
-    } else {        //normal click, select the node
+    //normal click, select the node
+    }else{
         println!("Node click event");
         if event.duration.as_millis() < 200 && event.count == 1 {
 
-            if let Some(single) = selected{     //deselect currently selected node
+            //deselect currently selected node
+            if let Some(single) = selected{
                 let (entity, _selected_comp) = single.into_inner();
                 commands.entity(entity).remove::<Selected>();
             }
-            commands.entity(event.event_target()).insert(   //select this node
+            //select this node
+            commands.entity(event.event_target()).insert(   
                 Selected
             );
         }
-        if event.duration.as_millis() < 200 && event.count > 1 { //double click, delete node
+        //double click, delete node
+        if event.duration.as_millis() < 200 && event.count > 1 { 
             commands.entity(event.entity).despawn();
             
             //despawn connected links
@@ -260,7 +271,8 @@ fn on_background_click(
 
     let mut node_num = 1;
 
-    while current_nodes.iter().any(|node| node.0 == node_num) { //finds the lowest unused node in the least efficient way possible
+    //finds the lowest unused node in the least efficient way possible
+    while current_nodes.iter().any(|node| node.0 == node_num) { 
         node_num += 1;
     }
 
@@ -292,7 +304,8 @@ fn setup (
 ) {
     commands.spawn(Camera2d);
 
-    commands.spawn((        //spawn clickable background
+    //spawn clickable background
+    commands.spawn((
         Canvas,
         Mesh2d(meshes.add(Rectangle::new(CANVAS_WIDTH, CANVAS_HEIGHT))),
         MeshMaterial2d(materials.add(CANVAS_COLOR))
