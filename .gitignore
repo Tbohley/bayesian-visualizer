@@ -1,0 +1,11 @@
+/target
+.vscode/settings.json
+slop/edge_interaction.rs
+slop/graph_data.rs
+slop/main.rs
+slop/node_interaction.rs
+slop/node_spawning.rs
+slop/setup.rs
+slop/ui_editor.rs
+slop/visual_sync.rs
+src/.DS_Store

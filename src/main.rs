@@ -1,21 +1,17 @@
 use core::f32;
 
 use bevy::{
-    prelude::*,
-    render::mesh::{Indices, PrimitiveTopology},
-    asset::RenderAssetUsages,
-    text::{FontSmoothing, TextBounds},
-    input::keyboard::KeyboardInput
+    asset::RenderAssetUsages, ecs::entity_disabling, input::keyboard::KeyboardInput, prelude::*, render::mesh::{Indices, PrimitiveTopology}
 };
 
 
 const CANVAS_HEIGHT: f32 = 500.0;
 const CANVAS_WIDTH: f32 = 800.0;
 const NODE_RAD: f32 = 20.0;
-const CANVAS_COLOR: Color = Color::WHITE;
-const ARROW_COLOR: Color = Color::BLACK;
+const CANVAS_COLOR: Color = Color::srgb(0.173, 0.227, 0.278);
+const ARROW_COLOR: Color = Color::srgb(0.973, 0.937, 0.729);
 const NODE_NAME_COLOR: Color = Color::BLACK;
-const NODE_COLOR: Color = Color::srgb(1.0, 0.0, 0.0);
+const NODE_COLOR: Color = Color::srgb(0.992, 0.447, 0.447);
 const ARROW_THICKNESS: f32 = 2.0;
 const ARROW_TIP_WIDTH_RATIO: f32 = 10.0;
 const ARROW_TIP_LENGTH: f32 = 10.0;
@@ -234,14 +230,19 @@ fn on_node_click(
         if event.duration.as_millis() < 200 && event.count > 1 { //double click, delete node
             commands.entity(event.entity).despawn();
             
+            //despawn connected links
             for (link_entity, link_component) in finished_links.iter_mut() {
-                if event.event_target() == link_component.from {
-                    commands.entity(link_entity).despawn();
-                }
-                if event.event_target() == link_component.to.unwrap() {
+                if event.event_target() == link_component.from || event.event_target() == link_component.to.unwrap(){
                     commands.entity(link_entity).despawn();
                 }
             }
+            //despawn unfinished connected link
+            if let Ok((unfinished_ent, ends)) = unfinished_link.single_mut() {
+                if event.event_target() == ends.from {
+                    commands.entity(unfinished_ent).despawn();
+                }
+            }
+
         }
     }
 }
@@ -299,8 +300,7 @@ fn setup (
     .observe(on_background_click);
 
     commands.spawn((
-        Text2d::new("7.1.2026\n\
-                        Click to create a new node.\n\
+        Text2d::new("Click to create a new node.\n\
                         Shift click a parent and then a child\n\
                         node to create a link between them.\n\
                         Double-click a node to delete it.\n\
@@ -308,7 +308,7 @@ fn setup (
                         to assign it a one-letter name."),
         Transform{
             translation: vec3(-450.,300.0,1.0),
-            scale: vec3(0.5,0.5,1.0),
+            scale: vec3(0.7,0.7,1.0),
             rotation: Quat::from_rotation_z(0.0)
         }
     ));
@@ -353,5 +353,10 @@ Ghost arrow after shift-clicking a node
 that tracks cursor until end node is clicked.
 
 
+
+Bug tracker:
+
+Deletion of a node in an UnfinishedLink
+leads to panic                                 FIXED
 
 */
