@@ -4,12 +4,13 @@ use bevy::{
     asset::RenderAssetUsages, 
     color::palettes::{css::DARK_GREY, tailwind::SLATE_300}, 
     input::keyboard::KeyboardInput, 
-    input_focus::{AutoFocus, InputFocus, tab_navigation::{TabGroup, TabIndex}}, 
+    input_focus::{AutoFocus, FocusCause, InputFocus, tab_navigation::{NavAction, TabGroup, TabIndex}}, 
     platform::collections::HashMap, prelude::*, 
     render::mesh::{Indices, PrimitiveTopology}, 
     text::{EditableText, TextCursorStyle}
 };
 use fugue::*;
+use fugue::error::FugueError::InvalidParameters;
 use rand::{rngs::StdRng, thread_rng};
 use rand::SeedableRng;
 
@@ -58,10 +59,8 @@ struct Sidebar;
 trait DistributionDebug<T>: Distribution<T> + std::fmt::Debug {}
 impl<T, D: Distribution<T> + std::fmt::Debug> DistributionDebug<T> for D {}
 
-struct ParamValue {
-    name: &'static str,
-    value: f64,
-}
+#[derive(Debug)]
+struct ParamValue (&'static str, f64);
 
 //on random variable nodes
 #[derive(Component)]
@@ -82,18 +81,109 @@ struct Selected;
 #[derive(Component)]
 struct ParamTextbox(usize);
 
+/// event opening a new context menu at position `pos`
+#[derive(Event)]
+struct OpenContextMenu {
+    pos: Vec2,
+}
 
-fn distribution_params() -> HashMap<String, Vec<&'static str>> {
+/// event will be sent to close currently open context menus
+#[derive(Event)]
+struct CloseContextMenus;
+
+#[derive(Event)]
+struct ReloadSidebar;
+
+/// marker component identifying root of a context menu
+#[derive(Component)]
+struct ContextMenu;
+
+/// context menu item data storing what background color `Srgba` it activates
+#[derive(Component)]
+struct ContextMenuItem(String);
+
+#[derive(Event)]
+pub struct ErrorToast {
+    pub text: String,
+}
+
+#[derive(Component)]
+pub struct ErrorToastBox {
+    timer: Timer,
+}
+
+//store parameters for distributions plus a valid default value
+fn distribution_params() -> HashMap<String, Vec<ParamValue>> {
     HashMap::from([
-        (String::from("Normal"), vec!["mean", "std_dev"]),
-        (String::from("LogNormal"), vec!["mean", "std_dev"]),
-        (String::from("Gamma"), vec!["shape", "scale"]),
-        (String::from("Beta"), vec!["alpha", "beta"]),
-        (String::from("Exponential"), vec!["rate"]),
-        (String::from("Uniform"), vec!["min", "max"])
+        (String::from("Normal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 10.)]),
+        (String::from("LogNormal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 10.)]),
+        (String::from("Gamma"), vec![ParamValue("shape", 1.), ParamValue("scale", 1.)]),
+        (String::from("Beta"), vec![ParamValue("alpha", 2.), ParamValue("beta", 2.)]),
+        (String::from("Exponential"), vec![ParamValue("rate", 2.)]),
+        (String::from("Uniform"), vec![ParamValue("min", 0.), ParamValue("max", 10.)])
     ])
 }
 
+
+pub fn throw_err(
+    event: On<ErrorToast>,
+    mut commands: Commands,
+) {
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(24.),
+            left: percent(50.),
+            width: px(420.),
+            min_height: px(40.),
+            padding: px(12.).all(),
+            border: px(2.).all(),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.45, 0.05, 0.05)),
+        BorderColor::from(Color::srgb(0.9, 0.15, 0.15)),
+        ErrorToastBox {
+            timer: Timer::from_seconds(10.0, TimerMode::Once),
+        },
+        Button,
+        ZIndex(999),
+        children![(
+            Text::new(event.text.clone()),
+            TextColor(Color::WHITE),
+            TextFont {
+                font_size: FontSize::Px(14.),
+                ..default()
+            },
+        )],
+    ));
+}
+
+fn tick_error_toasts(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut ErrorToastBox)>,
+) {
+    for (entity, mut toast) in &mut q {
+        toast.timer.tick(time.delta());
+
+        if toast.timer.is_finished() {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+fn click_error_toasts(
+    mut commands: Commands,
+    q: Query<(Entity, &Interaction), (Changed<Interaction>, With<ErrorToastBox>)>,
+) {
+    for (entity, interaction) in &q {
+        if *interaction == Interaction::Pressed {
+            commands.entity(entity).despawn();
+        }
+    }
+}
 
 //update arrow transforms connecting to dragged node
 fn on_node_drag (
@@ -172,6 +262,8 @@ fn on_keypress(
             Pickable::IGNORE,
             Transform::from_xyz(0.0, 0.0, 2.0),
         ));
+        //reload sidebar
+        commands.trigger(ReloadSidebar);
     }
 
 }
@@ -240,9 +332,11 @@ fn on_node_click(
             commands.entity(event.event_target()).insert(
                 Selected
             );
+            commands.trigger(ReloadSidebar);
+
             let selected_dist_box = distributions.get(event.event_target());
             match selected_dist_box {
-                Err(e) => println!("Selected node has no associated distrbution"),
+                Err(_e) => println!("Selected node has no associated distrbution"),
                 Ok(dist) => {
                     let mut rng = thread_rng();
                     println!("Selected node distribution: {:?}", dist.dist);
@@ -268,6 +362,7 @@ fn on_node_click(
                     commands.entity(unfinished_ent).despawn();
                 }
             }
+            commands.trigger(ReloadSidebar);
 
         }
     }
@@ -285,8 +380,10 @@ fn on_background_click(
 
     if let Some(single) = selected{
         let (entity, _selected_comp) = single.into_inner();
-        //deselect currently selected node
+        //deselect currently selected node + close context menus
         commands.entity(entity).remove::<Selected>();
+        commands.trigger(CloseContextMenus);
+        commands.trigger(ReloadSidebar);
         return;
     }
 
@@ -310,7 +407,7 @@ fn on_background_click(
         RandomVar{
             dist_type: String::from("Normal"),
             dist: Box::new(Normal::new(0.0, 1.0).unwrap().clone()),
-            params: vec![ParamValue{name: "mean", value: 0.},ParamValue{name: "std_dev", value: 1.}]
+            params: vec![ParamValue("mean", 0.),ParamValue("std_dev",1.)]
         }
     )).with_child((
         UnnamedNode,
@@ -354,12 +451,13 @@ fn setup (
     ));
 }
 
-// Submit the text when Ctrl+Enter is pressed
+// Submit the new param when Enter is pressed
 fn text_submission(
     input_focus: Res<InputFocus>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut text_input: Query<(&mut EditableText, &ParamTextbox, &Name)>,
-    node_to_change: Single<(&mut RandomVar, &Selected)>
+    node_to_change: Single<(&mut RandomVar, &Selected)>,
+    mut commands: Commands
 ) {
     if keyboard_input.just_pressed(KeyCode::Enter)
         && let Some(focused_entity) = input_focus.get()
@@ -369,36 +467,90 @@ fn text_submission(
         let num = text_input.value().to_string().parse::<f64>();
         match num {
             Ok(f) => {
-                random_var.params.get_mut(param_num.0).expect("invalid param_num").value = f;
+                println!("Node w/{} distribution: {} set to {}",random_var.dist_type, distribution_params().get(&random_var.dist_type).unwrap().get(param_num.0).unwrap().0, f);
+                random_var.params.get_mut(param_num.0).expect("invalid param_num").1 = f;
             }
             Err(_e) => {
                 println!("Not a valid parameter number!");
                 text_input.clear();
             }
         }
-        reset_dist(&mut random_var);
+        println!("Dist params: {:?}", random_var.params);
+        reset_dist(&mut random_var, &mut commands);
+        commands.trigger(ReloadSidebar);
         //random_var
         //set the random_var's dist value to a new distribution with updated param
     }
 }
 
-fn reset_dist(node: &mut RandomVar) {
+fn reset_dist(
+    node: &mut RandomVar,
+    commands: &mut Commands
+) {
+    let mut new_param_vals = Vec::<ParamValue>::new();
+
+    //for all default parameters in the truth set for this distribution:
+    for new_param_truth in distribution_params().get(&node.dist_type).unwrap() {
+        let value = node
+            .params
+            .iter()
+            .find(|old_param_val| old_param_val.0 == new_param_truth.0)
+            .map(|old_param_val| old_param_val.1)
+            .unwrap_or(new_param_truth.1);
+    
+        new_param_vals.push(ParamValue(new_param_truth.0, value));
+    }
+    
+    node.params = new_param_vals;
+    println!("New params: {:?}", &node.params);
+
+
     let p = |i: usize| {
         node.params
-            .get(i)
-            .unwrap_or_else(|| panic!("missing param {} for {}", i, node.dist_type))
-            .value
+            .get(i).unwrap().1
     };
 
-    node.dist = match node.dist_type.as_str() {
-        "Normal" => Box::new(Normal::new(p(0), p(1)).unwrap().clone()),
-        "LogNormal" => Box::new(LogNormal::new(p(0), p(1)).unwrap().clone()),
-        "Exponential" => Box::new(Exponential::new(p(0)).unwrap().clone()),
-        "Gamma" => Box::new(Gamma::new(p(0), p(1)).unwrap().clone()),
-        "Beta" => Box::new(Beta::new(p(0), p(1)).unwrap().clone()),
-        "Uniform" => Box::new(Uniform::new(p(0), p(1)).unwrap().clone()),
-        other => panic!("unsupported distribution type: {}", other),
+    let e = |err| {
+        match err {
+            InvalidParameters { distribution, reason, code, context } => {
+                commands.trigger(ErrorToast{ text: format!("{} failed: {} ({:?}) context: {:?}", distribution, reason, code, context)});
+            }
+            other => {commands.trigger(ErrorToast{ text: format!("distribution construction failed: {:?}", other)});}
+        }
+        None
     };
+
+    let new_dist: Option<Box<dyn DistributionDebug<f64>>> = match node.dist_type.as_str() {
+        "Normal" => Normal::new(p(0), p(1))
+            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
+            .unwrap_or_else(e),
+        "LogNormal" => LogNormal::new(p(0), p(1))
+            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
+            .unwrap_or_else(e),
+        "Exponential" => Exponential::new(p(0))
+            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
+            .unwrap_or_else(e),
+        "Gamma" => Gamma::new(p(0), p(1))
+            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
+            .unwrap_or_else(e),
+        "Beta" => Beta::new(p(0), p(1))
+            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
+            .unwrap_or_else(e),
+        "Uniform" => Uniform::new(p(0), p(1))
+            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
+            .unwrap_or_else(e),
+        other => {
+            commands.trigger(ErrorToast {
+                text: format!("unsupported distribution type: {}", other),
+            });
+            None
+        }
+    };
+    
+    if let Some(new_dist) = new_dist {
+        node.dist = new_dist;
+    }
+
     let mut rng = thread_rng();
     println!("Node distribution set to: {:?}", node.dist);
     println!("Sample from node: {}", node.dist.sample(&mut rng))
@@ -414,8 +566,8 @@ fn build_param_textbox(
         .get(param_num)
         .expect("invalid param_num");
 
-    let param_name = param.name;
-    let param_value = param.value;
+    let param_name = param.0;
+    let param_value = param.1;
 
     commands
         .spawn((
@@ -454,15 +606,101 @@ fn build_param_textbox(
         .id()
 }
 
+fn context_item(text: &str, dist: String) -> impl Bundle {
+    (
+        Name::new(format!("item-{text}")),
+        ContextMenuItem(dist),
+        Button,
+        Node {
+            padding: UiRect::all(px(5)),
+            ..default()
+        },
+        children![(
+            Pickable::IGNORE,
+            Text::new(text),
+            TextColor(Color::WHITE),
+        )],
+    )
+}
+
+fn on_trigger_close_menus(
+    _event: On<CloseContextMenus>,
+    mut commands: Commands,
+    menus: Query<Entity, With<ContextMenu>>,
+) {
+    for e in menus.iter() {
+        commands.entity(e).despawn();
+    }
+}
+
+fn on_trigger_menu(
+    event: On<OpenContextMenu>, 
+    mut commands: Commands,
+) {
+    commands.trigger(CloseContextMenus);
+
+    let pos = event.pos;
+
+    debug!("open context menu at: {pos}");
+
+    commands
+        .spawn((
+            Name::new("distribution selector"),
+            ContextMenu,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(pos.x),
+                top: px(pos.y),
+                flex_direction: FlexDirection::Column,
+                border_radius: BorderRadius::all(px(4)),
+                ..default()
+            },
+            BorderColor::all(Color::BLACK),
+            BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
+            children![
+                context_item("Normal", String::from("Normal")),
+                context_item("LogNormal", String::from("LogNormal")),
+                context_item("Beta", String::from("Beta")),
+                context_item("Gamma", String::from("Gamma")),
+                context_item("Exponential", String::from("Exponential")),
+                context_item("Uniform", String::from("Uniform"))
+            ],
+        ))
+        .observe(
+            |event: On<Pointer<Press>>,
+             menu_items: Query<&ContextMenuItem>,
+             mut commands: Commands,
+             selected: Option<Single<(Entity, &Selected)>>,
+             mut random_vars: Query<(&mut RandomVar, &Selected)>
+             | {
+                let target = event.original_event_target();
+                if let Some(single) = selected{
+                    let (entity, _selected_comp) = single.into_inner();
+
+                    if let Ok(item) = menu_items.get(target) {
+                        //set distribution of node to new dist... or maybe on apply?
+                        println!("Selected distribution {}", item.0);
+                        let (mut random_var, _selected_comp) = random_vars.get_mut(entity).unwrap();
+                        random_var.dist_type = item.0.clone();
+                        //buggy line, can panic, need to set to default params on dist change.
+                        reset_dist(&mut random_var, &mut commands);
+                        commands.trigger(CloseContextMenus);
+                        commands.trigger(ReloadSidebar);
+                        
+                    }
+                }
+            },
+        );
+}
+
 fn node_settings(
+    _event: On<ReloadSidebar>,
     mut commands: Commands,
     selected: Option<Single<(Entity, &mut Selected, &mut GraphNode)>>,
-    mut random_vars: Query<&mut RandomVar>,
-    mut finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+    random_vars: Query<&mut RandomVar>,
+    //finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar: Query<(Entity, &Sidebar)>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    mut names: Query<(&NamedNode, &ChildOf)>
+    names: Query<(&NamedNode, &ChildOf)>
 ){
     for (sidebar_entity, _comp) in sidebar.iter(){
         commands.entity(sidebar_entity).despawn();
@@ -477,7 +715,8 @@ fn node_settings(
             }
         }
         let text_transform: Vec3 = (0f32, (CANVAS_HEIGHT / 2.0) - 15.0, 1f32).into();
-        let sidebar_entity = commands.spawn((
+        let sidebar_entity = 
+        commands.spawn((
             Sidebar,
             Node {
                 position_type: PositionType::Absolute,
@@ -527,17 +766,49 @@ fn node_settings(
                         ..default()
                     },
                     TextColor(NODE_NAME_COLOR),
-                ),
-                (
-                    Text::new(random_var.dist_type.clone()),
-                    Node {
-                        margin: px(12).bottom(),
-                        ..default()
-                    },
-                    TextColor(NODE_NAME_COLOR),
-                ),
+                )
             ],
-        )).id();
+        )).observe(
+            //sidebar observes clicks to close distribution context menu
+            |_: On<Pointer<Press>>, mut commands: Commands| {
+                commands.trigger(CloseContextMenus);
+        }).id();
+
+        //spawn context menu
+        let context_menu = commands.spawn((
+            Name::new("distribution_context_menu"),
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BorderColor::all(Color::BLACK),
+            BackgroundColor(Color::BLACK),
+            children![(
+                Pickable::IGNORE,
+                Text::new(random_var.dist_type.clone()),
+                TextColor(Color::WHITE),
+                TextShadow::default(),
+            )],
+        )).observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
+            // by default this event would bubble up further leading to the `CloseContextMenus`
+            // event being triggered and undoing the opening of one here right away.
+            event.propagate(false);
+            println!("Clicked context menu");
+            debug!("click: {}", event.pointer_location.position);
+
+            commands.trigger(OpenContextMenu {
+                pos: event.pointer_location.position,
+            });
+        }).id();
+
+        commands.entity(sidebar_entity).add_child(context_menu);
+
         for (i, _param) in random_var.params.iter().enumerate() {        
             let child = build_param_textbox(
                 &mut commands,
@@ -549,19 +820,19 @@ fn node_settings(
     }
 }
 
-fn selection_changed(
-    added: Query<(), Added<Selected>>,
-    removed: RemovedComponents<Selected>,
-    renamed: Query<(), Added<NamedNode>>
-) -> bool {
-    !added.is_empty() || removed.len() > 0 || !renamed.is_empty()
-}
-
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
+        .add_observer(on_trigger_menu)
+        .add_observer(on_trigger_close_menus)
+        .add_observer(throw_err)
+        .add_observer(node_settings)
         .add_systems(Startup, setup)
-        .add_systems(Update, (on_keypress, node_settings.run_if(selection_changed), text_submission))
+        .add_systems(Update, (
+            on_keypress, 
+            text_submission,
+            tick_error_toasts, 
+            click_error_toasts))
         .run();
 }
 
@@ -570,63 +841,79 @@ fn main() {
 // PROGRESS
 /*
 
-Next steps:
+------------------Next steps--------------------
 
 Dragging nodes                              DONE
 Shiftclick to create an arrow               DONE
 
 
-Goals for 7/2:
+-----------------Goals for 7/2------------------
 
 Arrowhead (custom mesh?)                    DONE
 Arrows on drag                              DONE
 Arrows disappear on node deletion           DONE
 
-Goals for 7/7:
+-----------------Goals for 7/7------------------
 
 Basic fugue scaffolding w/ normal dists     DONE
 Simple sampling?
 Plates, parameters
 
 
-Goals for 7/10:
+-----------------Goals for 7/10-----------------
 
 Node sidebar{
     random vs parameter
-    dist. params
+    dist. params{
+        change distribution button          
+        apply changes button
+    }
 }
 Plate dragging creation
 
 
-Future goals:
+-----------------Future goals-------------------
+
+Global sidebar{
+    drag n drop construction
+    dummy node/param/plate?
+    update button{
+        plate logic and implementation      
+    }
+}
+
 
 Single click allows node name editing,
 eventually will be -> popup with 
-distribution/property editing
+distribution/property editing               DONE
 Various distribution options
 Single sampling/forward sampling
 Plot viewing
 Crosslink, brushing interaction
 
 
-Optional goals:
+-----------------Optional goals-----------------
 
 Ghost arrow after shift-clicking a node
-that tracks cursor until end node is clicked.
+that tracks cursor until end node clicked   
 
 Different color schemes
 
-Address all uses of .unwrap()
+Rewrap all uses of .unwrap()
 
 
 
-Bug tracker:
+-------------------Bug tracker------------------
 
-Deletion of a node in an UnfinishedLink
-leads to panic                                 FIXED
+Deletion of a node in an UnfinishedLink     
+leads to panic                             FIXED
 
 Smashing keys on rename interacts with
 a despawned entity (probably NamedNode)
 and panics
+
+Dragging a node, dropping it and then
+clicking registers as a double click
+and deletes it
 
 */
