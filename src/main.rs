@@ -1,128 +1,22 @@
 //use core::f32;
 
 use bevy::{
-    asset::RenderAssetUsages, 
     color::palettes::{css::DARK_GREY, tailwind::SLATE_300}, 
     input::keyboard::KeyboardInput, 
-    input_focus::{AutoFocus, FocusCause, InputFocus, tab_navigation::{NavAction, TabGroup, TabIndex}}, 
-    platform::collections::HashMap, prelude::*, 
-    render::mesh::{Indices, PrimitiveTopology}, 
+    input_focus::{InputFocus, tab_navigation::{TabIndex}}, 
+    prelude::*, 
     text::{EditableText, TextCursorStyle}
 };
 use fugue::*;
 use fugue::error::FugueError::InvalidParameters;
-use rand::{rngs::StdRng, thread_rng};
-use rand::SeedableRng;
+use rand::{thread_rng};
 
-mod arrows;
-pub use arrows::*;
+mod helpers;
+mod components_constants;
+pub use helpers::*;
+pub use components_constants::*;
 
 
-const CANVAS_HEIGHT: f32 = 500.0;
-const CANVAS_WIDTH: f32 = 800.0;
-const NODE_RAD: f32 = 20.0;
-const CANVAS_COLOR: Color = Color::srgb(0.173, 0.227, 0.278);
-const SIDEBAR_COLOR: Color = Color::srgb(0.827, 0.827, 0.827);
-const NODE_NAME_COLOR: Color = Color::BLACK;
-const NODE_COLOR: Color = Color::srgb(0.992, 0.447, 0.447);
-const ARROW_COLOR: Color = Color::srgb(0.973, 0.937, 0.729);
-const ARROW_THICKNESS: f32 = 2.0;
-const ARROW_TIP_WIDTH_RATIO: f32 = 10.0;
-const ARROW_TIP_LENGTH: f32 = 10.0;
-const SIDEBAR_WIDTH: f32 = CANVAS_WIDTH / 4.;
-
-//on all node entities
-#[derive(Component)]
-struct GraphNode(u32);
-
-//on the text child entity of a named node
-#[derive(Component)]
-struct NamedNode(String);
-
-//on the text child of a default node
-#[derive(Component)]    
-struct UnnamedNode;
-
-#[derive(Component)]
-struct Canvas;
-
-//on links between nodes
-#[derive(Component)]    
-struct GraphLink{
-    from: Entity,
-    to: Option<Entity>
-}
-
-#[derive(Component)]
-struct Sidebar;
-
-trait DistributionDebug<T>: Distribution<T> + std::fmt::Debug {}
-impl<T, D: Distribution<T> + std::fmt::Debug> DistributionDebug<T> for D {}
-
-#[derive(Debug)]
-struct ParamValue (&'static str, f64);
-
-//on random variable nodes
-#[derive(Component)]
-struct RandomVar{
-    dist_type: String,
-    dist: Box<dyn DistributionDebug<f64>>,
-    params: Vec<ParamValue>
-}
-
-//on unfinished (invisible) arrows
-#[derive(Component)]
-struct UnfinishedLink;
-
-//on currently selected node
-#[derive(Component)]
-struct Selected;
-
-#[derive(Component)]
-struct ParamTextbox(usize);
-
-/// event opening a new context menu at position `pos`
-#[derive(Event)]
-struct OpenContextMenu {
-    pos: Vec2,
-}
-
-/// event will be sent to close currently open context menus
-#[derive(Event)]
-struct CloseContextMenus;
-
-#[derive(Event)]
-struct ReloadSidebar;
-
-/// marker component identifying root of a context menu
-#[derive(Component)]
-struct ContextMenu;
-
-/// context menu item data storing what background color `Srgba` it activates
-#[derive(Component)]
-struct ContextMenuItem(String);
-
-#[derive(Event)]
-pub struct ErrorToast {
-    pub text: String,
-}
-
-#[derive(Component)]
-pub struct ErrorToastBox {
-    timer: Timer,
-}
-
-//store parameters for distributions plus a valid default value
-fn distribution_params() -> HashMap<String, Vec<ParamValue>> {
-    HashMap::from([
-        (String::from("Normal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 10.)]),
-        (String::from("LogNormal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 10.)]),
-        (String::from("Gamma"), vec![ParamValue("shape", 1.), ParamValue("scale", 1.)]),
-        (String::from("Beta"), vec![ParamValue("alpha", 2.), ParamValue("beta", 2.)]),
-        (String::from("Exponential"), vec![ParamValue("rate", 2.)]),
-        (String::from("Uniform"), vec![ParamValue("min", 0.), ParamValue("max", 10.)])
-    ])
-}
 
 
 pub fn throw_err(
@@ -142,7 +36,7 @@ pub fn throw_err(
             align_items: AlignItems::Center,
             ..default()
         },
-        BackgroundColor(Color::srgb(0.45, 0.05, 0.05)),
+        BackgroundColor(event.color),
         BorderColor::from(Color::srgb(0.9, 0.15, 0.15)),
         ErrorToastBox {
             timer: Timer::from_seconds(10.0, TimerMode::Once),
@@ -483,6 +377,17 @@ fn text_submission(
     }
 }
 
+fn sample_node(
+    _event: On<Pointer<Click>>,
+    mut node: Single<&mut RandomVar, With<Selected>>,
+    mut commands: Commands
+) {
+    let mut rng = thread_rng();
+    reset_dist(&mut node, &mut commands);
+    println!("Sample from node: {}", node.dist.sample(&mut rng));
+    commands.trigger(ErrorToast{text: format!("Sample from node: {}", node.dist.sample(&mut rng)), color: SAMPLE_COLOR})
+}
+
 fn reset_dist(
     node: &mut RandomVar,
     commands: &mut Commands
@@ -512,10 +417,10 @@ fn reset_dist(
 
     let e = |err| {
         match err {
-            InvalidParameters { distribution, reason, code, context } => {
-                commands.trigger(ErrorToast{ text: format!("{} failed: {} ({:?}) context: {:?}", distribution, reason, code, context)});
+            InvalidParameters { distribution, reason, code, context: _ } => {
+                commands.trigger(ErrorToast{ color: ERR_COLOR, text: format!("{} failed: {} (Code: {:?}). Please set new parameters and hit enter.", distribution, reason, code)});
             }
-            other => {commands.trigger(ErrorToast{ text: format!("distribution construction failed: {:?}", other)});}
+            other => {commands.trigger(ErrorToast{ color: ERR_COLOR, text: format!("distribution construction failed: {:?}. Please set new parameters and hit enter.", other)});}
         }
         None
     };
@@ -542,6 +447,7 @@ fn reset_dist(
         other => {
             commands.trigger(ErrorToast {
                 text: format!("unsupported distribution type: {}", other),
+                color: ERR_COLOR
             });
             None
         }
@@ -708,13 +614,12 @@ fn node_settings(
     if let Some(single) = selected{
         let (entity, _selected_comp, node) = single.into_inner();
         let mut name = None;
-        let mut random_var = random_vars.get(entity).unwrap();
+        let random_var = random_vars.get(entity).unwrap();
         for (label, parent) in names.iter(){
             if parent.parent() == entity{
                 name = Some(label.0.clone());
             }
         }
-        let text_transform: Vec3 = (0f32, (CANVAS_HEIGHT / 2.0) - 15.0, 1f32).into();
         let sidebar_entity = 
         commands.spawn((
             Sidebar,
@@ -817,6 +722,28 @@ fn node_settings(
             );
             commands.entity(sidebar_entity).add_child(child);
         }
+        let sample_button = commands.spawn((
+        Name::new("sample_button"),
+        Button,
+        Node {
+            width: px(SIDEBAR_WIDTH * 0.75),
+            height: px(30),
+            border: UiRect::all(px(5)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BorderColor::all(Color::BLACK),
+        BackgroundColor(Color::BLACK),
+        children![(
+            Pickable::IGNORE,
+            Text::new("Sample"),
+            TextColor(Color::WHITE),
+            TextShadow::default(),
+        )],
+    )).observe(sample_node).id();
+    commands.entity(sidebar_entity).add_child(sample_button);
     }
 }
 
@@ -890,6 +817,7 @@ Various distribution options
 Single sampling/forward sampling
 Plot viewing
 Crosslink, brushing interaction
+WASM support and CI/CD
 
 
 -----------------Optional goals-----------------

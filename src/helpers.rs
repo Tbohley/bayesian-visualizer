@@ -1,15 +1,30 @@
 use bevy::{
     asset::RenderAssetUsages, 
     prelude::*, 
-    render::mesh::{Indices, PrimitiveTopology}
+    render::mesh::{Indices, PrimitiveTopology},
+    platform::collections::HashMap
 };
-use crate::{
+use crate::components_constants::ParamValue;
+
+use crate::components_constants::{
     GraphLink,
     NODE_RAD,
     ARROW_THICKNESS,
     ARROW_TIP_WIDTH_RATIO,
     ARROW_TIP_LENGTH
 };
+
+//store parameters for distributions plus a valid default value
+pub fn distribution_params() -> HashMap<String, Vec<ParamValue>> {
+    HashMap::from([
+        (String::from("Normal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 1.)]),
+        (String::from("LogNormal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 1.)]),
+        (String::from("Gamma"), vec![ParamValue("shape", 1.), ParamValue("scale", 1.)]),
+        (String::from("Beta"), vec![ParamValue("alpha", 2.), ParamValue("beta", 2.)]),
+        (String::from("Exponential"), vec![ParamValue("rate", 2.)]),
+        (String::from("Uniform"), vec![ParamValue("min", 0.), ParamValue("max", 10.)])
+    ])
+}
 
 //custom arrow mesh constructor function
 pub fn arrow_mesh(length: f32) -> Mesh {
