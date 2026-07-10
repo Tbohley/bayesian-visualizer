@@ -1,30 +1,40 @@
-use bevy::{
-    asset::RenderAssetUsages, 
-    prelude::*, 
-    render::mesh::{Indices, PrimitiveTopology},
-    platform::collections::HashMap
-};
-use crate::components_constants::ParamValue;
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::Indices;
+use bevy::mesh::PrimitiveTopology;
+use bevy::prelude::*;
+use crate::constants::*;
+use crate::graph::*;
 
-use crate::components_constants::{
-    GraphLink,
-    NODE_RAD,
-    ARROW_THICKNESS,
-    ARROW_TIP_WIDTH_RATIO,
-    ARROW_TIP_LENGTH
-};
-
-//store parameters for distributions plus a valid default value
-pub fn distribution_params() -> HashMap<String, Vec<ParamValue>> {
-    HashMap::from([
-        (String::from("Normal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 1.)]),
-        (String::from("LogNormal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 1.)]),
-        (String::from("Gamma"), vec![ParamValue("shape", 1.), ParamValue("scale", 1.)]),
-        (String::from("Beta"), vec![ParamValue("alpha", 2.), ParamValue("beta", 2.)]),
-        (String::from("Exponential"), vec![ParamValue("rate", 2.)]),
-        (String::from("Uniform"), vec![ParamValue("min", 0.), ParamValue("max", 10.)])
-    ])
+//update arrow transforms connecting to dragged node
+pub fn on_node_drag (
+    event: On<Pointer<Drag>>,
+    mut transforms: Query<&mut Transform>,
+    mut mesh_query: Query<&mut Mesh2d>,
+    mut graph_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+    mut meshes: ResMut<Assets<Mesh>>
+) {
+    println!("Dragged a node");
+    {
+        //update node position
+        if let Ok(mut ent) = transforms.get_mut(event.event_target()) {
+        ent.translation.x += event.delta.x;     
+        ent.translation.y -= event.delta.y;
+    }
 }
+    //update all connected arrow positions/meshes
+    for (link_entity, link_component) in graph_links.iter_mut() { 
+        if event.event_target() == link_component.from || event.event_target() == link_component.to.unwrap() {
+            let (new_transform, new_mesh) = link_transform_helper(&link_component, &transforms, &mut meshes).unwrap();
+            if let Ok(mut link_transform) = transforms.get_mut(link_entity) {
+                if let Ok(mut link_mesh) = mesh_query.get_mut(link_entity) {
+                    *link_transform = new_transform;
+                    *link_mesh = new_mesh;
+                }
+            }
+        }
+    }
+}
+
 
 //custom arrow mesh constructor function
 pub fn arrow_mesh(length: f32) -> Mesh {
