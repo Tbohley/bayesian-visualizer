@@ -7,6 +7,7 @@ mod graph;
 mod ui;
 mod constants;
 pub use constants::*;
+use sidebar::random_var::on_open_context_menu;
 use crate::sidebar::*;
 use crate::ui::*;
 use crate::nodes::*;

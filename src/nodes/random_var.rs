@@ -48,7 +48,8 @@ pub fn on_background_click(
             event.hit.position.unwrap().x,
             event.hit.position.unwrap().y,
             1.0),
-        RandomVar{
+        RandomNode{      //TODO: move to global sidebar
+            name: None,
             dist_type: String::from("Normal"),
             dist: Box::new(Normal::new(0.0, 1.0).unwrap().clone()),
             params: vec![ParamValue("mean", 0.),ParamValue("std_dev",1.)]
@@ -64,6 +65,8 @@ pub fn on_background_click(
     .observe(on_node_click);
     event.propagate(true);
 }
+
+
 //multifunctional: single click to edit a node, shift click two nodes consecutively to create a link, double click to delete the node and its links.
 pub fn on_node_click(
     event: On<Pointer<Click>>,
@@ -75,7 +78,7 @@ pub fn on_node_click(
     mut materials: ResMut<Assets<ColorMaterial>>,
     transforms: Query<&mut Transform>,
     selected: Option<Single<(Entity, &mut Selected)>>,
-    distributions: Query<&RandomVar>
+    distributions: Query<&RandomNode>
 ){
     //if it is a shift click:
     if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]){
@@ -222,7 +225,7 @@ pub fn on_enter_clicked(
     input_focus: Res<InputFocus>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut text_input: Query<(&mut EditableText, &ParamTextbox, &Name)>,
-    node_to_change: Single<(&mut RandomVar, &Selected)>,
+    node_to_change: Single<(&mut RandomNode, &Selected)>,
     mut commands: Commands
 ) {
     if keyboard_input.just_pressed(KeyCode::Enter)
@@ -250,7 +253,7 @@ pub fn on_enter_clicked(
 }
 
 pub fn refresh_var_dist(
-    node: &mut RandomVar,
+    node: &mut RandomNode,
     commands: &mut Commands
 ) {
     let mut new_param_vals = Vec::<ParamValue>::new();
@@ -325,7 +328,7 @@ pub fn refresh_var_dist(
 
 pub fn sample_node_toast(
     _event: On<Pointer<Click>>,
-    mut node: Single<&mut RandomVar, With<Selected>>,
+    mut node: Single<&mut RandomNode, With<Selected>>,
     mut commands: Commands
 ) {
     let mut rng = thread_rng();
