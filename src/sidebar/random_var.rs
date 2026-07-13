@@ -8,8 +8,11 @@ use super::*;
 impl SidebarContent for RandomNode{
     fn build(
         &self, 
-        commands: &mut Commands, 
+        mut commands: &mut Commands, 
         sidebar_entity: Entity, 
+        node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
+        finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+        node: Entity
     ){
         commands.entity(sidebar_entity).with_child(
             (
@@ -35,6 +38,19 @@ impl SidebarContent for RandomNode{
                 BackgroundColor(NODE_NAME_COLOR),
                 TextColor(bevy::prelude::Color::Srgba(BLACK)) //TODO: color fixing
             ));
+        
+        available_links(&mut commands, &node_data, &finished_links, sidebar_entity, node);
+        commands.entity(sidebar_entity).with_child(
+            (
+                    Node {
+                        width: px(SIDEBAR_WIDTH - 32.0),
+                        height: px(5.0),
+                        margin: px(12).bottom(),
+                        ..default()
+                    },
+                    BackgroundColor(NODE_NAME_COLOR),
+                    TextColor(bevy::prelude::Color::Srgba(BLACK)) //TODO: color fixing
+                ));
         //TODO: add available links section
         commands.entity(sidebar_entity).with_child((
                 Text::new("Distribution:"),
@@ -73,7 +89,7 @@ impl SidebarContent for RandomNode{
             println!("Clicked context menu");
             debug!("click: {}", event.pointer_location.position);
 
-            commands.trigger(OpenContextMenu {
+            commands.trigger(OpenDistributionMenu {
                 pos: event.pointer_location.position,
             });
         }).id();
@@ -98,6 +114,7 @@ impl SidebarContent for RandomNode{
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             border_radius: BorderRadius::MAX,
+            margin: px(8.).bottom(),
             ..default()
         },
         BorderColor::all(Color::BLACK),
@@ -165,15 +182,37 @@ fn build_param_textbox(
         .id()
 }
 
+fn on_select_distribution(
+    event: On<Pointer<Press>>,
+    menu_items: Query<&ContextMenuItem>,
+    mut commands: Commands,
+    selected: Option<Single<(Entity, &Selected)>>,
+    mut random_vars: Query<(&mut RandomNode, &Selected)>
+){
+    let target = event.original_event_target();
+    if let Some(single) = selected{
+        let (entity, _selected_comp) = single.into_inner();
 
-pub fn on_open_context_menu(
-    event: On<OpenContextMenu>, 
+        if let Ok(item) = menu_items.get(target) {
+            //set distribution of node to new dist... or maybe on apply?
+            println!("Selected distribution {}", item.0);
+            let (mut random_var, _selected_comp) = random_vars.get_mut(entity).unwrap();
+            random_var.dist_type = item.0.clone();
+            //buggy line, can panic, need to set to default params on dist change.
+            refresh_var_dist(&mut random_var, &mut commands);
+            commands.trigger(CloseContextMenus);
+            commands.trigger(ReloadSidebar);
+            
+        }
+    }
+}
+//
+pub fn on_open_distribution_menu(
+    event: On<OpenDistributionMenu>, 
     mut commands: Commands,
 ) {
     commands.trigger(CloseContextMenus);
-
     let pos = event.pos;
-
     debug!("open context menu at: {pos}");
 
     commands
@@ -191,45 +230,21 @@ pub fn on_open_context_menu(
             BorderColor::all(Color::BLACK),
             BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
             children![
-                context_item("Normal", String::from("Normal")),
-                context_item("LogNormal", String::from("LogNormal")),
-                context_item("Beta", String::from("Beta")),
-                context_item("Gamma", String::from("Gamma")),
-                context_item("Exponential", String::from("Exponential")),
-                context_item("Uniform", String::from("Uniform"))
+                context_item("Normal"),
+                context_item("LogNormal"),
+                context_item("Beta"),
+                context_item("Gamma"),
+                context_item("Exponential"),
+                context_item("Uniform")
             ],
         ))
-        .observe(
-            |event: On<Pointer<Press>>,
-             menu_items: Query<&ContextMenuItem>,
-             mut commands: Commands,
-             selected: Option<Single<(Entity, &Selected)>>,
-             mut random_vars: Query<(&mut RandomNode, &Selected)>
-             | {
-                let target = event.original_event_target();
-                if let Some(single) = selected{
-                    let (entity, _selected_comp) = single.into_inner();
-
-                    if let Ok(item) = menu_items.get(target) {
-                        //set distribution of node to new dist... or maybe on apply?
-                        println!("Selected distribution {}", item.0);
-                        let (mut random_var, _selected_comp) = random_vars.get_mut(entity).unwrap();
-                        random_var.dist_type = item.0.clone();
-                        //buggy line, can panic, need to set to default params on dist change.
-                        refresh_var_dist(&mut random_var, &mut commands);
-                        commands.trigger(CloseContextMenus);
-                        commands.trigger(ReloadSidebar);
-                        
-                    }
-                }
-            },
-        );
+        .observe(on_select_distribution);
 }
 
-fn context_item(text: &str, dist: String) -> impl Bundle {
+fn context_item(text: &str) -> impl Bundle {
     (
         Name::new(format!("item-{text}")),
-        ContextMenuItem(dist),
+        ContextMenuItem(text.to_string()),
         Button,
         Node {
             padding: UiRect::all(px(5)),

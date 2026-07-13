@@ -7,7 +7,7 @@ mod graph;
 mod ui;
 mod constants;
 pub use constants::*;
-use sidebar::random_var::on_open_context_menu;
+use sidebar::random_var::on_open_distribution_menu;
 use crate::sidebar::*;
 use crate::ui::*;
 use crate::nodes::*;
@@ -31,7 +31,7 @@ fn setup (
         Text2d::new("Click to create a new node.\n\
                         Shift click a parent and then a child\n\
                         node to create a link between them.\n\
-                        Double-click a node to delete it.\n\
+                        Click a node to edit its properties.\n\
                         Click a node, then a letter key,\n\
                         to assign it a one-letter name."),
         Transform{
@@ -45,7 +45,7 @@ fn setup (
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
-        .add_observer(on_open_context_menu)
+        .add_observer(on_open_distribution_menu)
         .add_observer(on_trigger_close_menus)
         .add_observer(throw_err)
         .add_observer(reload_sidebar)

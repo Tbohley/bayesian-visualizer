@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use crate::ERR_BORDER_COLOR;
+
 #[derive(Event)]
 pub struct ErrorToast {
     pub text: String,
@@ -30,7 +32,7 @@ pub fn throw_err(
             ..default()
         },
         BackgroundColor(event.color),
-        BorderColor::from(Color::srgb(0.9, 0.15, 0.15)),
+        BorderColor::all(ERR_BORDER_COLOR),
         ErrorToastBox {
             timer: Timer::from_seconds(10.0, TimerMode::Once),
         },

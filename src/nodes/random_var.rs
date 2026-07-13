@@ -55,7 +55,7 @@ pub fn on_background_click(
             params: vec![ParamValue("mean", 0.),ParamValue("std_dev",1.)]
         }
     )).with_child((
-        UnnamedNode,
+        NodeLabel(node_num.to_string()),
         Text2d::new(node_num.to_string()),
         TextColor(NODE_NAME_COLOR),
         Pickable::IGNORE,
@@ -73,7 +73,6 @@ pub fn on_node_click(
     mut commands: Commands,
     input: Res<ButtonInput<KeyCode>>,
     mut unfinished_link: Query<(Entity, &mut GraphLink), With<UnfinishedLink>>,
-    mut finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     transforms: Query<&mut Transform>,
@@ -94,6 +93,7 @@ pub fn on_node_click(
                 return;
             }
             ends.to = Some(event.event_target());
+            commands.trigger(ReloadSidebar);
             println!("Completed a GraphLink");
 
             //add arrow
@@ -144,41 +144,21 @@ pub fn on_node_click(
             };
 
         }
-        //double click, delete node
-        if event.duration.as_millis() < 200 && event.count > 1 { 
-            println!("Deleted a node");
-            commands.entity(event.entity).despawn();
-            
-            //despawn connected links
-            for (link_entity, link_component) in finished_links.iter_mut() {
-                if event.event_target() == link_component.from || event.event_target() == link_component.to.unwrap(){
-                    commands.entity(link_entity).despawn();
-                }
-            }
-            //despawn unfinished connected link
-            if let Ok((unfinished_ent, ends)) = unfinished_link.single_mut() {
-                if event.event_target() == ends.from {
-                    commands.entity(unfinished_ent).despawn();
-                }
-            }
-            commands.trigger(ReloadSidebar);
-
-        }
     }
 }
+
 
 //rename selected node to single-letter name from keyboard
 pub fn on_keypress(
     mut kbd: MessageReader<KeyboardInput>,
     mut commands: Commands,
-    selected: Option<Single<(Entity, &Selected)>>,
-    mut unnamed: Query<(Entity, &UnnamedNode, &ChildOf)>,
-    mut named: Query<(Entity, &NamedNode, &ChildOf)>,
+    selected: Option<Single<(Entity, &mut RandomNode), With<Selected>>>,
+    labels: Query<(Entity, &NodeLabel, &ChildOf)>
 ){
     let Some(single) = selected else {
         return;
     };
-    let (entity, _selected_comp) = single.into_inner();
+    let (entity, mut random_node) = single.into_inner();
 
     //for all keyboard inputs while node is selected
     for event in kbd.read() {
@@ -189,26 +169,19 @@ pub fn on_keypress(
             continue;
         };
         //only alphabetic, numbers reserved for unnamed nodes
-        if text.len() != 1 || !text.chars().all(|c| c.is_alphabetic()) {
+        if text.chars().count() != 1 || !text.chars().all(|c| c.is_alphabetic()) {
             continue;
         }
-        //find UnnamedNode (child entity of node w/display text) and delete
-        for (unnamed_entity, _unnamed_node, parent) in unnamed.iter_mut() {
-            println!("Named a node");
-            if parent.parent() == entity {
-                commands.entity(unnamed_entity).despawn();
+        random_node.name = Some(text.to_string());
+        
+        for (label_entity,_, child_of) in labels.iter() {
+            if child_of.parent() == entity {
+                commands.entity(label_entity).despawn();
             }
         }
-        //same for NamedNode
-        for (named_entity, _named_node, parent) in named.iter_mut() {
-            println!("Renamed a node");
-            if parent.parent() == entity {
-                commands.entity(named_entity).despawn();
-            }
-        }
-        //spawn new NamedNode child with new name/text
+
         commands.entity(entity).with_child((
-            NamedNode(text.to_string()),
+            NodeLabel(text.to_string()),
             Text2d::new(text.to_string()),
             TextColor(NODE_NAME_COLOR),
             Pickable::IGNORE,

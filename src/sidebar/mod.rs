@@ -1,13 +1,13 @@
 pub mod random_var;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;
+use bevy::ecs::entity;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::text::EditableText;
 use bevy::text::TextCursorStyle;
-
 use bevy::prelude::*;
 use crate::constants::*;
-use crate::graph::Selected;
+use crate::graph::*;
 use crate::nodes::*;
 
 /*pub trait SidebarContent {
@@ -23,16 +23,29 @@ pub struct ParamTextbox(pub usize);
 
 /// event opening a new context menu at position `pos`
 #[derive(Event)]
-pub struct OpenContextMenu {
+pub struct OpenDistributionMenu {
     pub pos: Vec2,
 }
 
 //trait for var types to use to build their specific sidebar content
 trait SidebarContent {
-    fn build(&self, commands: &mut Commands, sidebar_entity: Entity);
+    fn build(
+        &self, 
+        commands: &mut Commands, 
+        sidebar_entity: Entity,
+        node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
+        finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+        node: Entity
+    );
 }
 impl SidebarContent for ComputeNode{
-    fn build(&self, commands: &mut Commands, sidebar_entity: Entity){
+    fn build(
+        &self, commands: &mut Commands, 
+        sidebar_entity: Entity,
+        _node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
+        _finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+        _node: Entity
+    ){
         commands.entity(sidebar_entity).with_child(
             (
                 Text::new("Unfinished"),
@@ -47,7 +60,14 @@ impl SidebarContent for ComputeNode{
 }
 
 impl SidebarContent for ScalarNode{
-    fn build(&self, commands: &mut Commands, sidebar_entity: Entity){
+    fn build(
+        &self, 
+        commands: &mut Commands, 
+        sidebar_entity: Entity,
+        _node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
+        _finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+        _node: Entity
+    ){
         commands.entity(sidebar_entity).with_child(
             (
                 Text::new("Unfinished"),
@@ -76,12 +96,83 @@ pub struct ContextMenu;
 #[derive(Component)]
 pub struct ContextMenuItem(pub String);
 
+//generate menu of incoming links for any node
+pub fn available_links(
+    commands: &mut Commands,
+    node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
+    finished_links: &Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+    sidebar_entity: Entity,
+    node: Entity
+){
+    commands.entity(sidebar_entity).with_child((
+        Text::new("Incoming links:"),
+        Node {
+            margin: px(4).bottom(),
+            ..default()
+        },
+        TextColor(NODE_NAME_COLOR),
+    ));
+    let link_space = commands.spawn(
+        (Node{
+            margin: px(4).bottom(),
+            flex_direction: FlexDirection::Column,
+            border_radius: px(5.).into(),
+            ..default()
+        },
+        BackgroundColor(AVAILABLE_LINKS_COLOR))
+    ).id();
+    commands.entity(sidebar_entity).add_child(link_space);
+
+    let mut i = 1;
+    for (_entity, ends) in finished_links.iter(){
+        if ends.to == Some(node) {
+            let (maybe_random, maybe_scalar, maybe_transform) = node_data.get(ends.from).unwrap();
+
+            let label = match (maybe_random, maybe_scalar, maybe_transform) {
+                (Some(rv), None, None) => rv.label(),
+                (None, Some(sc), None) => "operation: ".to_string() + &sc.label(),
+                (None, None, Some(cn)) => "scalar: ".to_string() + &cn.label(),
+                _ => "sidebar/mod.rs BUG: ".to_string(),
+            };
+
+            commands.entity(link_space).with_child((
+                Text::new(format!["{}: {}", i, label]),
+                Node {
+                    margin: px(4).bottom(),
+                    ..default()
+                },
+                TextFont{
+                    font_size: px(16).into(),
+                    ..default()
+                },
+                TextColor(NODE_NAME_COLOR),
+            ));
+            i+=1;
+        }
+    }
+    if i == 1 {
+        commands.entity(link_space).with_child((
+            Text::new("No incoming links!"),
+            Node {
+                margin: px(4).bottom(),
+                ..default()
+            },
+            TextFont{
+                font_size: px(16).into(),
+                ..default()
+            },
+            TextColor(NODE_NAME_COLOR),
+        ));
+    }
+}
+
+//sidebar loader, event triggered by most graph changes
 pub fn reload_sidebar(
     _event: On<ReloadSidebar>,
     mut commands: Commands,
     selected: Option<Single<(Entity, &mut Selected, &mut GraphNode)>>,
     node_data: Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
-    //finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+    finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar: Query<(Entity, &Sidebar)>,
 ){
     for (sidebar_entity, _comp) in sidebar.iter(){
@@ -119,14 +210,65 @@ pub fn reload_sidebar(
             ));
         let (maybe_random, maybe_scalar, maybe_transform) = node_data.get(entity).unwrap();
         match (maybe_random, maybe_scalar, maybe_transform) {
-            (Some(rv), None, None) => rv.build(&mut commands, sidebar_entity),
-            (None, Some(sc), None) => sc.build(&mut commands, sidebar_entity),
-            (None, None, Some(cn)) => cn.build(&mut commands, sidebar_entity),
+            (Some(rv), None, None) => rv.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
+            (None, Some(sc), None) => sc.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
+            (None, None, Some(cn)) => cn.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
             _ => warn!("Node has invalid or multiple node type components"),
         }
+
+        let delete_button = commands.spawn((
+            Name::new("delete_button"),
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BorderColor::all(ERR_BORDER_COLOR),
+            BackgroundColor(ERR_COLOR),
+            children![(
+                Pickable::IGNORE,
+                Text::new("Delete"),
+                TextColor(Color::WHITE),
+                TextShadow::default(),
+            )],
+            )).observe(  //delete button functionality
+                |
+                _event: On<Pointer<Click>>,
+                selected: Single<(Entity, &mut Selected, &mut GraphNode)>,
+                mut commands: Commands,
+                mut finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+                mut unfinished_link: Query<(Entity, &mut GraphLink), With<UnfinishedLink>>,
+                |{
+                    let (node, _selected, _graphnode) = selected.into_inner();
+                        commands.entity(node).despawn();
+                        
+                        //despawn connected links
+                        for (link_entity, link_component) in finished_links.iter_mut() {
+                            if node == link_component.from || link_component.to == Some(node) {
+                                commands.entity(link_entity).despawn();
+                            }
+                        }
+                        //despawn unfinished connected link
+                        if let Ok((unfinished_ent, ends)) = unfinished_link.single_mut() {
+                            if node == ends.from {
+                                commands.entity(unfinished_ent).despawn();
+                            }
+                        }
+                        commands.trigger(ReloadSidebar);
+                }
+            ).id();
+            commands.entity(sidebar_entity).add_child(delete_button);
     }
+
 }
 
+
+//close all context menus
 pub fn on_trigger_close_menus(
     _event: On<CloseContextMenus>,
     mut commands: Commands,
