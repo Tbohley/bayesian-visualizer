@@ -132,7 +132,7 @@ impl SidebarContent for RandomNode{
 }
 
 
-fn build_param_textbox(
+fn build_param_textbox(     //TODO: rip out param textbox, replace with context menu of graphlink options
     commands: &mut Commands,
     random_var: &RandomNode,
     param_num: usize
@@ -206,7 +206,7 @@ fn on_select_distribution(
         }
     }
 }
-//
+
 pub fn on_open_distribution_menu(
     event: On<OpenDistributionMenu>, 
     mut commands: Commands,
@@ -239,21 +239,4 @@ pub fn on_open_distribution_menu(
             ],
         ))
         .observe(on_select_distribution);
-}
-
-fn context_item(text: &str) -> impl Bundle {
-    (
-        Name::new(format!("item-{text}")),
-        ContextMenuItem(text.to_string()),
-        Button,
-        Node {
-            padding: UiRect::all(px(5)),
-            ..default()
-        },
-        children![(
-            Pickable::IGNORE,
-            Text::new(text),
-            TextColor(Color::WHITE),
-        )],
-    )
 }

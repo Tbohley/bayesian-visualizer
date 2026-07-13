@@ -12,60 +12,6 @@ use crate::ui::*;
 use crate::graph::*;
 use super::*;
 
-//create a node on canvas
-pub fn on_background_click(
-    mut event: On<Pointer<Click>>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    current_nodes: Query<&GraphNode>,
-    selected: Option<Single<(Entity, &mut Selected)>>,
-) {
-
-    if let Some(single) = selected{
-        let (entity, _selected_comp) = single.into_inner();
-        //deselect currently selected node + close context menus
-        commands.entity(entity).remove::<Selected>();
-        commands.trigger(CloseContextMenus);
-        commands.trigger(ReloadSidebar);
-        return;
-    }
-
-    let mut node_num = 1;
-
-    //finds the lowest unused node in the least efficient way possible
-    while current_nodes.iter().any(|node| node.0 == node_num) { 
-        node_num += 1;
-    }
-    println!("Created node #{}", node_num);
-
-    commands.spawn((
-        GraphNode(node_num),
-        Pickable{should_block_lower: true, is_hoverable: true},
-        Mesh2d(meshes.add(Circle::new(NODE_RAD))),
-        MeshMaterial2d(materials.add(NODE_COLOR)),
-        Transform::from_xyz(
-            event.hit.position.unwrap().x,
-            event.hit.position.unwrap().y,
-            1.0),
-        RandomNode{      //TODO: move to global sidebar
-            name: None,
-            dist_type: String::from("Normal"),
-            dist: Box::new(Normal::new(0.0, 1.0).unwrap().clone()),
-            params: vec![ParamValue("mean", 0.),ParamValue("std_dev",1.)]
-        }
-    )).with_child((
-        NodeLabel(node_num.to_string()),
-        Text2d::new(node_num.to_string()),
-        TextColor(NODE_NAME_COLOR),
-        Pickable::IGNORE,
-        Transform::from_xyz(0.0,0.0,2.0)
-    ))
-    .observe(on_node_drag)
-    .observe(on_node_click);
-    event.propagate(true);
-}
-
 
 //multifunctional: single click to edit a node, shift click two nodes consecutively to create a link, double click to delete the node and its links.
 pub fn on_node_click(
@@ -147,6 +93,38 @@ pub fn on_node_click(
     }
 }
 
+pub fn new_random(
+    commands: &mut Commands,
+    loc: Vec3,
+    node_num: u32,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+){
+    commands.spawn((
+        GraphNode(node_num),
+        Pickable{should_block_lower: true, is_hoverable: true},
+        Mesh2d(meshes.add(Circle::new(NODE_RAD))),
+        MeshMaterial2d(materials.add(RANDOM_NODE_COLOR)),
+        Transform::from_xyz(
+            loc.x,
+            loc.y,
+            1.0),
+        RandomNode{      //TODO: move to global sidebar
+            name: None,
+            dist_type: String::from("Normal"),
+            dist: Box::new(Normal::new(0.0, 1.0).unwrap().clone()),
+            params: vec![ParamValue("mean", 0.),ParamValue("std_dev",1.)]
+        }
+    )).with_child((
+        NodeLabel(node_num.to_string()),
+        Text2d::new(node_num.to_string()),
+        TextColor(NODE_NAME_COLOR),
+        Pickable::IGNORE,
+        Transform::from_xyz(0.0,0.0,2.0)
+    ))
+    .observe(on_node_drag)
+    .observe(on_node_click);
+}
 
 //rename selected node to single-letter name from keyboard
 pub fn on_keypress(

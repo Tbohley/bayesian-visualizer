@@ -7,7 +7,9 @@ mod graph;
 mod ui;
 mod constants;
 pub use constants::*;
-use sidebar::random_var::on_open_distribution_menu;
+use sidebar::global::load_global_sidebar;
+use sidebar::global::on_open_node_type_menu;
+use sidebar::random_node::on_open_distribution_menu;
 use crate::sidebar::*;
 use crate::ui::*;
 use crate::nodes::*;
@@ -23,33 +25,22 @@ fn setup (
     commands.spawn((
         Canvas,
         Mesh2d(meshes.add(Rectangle::new(CANVAS_WIDTH, CANVAS_HEIGHT))),
-        MeshMaterial2d(materials.add(CANVAS_COLOR))
+        MeshMaterial2d(materials.add(CANVAS_COLOR)),
+        NodeMode(NodeType::Random)
     ))
     .observe(on_background_click);
 
-    commands.spawn((
-        Text2d::new("Click to create a new node.\n\
-                        Shift click a parent and then a child\n\
-                        node to create a link between them.\n\
-                        Click a node to edit its properties.\n\
-                        Click a node, then a letter key,\n\
-                        to assign it a one-letter name."),
-        Transform{
-            translation: vec3(-450.,300.0,1.0),
-            scale: vec3(0.7,0.7,1.0),
-            rotation: Quat::from_rotation_z(0.0)
-        }
-    ));
 }
 
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
         .add_observer(on_open_distribution_menu)
+        .add_observer(on_open_node_type_menu)
         .add_observer(on_trigger_close_menus)
         .add_observer(throw_err)
         .add_observer(reload_sidebar)
-        .add_systems(Startup, setup)
+        .add_systems(Startup, (setup, load_global_sidebar))
         .add_systems(Update, (
             on_keypress, 
             on_enter_clicked,

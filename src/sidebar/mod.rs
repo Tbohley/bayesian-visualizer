@@ -1,22 +1,21 @@
-pub mod random_var;
+pub mod random_node;
+pub mod global;
+pub mod compute_node;
+pub mod scalar_node;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;
-use bevy::ecs::entity;
 use bevy::input_focus::tab_navigation::TabIndex;
-use bevy::text::EditableText;
 use bevy::text::TextCursorStyle;
 use bevy::prelude::*;
 use crate::constants::*;
 use crate::graph::*;
 use crate::nodes::*;
 
-/*pub trait SidebarContent {
-    fn build(&self, commands: &mut Commands, parent: Entity);
-}
-*/
+#[derive(Component)]
+pub struct LocalSidebar;
 
 #[derive(Component)]
-pub struct Sidebar;
+pub struct GlobalSidebar;
 
 #[derive(Component)]
 pub struct ParamTextbox(pub usize);
@@ -27,58 +26,9 @@ pub struct OpenDistributionMenu {
     pub pos: Vec2,
 }
 
-//trait for var types to use to build their specific sidebar content
-trait SidebarContent {
-    fn build(
-        &self, 
-        commands: &mut Commands, 
-        sidebar_entity: Entity,
-        node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
-        finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-        node: Entity
-    );
-}
-impl SidebarContent for ComputeNode{
-    fn build(
-        &self, commands: &mut Commands, 
-        sidebar_entity: Entity,
-        _node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
-        _finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-        _node: Entity
-    ){
-        commands.entity(sidebar_entity).with_child(
-            (
-                Text::new("Unfinished"),
-                Node {
-                    margin: px(4).bottom(),
-                    ..default()
-                },
-                TextColor(NODE_NAME_COLOR),
-            )
-        );
-    }
-}
-
-impl SidebarContent for ScalarNode{
-    fn build(
-        &self, 
-        commands: &mut Commands, 
-        sidebar_entity: Entity,
-        _node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
-        _finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-        _node: Entity
-    ){
-        commands.entity(sidebar_entity).with_child(
-            (
-                Text::new("Unfinished"),
-                Node {
-                    margin: px(4).bottom(),
-                    ..default()
-                },
-                TextColor(NODE_NAME_COLOR),
-            )
-        );
-    }
+#[derive(Event)]
+pub struct OpenNodeTypeMenu{
+    pub pos: Vec2,
 }
 
 /// event will be sent to close currently open context menus
@@ -95,6 +45,36 @@ pub struct ContextMenu;
 /// context menu item data storing what background color `Srgba` it activates
 #[derive(Component)]
 pub struct ContextMenuItem(pub String);
+
+//trait for var types to use to build their specific sidebar content
+trait SidebarContent {
+    fn build(
+        &self, 
+        commands: &mut Commands, 
+        sidebar_entity: Entity,
+        node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
+        finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+        node: Entity
+    );
+}
+
+
+pub fn context_item(text: &str) -> impl Bundle {
+    (
+        Name::new(format!("item-{text}")),
+        ContextMenuItem(text.to_string()),
+        Button,
+        Node {
+            padding: UiRect::all(px(5)),
+            ..default()
+        },
+        children![(
+            Pickable::IGNORE,
+            Text::new(text),
+            TextColor(Color::WHITE),
+        )],
+    )
+}
 
 //generate menu of incoming links for any node
 pub fn available_links(
@@ -130,8 +110,8 @@ pub fn available_links(
 
             let label = match (maybe_random, maybe_scalar, maybe_transform) {
                 (Some(rv), None, None) => rv.label(),
-                (None, Some(sc), None) => "operation: ".to_string() + &sc.label(),
-                (None, None, Some(cn)) => "scalar: ".to_string() + &cn.label(),
+                (None, Some(sc), None) => "scalar: ".to_string() + &sc.label(),
+                (None, None, Some(cn)) => "operation: ".to_string() + &cn.label(),
                 _ => "sidebar/mod.rs BUG: ".to_string(),
             };
 
@@ -173,7 +153,7 @@ pub fn reload_sidebar(
     selected: Option<Single<(Entity, &mut Selected, &mut GraphNode)>>,
     node_data: Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-    sidebar: Query<(Entity, &Sidebar)>,
+    sidebar: Query<(Entity, &LocalSidebar)>,
 ){
     for (sidebar_entity, _comp) in sidebar.iter(){
         commands.entity(sidebar_entity).despawn();
@@ -182,7 +162,7 @@ pub fn reload_sidebar(
         let (entity, _selected_comp, node) = single.into_inner();
 
         let sidebar_entity = commands.spawn((
-            Sidebar,
+            LocalSidebar,
             Node {
                 position_type: PositionType::Absolute,
                 right: px(0.),
@@ -203,7 +183,7 @@ pub fn reload_sidebar(
             (
                 Text::new(format!("Node ID: {}", node.0)),
                 Node {
-                    margin: px(16).bottom(),
+                    margin: px(10).bottom(),
                     ..default()
                 },
                 TextColor(NODE_NAME_COLOR),
