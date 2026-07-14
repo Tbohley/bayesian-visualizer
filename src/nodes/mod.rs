@@ -13,7 +13,7 @@ use fugue::*;
 pub struct GraphNode(pub u32);
 
 #[derive(Component)]
-pub struct NodeLabel(String);
+pub struct NodeLabel(pub String);
 
 pub enum NodeType{
     Random,
@@ -24,14 +24,15 @@ pub enum NodeType{
 #[derive(Component)]
 pub struct NodeMode(pub NodeType);
 
+#[derive(Debug)]
 pub enum Operation{
     Add,
-    Sub,
-    Mul,
-    Div,
-    Exp,
-    Log,
-    Pow,
+    Subtract,
+    Multiply,
+    Divide,
+    Exponential,
+    Logarithm,
+    Power,
     Sum,
     Product
 }
@@ -73,12 +74,12 @@ impl NodeDisplay for ComputeNode{
     fn label(&self) -> String{
         match self.operation{
             Operation::Add => "+".to_string(),
-            Operation::Sub => "-".to_string(),
-            Operation::Mul => "*".to_string(),
-            Operation::Div => "/".to_string(),
-            Operation::Exp => "exp".to_string(),
-            Operation::Log => "log".to_string(),
-            Operation::Pow => "^".to_string(),
+            Operation::Subtract => "-".to_string(),
+            Operation::Multiply => "*".to_string(),
+            Operation::Divide => "/".to_string(),
+            Operation::Exponential => "exp".to_string(),
+            Operation::Logarithm => "log".to_string(),
+            Operation::Power => "^".to_string(),
             Operation::Sum => "∑".to_string(),
             Operation::Product => "prod".to_string()
         }
@@ -182,8 +183,8 @@ pub fn new_scalar(
             val: 1.
         }
     )).with_child((
-        NodeLabel("1.0".to_string()),
-        Text2d::new("1.0"),
+        NodeLabel("1".to_string()),
+        Text2d::new("1"),
         TextFont{
             font_size: px(12).into(),
             ..default()
@@ -194,4 +195,35 @@ pub fn new_scalar(
     ))
     .observe(on_node_drag)
     .observe(on_node_click);
+}
+
+
+pub fn replace_node_label(
+    commands: &mut Commands,
+    node_entity: Entity,
+    label_text: impl Into<String>,
+    labels: &Query<(Entity, &NodeLabel, &ChildOf)>,
+) {
+    let label_text = label_text.into();
+
+    for (label_entity, _, child_of) in labels.iter() {
+        if child_of.parent() == node_entity {
+            commands.entity(label_entity).despawn();
+        }
+    }
+
+    commands.entity(node_entity).with_child((
+        NodeLabel(label_text.clone()),
+        Text2d::new(label_text.clone()),
+        TextColor(NODE_NAME_COLOR),
+        TextFont{
+            font_size: match &label_text.len() {
+                n if *n > 1 => px(NODE_LABEL_FONT_SIZE_SMALL).into(),
+                _ => px(NODE_LABEL_FONT_SIZE).into()
+            },
+            ..default()
+        },
+        Pickable::IGNORE,
+        Transform::from_xyz(0.0, 0.0, 2.0),
+    ));
 }

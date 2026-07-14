@@ -175,20 +175,46 @@ pub fn on_keypress(
 pub fn on_enter_clicked(
     input_focus: Res<InputFocus>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut text_input: Query<(&mut EditableText, &ParamTextbox, &Name)>,
-    node_to_change: Single<(&mut RandomNode, &Selected)>,
-    mut commands: Commands
+    mut param_textboxes: Query<(&mut EditableText, &ParamTextbox, &Name), Without<ScalarValueTextbox>>,
+    mut scalar_textboxes: Query<(&mut EditableText, &Name), With<ScalarValueTextbox>>,
+    selected_random: Option<Single<(&mut RandomNode, &Selected)>>,
+    selected_scalar: Option<Single<(Entity, &mut ScalarNode, &Selected)>>,
+    labels: Query<(Entity, &NodeLabel, &ChildOf)>,
+    mut commands: Commands,
 ) {
-    if keyboard_input.just_pressed(KeyCode::Enter)
-        && let Some(focused_entity) = input_focus.get()
-        && let Ok((mut text_input, param_num, _name)) = text_input.get_mut(focused_entity)
-    {
-        let (mut random_var, _selected) = node_to_change.into_inner();
+    if !keyboard_input.just_pressed(KeyCode::Enter) {
+        return;
+    }
+    let Some(focused_entity) = input_focus.get() else {
+        return;
+    };
+
+    // Existing random-node param behavior
+    if let Ok((mut text_input, param_num, _name)) = param_textboxes.get_mut(focused_entity) {
+        let Some(single) = selected_random else {
+            return;
+        };
+        let (mut random_var, _selected) = single.into_inner();
         let num = text_input.value().to_string().parse::<f64>();
+
         match num {
             Ok(f) => {
-                println!("Node w/{} distribution: {} set to {}",random_var.dist_type, distribution_params().get(&random_var.dist_type).unwrap().get(param_num.0).unwrap().0, f);
-                random_var.params.get_mut(param_num.0).expect("invalid param_num").1 = f;
+                println!(
+                    "Node w/{} distribution: {} set to {}",
+                    random_var.dist_type,
+                    distribution_params()
+                        .get(&random_var.dist_type)
+                        .unwrap()
+                        .get(param_num.0)
+                        .unwrap()
+                        .0,
+                    f
+                );
+                random_var
+                    .params
+                    .get_mut(param_num.0)
+                    .expect("invalid param_num")
+                    .1 = f;
             }
             Err(_e) => {
                 println!("Not a valid parameter number!");
@@ -198,8 +224,34 @@ pub fn on_enter_clicked(
         println!("Dist params: {:?}", random_var.params);
         refresh_var_dist(&mut random_var, &mut commands);
         commands.trigger(ReloadSidebar);
-        //random_var
-        //set the random_var's dist value to a new distribution with updated param
+        return;
+    }
+
+    // New scalar-node value behavior
+    if let Ok((mut text_input, _name)) = scalar_textboxes.get_mut(focused_entity) {
+        let Some(single) = selected_scalar else {
+            return;
+        };
+        let (scalar_entity, mut scalar_node, _selected) = single.into_inner();
+        let num = text_input.value().to_string().parse::<f64>();
+        match num {
+            Ok(f) => {
+                scalar_node.val = f;
+
+                replace_node_label(
+                    &mut commands,
+                    scalar_entity,
+                    f.to_string(),
+                    &labels,
+                );
+
+                commands.trigger(ReloadSidebar);
+            }
+            Err(_e) => {
+                println!("Not a valid scalar number!");
+                text_input.clear();
+            }
+        }
     }
 }
 

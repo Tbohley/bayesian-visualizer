@@ -18,6 +18,8 @@ pub const SIDEBAR_WIDTH: f32 = CANVAS_WIDTH / 3.5;
 pub const ERR_COLOR: Color = Color::srgb(0.45, 0.05, 0.05); //red
 pub const SAMPLE_COLOR: Color = Color::srgb(0.05, 0.05, 0.45); //blue
 pub const ERR_BORDER_COLOR: Color = Color::srgb(0.9, 0.15, 0.15); //bright red
+pub const NODE_LABEL_FONT_SIZE_SMALL: i32 = 12;
+pub const NODE_LABEL_FONT_SIZE: i32 = 20;
 
 #[derive(Component)]
 pub struct Canvas;

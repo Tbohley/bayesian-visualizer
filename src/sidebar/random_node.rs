@@ -27,30 +27,11 @@ impl SidebarContent for RandomNode{
                 },
                 TextColor(NODE_NAME_COLOR),
             ));
-        commands.entity(sidebar_entity).with_child(
-        (
-                Node {
-                    width: px(SIDEBAR_WIDTH - 32.0),
-                    height: px(5.0),
-                    margin: px(12).bottom(),
-                    ..default()
-                },
-                BackgroundColor(NODE_NAME_COLOR),
-                TextColor(bevy::prelude::Color::Srgba(BLACK)) //TODO: color fixing
-            ));
+        commands.entity(sidebar_entity).with_child(divider());
         
         available_links(&mut commands, &node_data, &finished_links, sidebar_entity, node);
-        commands.entity(sidebar_entity).with_child(
-            (
-                    Node {
-                        width: px(SIDEBAR_WIDTH - 32.0),
-                        height: px(5.0),
-                        margin: px(12).bottom(),
-                        ..default()
-                    },
-                    BackgroundColor(NODE_NAME_COLOR),
-                    TextColor(bevy::prelude::Color::Srgba(BLACK)) //TODO: color fixing
-                ));
+        commands.entity(sidebar_entity).with_child(divider());
+
         //TODO: add available links section
         commands.entity(sidebar_entity).with_child((
                 Text::new("Distribution:"),
@@ -127,6 +108,7 @@ impl SidebarContent for RandomNode{
         )],
         )).observe(sample_node_toast).id();
         commands.entity(sidebar_entity).add_child(sample_button);
+        commands.entity(sidebar_entity).with_child(divider());
         }
 
 }
@@ -219,6 +201,7 @@ pub fn on_open_distribution_menu(
         .spawn((
             Name::new("distribution selector"),
             ContextMenu,
+            ZIndex(999),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(pos.x),

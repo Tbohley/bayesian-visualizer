@@ -7,6 +7,7 @@ mod graph;
 mod ui;
 mod constants;
 pub use constants::*;
+use sidebar::compute_node::on_open_operation_menu;
 use sidebar::global::load_global_sidebar;
 use sidebar::global::on_open_node_type_menu;
 use sidebar::random_node::on_open_distribution_menu;
@@ -38,6 +39,7 @@ fn main() {
         .add_observer(on_open_distribution_menu)
         .add_observer(on_open_node_type_menu)
         .add_observer(on_trigger_close_menus)
+        .add_observer(on_open_operation_menu)
         .add_observer(throw_err)
         .add_observer(reload_sidebar)
         .add_systems(Startup, (setup, load_global_sidebar))

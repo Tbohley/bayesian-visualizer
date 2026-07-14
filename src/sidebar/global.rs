@@ -99,12 +99,13 @@ pub fn on_open_node_type_menu(
 ) {
     commands.trigger(CloseContextMenus);
     let pos = event.pos;
-    debug!("open context menu at: {pos}");
+    println!("open context menu at: {pos}");
 
     commands
         .spawn((
             Name::new("node type selector"),
             ContextMenu,
+            ZIndex(999),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(pos.x),

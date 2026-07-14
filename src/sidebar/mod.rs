@@ -2,6 +2,7 @@ pub mod random_node;
 pub mod global;
 pub mod compute_node;
 pub mod scalar_node;
+use bevy::color::palettes::css::BLACK;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;
 use bevy::input_focus::tab_navigation::TabIndex;
@@ -20,6 +21,9 @@ pub struct GlobalSidebar;
 #[derive(Component)]
 pub struct ParamTextbox(pub usize);
 
+#[derive(Component)]
+pub struct ScalarValueTextbox;
+
 /// event opening a new context menu at position `pos`
 #[derive(Event)]
 pub struct OpenDistributionMenu {
@@ -28,6 +32,11 @@ pub struct OpenDistributionMenu {
 
 #[derive(Event)]
 pub struct OpenNodeTypeMenu{
+    pub pos: Vec2,
+}
+
+#[derive(Event)]
+pub struct OpenOperationMenu{
     pub pos: Vec2,
 }
 
@@ -74,6 +83,17 @@ pub fn context_item(text: &str) -> impl Bundle {
             TextColor(Color::WHITE),
         )],
     )
+}
+
+pub fn divider() -> (bevy::prelude::Node, bevy::prelude::BackgroundColor, bevy::prelude::TextColor) {
+    (Node {
+        width: px(SIDEBAR_WIDTH - 32.0),
+        height: px(5.0),
+        margin: px(12).bottom(),
+        ..default()
+    },
+    BackgroundColor(NODE_NAME_COLOR),
+    TextColor(bevy::prelude::Color::Srgba(BLACK)))
 }
 
 //generate menu of incoming links for any node
@@ -246,6 +266,8 @@ pub fn reload_sidebar(
     }
 
 }
+
+
 
 
 //close all context menus
