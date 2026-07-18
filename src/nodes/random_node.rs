@@ -13,86 +13,6 @@ use crate::graph::*;
 use super::*;
 
 
-//multifunctional: single click to edit a node, shift click two nodes consecutively to create a link, double click to delete the node and its links.
-pub fn on_node_click(
-    event: On<Pointer<Click>>,
-    mut commands: Commands,
-    input: Res<ButtonInput<KeyCode>>,
-    mut unfinished_link: Query<(Entity, &mut GraphLink), With<UnfinishedLink>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    transforms: Query<&mut Transform>,
-    selected: Option<Single<(Entity, &mut Selected)>>,
-    distributions: Query<&RandomNode>
-){
-    //if it is a shift click:
-    if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]){
-
-        //if there is an unfinished GraphLink, complete it.
-        if let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {
-
-            commands.entity(unfinished_ent).remove::<UnfinishedLink>();
-
-            //if user tries to create a link from a node to itself
-            if ends.from == event.event_target() { 
-                commands.entity(unfinished_ent).despawn();
-                return;
-            }
-            ends.to = Some(event.event_target());
-            commands.trigger(ReloadSidebar);
-            println!("Completed a GraphLink");
-
-            //add arrow
-            if let Some((arrow_transform, arrow_mesh)) = link_transform_helper(&ends, &transforms, &mut meshes) {
-                commands.entity(unfinished_ent).insert((
-                    arrow_mesh,
-                    MeshMaterial2d(materials.add(ARROW_COLOR)),
-                    arrow_transform,
-                ));
-            }
-            
-        //otherwise, create an invisible UnfinishedLink
-        }else{ 
-            commands.spawn((
-                GraphLink{
-                    from: event.event_target(),
-                    to: None
-                },
-                UnfinishedLink
-            ));
-            println!("Created an UnfinishedLink");
-        }
-    //normal click, select the node
-    }else{
-        //println!("Node click event");
-        if event.duration.as_millis() < 200 && event.count == 1 {
-            println!("Selected a node");
-
-            if let Some(single) = selected{
-                let (entity, _selected_comp) = single.into_inner();
-                //deselect currently selected node
-                commands.entity(entity).remove::<Selected>();
-            }
-            //select this node
-            commands.entity(event.event_target()).insert(
-                Selected
-            );
-            commands.trigger(ReloadSidebar);
-
-            let selected_dist_box = distributions.get(event.event_target());
-            match selected_dist_box {
-                Err(_e) => println!("Selected node has no associated distrbution"),
-                Ok(dist) => {
-                    let mut rng = thread_rng();
-                    println!("Selected node distribution: {:?}", dist.dist);
-                    println!("Sample from node: {}", dist.dist.sample(&mut rng))
-                }
-            };
-
-        }
-    }
-}
-
 pub fn new_random(
     commands: &mut Commands,
     loc: Vec3,
@@ -227,7 +147,7 @@ pub fn on_enter_clicked(
         return;
     }
 
-    // New scalar-node value behavior
+    // Scalar-node value behavior
     if let Ok((mut text_input, _name)) = scalar_textboxes.get_mut(focused_entity) {
         let Some(single) = selected_scalar else {
             return;

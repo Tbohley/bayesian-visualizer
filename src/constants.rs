@@ -20,6 +20,7 @@ pub const SAMPLE_COLOR: Color = Color::srgb(0.05, 0.05, 0.45); //blue
 pub const ERR_BORDER_COLOR: Color = Color::srgb(0.9, 0.15, 0.15); //bright red
 pub const NODE_LABEL_FONT_SIZE_SMALL: i32 = 12;
 pub const NODE_LABEL_FONT_SIZE: i32 = 20;
+pub const SELECTION_INDICATOR_COLOR: Color = Color::srgb(123./255., 130./255., 76./255.);
 
 #[derive(Component)]
 pub struct Canvas;

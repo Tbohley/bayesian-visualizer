@@ -1,10 +1,17 @@
-pub mod random_var;
+pub mod random_node;
+pub mod compute_node;
+pub mod scalar_node;
 use fugue::Distribution;
-pub use random_var::*;
+use rand::thread_rng;
+pub use random_node::*;
+pub use compute_node::*;
+pub use scalar_node::*;
 use crate::constants::*;
 use bevy::prelude::*;
 use crate::graph::*;
 use crate::sidebar::*;
+use crate::ui::*;
+
 use fugue::*;
 
 
@@ -70,26 +77,13 @@ pub struct ComputeNode{
     pub params: Vec<ParamValue>
 }
 
-impl NodeDisplay for ComputeNode{
-    fn label(&self) -> String{
-        match self.operation{
-            Operation::Add => "+".to_string(),
-            Operation::Subtract => "-".to_string(),
-            Operation::Multiply => "*".to_string(),
-            Operation::Divide => "/".to_string(),
-            Operation::Exponential => "exp".to_string(),
-            Operation::Logarithm => "log".to_string(),
-            Operation::Power => "^".to_string(),
-            Operation::Sum => "∑".to_string(),
-            Operation::Product => "prod".to_string()
-        }
-    }
-}
-
 #[derive(Component)]
 pub struct ScalarNode{
     pub val: f64
 }
+
+#[derive(Component)]
+pub struct SelectedIndicator;
 
 impl NodeDisplay for ScalarNode{
     fn label(&self) -> String{
@@ -105,12 +99,18 @@ pub fn on_background_click(
     mut materials: ResMut<Assets<ColorMaterial>>,
     current_nodes: Query<&GraphNode>,
     selected: Option<Single<(Entity, &mut Selected)>>,
-    node_mode: Single<&NodeMode>
+    node_mode: Single<&NodeMode>,
+    selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
 ) {
     if let Some(single) = selected{
         let (entity, _selected_comp) = single.into_inner();
         //deselect currently selected node + close context menus
         commands.entity(entity).remove::<Selected>();
+        for (indicator_entity, child_of) in selection_indicators.iter() {
+            if child_of.parent() == entity {
+                commands.entity(indicator_entity).despawn();
+            }
+        }
         commands.trigger(CloseContextMenus);
         commands.trigger(ReloadSidebar);
         return;
@@ -132,98 +132,97 @@ pub fn on_background_click(
     
 }
 
-pub fn new_compute(
-    commands: &mut Commands,
-    loc: Vec3,
-    node_num: u32,
+
+//multifunctional: single click to edit a node, shift click two nodes consecutively to create a link
+pub fn on_node_click(
+    event: On<Pointer<Click>>,
+    mut commands: Commands,
+    input: Res<ButtonInput<KeyCode>>,
+    mut unfinished_link: Query<(Entity, &mut GraphLink), With<UnfinishedLink>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    transforms: Query<&mut Transform>,
+    selected: Option<Single<(Entity, &mut Selected)>>,
+    distributions: Query<&RandomNode>,
+    selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
 ){
-    commands.spawn((
-        GraphNode(node_num),
-        Pickable{should_block_lower: true, is_hoverable: true},
-        Mesh2d(meshes.add(Circle::new(NODE_RAD*0.75))),
-        MeshMaterial2d(materials.add(COMPUTE_NODE_COLOR)),
-        Transform::from_xyz(
-            loc.x,
-            loc.y,
-            1.0),
-        ComputeNode{      //TODO: move to global sidebar
-            operation: Operation::Add,
-            params: vec![ParamValue("first", 2.),ParamValue("second",2.)]
+    //if it is a shift click:
+    if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]){
+
+        //if there is an unfinished GraphLink, complete it.
+        if let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {
+
+            commands.entity(unfinished_ent).remove::<UnfinishedLink>();
+
+            //if user tries to create a link from a node to itself
+            if ends.from == event.event_target() { 
+                commands.entity(unfinished_ent).despawn();
+                return;
+            }
+            ends.to = Some(event.event_target());
+            commands.trigger(ReloadSidebar);
+            println!("Completed a GraphLink");
+
+            //add arrow
+            if let Some((arrow_transform, arrow_mesh)) = link_transform_helper(&ends, &transforms, &mut meshes) {
+                commands.entity(unfinished_ent).insert((
+                    arrow_mesh,
+                    MeshMaterial2d(materials.add(ARROW_COLOR)),
+                    arrow_transform,
+                ));
+            }
+            
+        //otherwise, create an invisible UnfinishedLink
+        }else{ 
+            commands.spawn((
+                GraphLink{
+                    from: event.event_target(),
+                    to: None
+                },
+                UnfinishedLink
+            ));
+            println!("Created an UnfinishedLink");
         }
-    )).with_child((
-        NodeLabel("+".to_string()),
-        Text2d::new("+"),
-        TextColor(NODE_NAME_COLOR),
-        Pickable::IGNORE,
-        Transform::from_xyz(0.0,0.0,2.0)
-    ))
-    .observe(on_node_drag)
-    .observe(on_node_click);
-}
+    //normal click, select the node
+    }else{
+        //println!("Node click event");
+        if event.duration.as_millis() < 200 && event.count == 1 {
+            println!("Selected a node");
 
-pub fn new_scalar(
-    commands: &mut Commands,
-    loc: Vec3,
-    node_num: u32,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-){
-    commands.spawn((
-        GraphNode(node_num),
-        Pickable{should_block_lower: true, is_hoverable: true},
-        Mesh2d(meshes.add(Circle::new(NODE_RAD*0.5))),
-        MeshMaterial2d(materials.add(SCALAR_NODE_COLOR)),
-        Transform::from_xyz(
-            loc.x,
-            loc.y,
-            1.0),
-        ScalarNode{      //TODO: move to global sidebar
-            val: 1.
-        }
-    )).with_child((
-        NodeLabel("1".to_string()),
-        Text2d::new("1"),
-        TextFont{
-            font_size: px(12).into(),
-            ..default()
-        },
-        TextColor(NODE_NAME_COLOR),
-        Pickable::IGNORE,
-        Transform::from_xyz(0.0,0.0,2.0)
-    ))
-    .observe(on_node_drag)
-    .observe(on_node_click);
-}
+            if let Some(single) = selected{
+                let (entity, _selected_comp) = single.into_inner();
+                //deselect currently selected node
+                commands.entity(entity).remove::<Selected>();
 
+                for (indicator_entity, child_of) in selection_indicators.iter() {
+                    if child_of.parent() == entity {
+                        commands.entity(indicator_entity).despawn();
+                    }
+                }
+                
+            }
+            //select this node
+            commands.entity(event.event_target()).insert(
+                Selected
+            ).with_child((
+                    SelectedIndicator,
+                    Pickable::IGNORE,
+                    Mesh2d(meshes.add(selection_indicator(NODE_RAD))),
+                    MeshMaterial2d(materials.add(SELECTION_INDICATOR_COLOR)),
+                    Transform::from_xyz(0.0, 0.0, -0.1)));
 
-pub fn replace_node_label(
-    commands: &mut Commands,
-    node_entity: Entity,
-    label_text: impl Into<String>,
-    labels: &Query<(Entity, &NodeLabel, &ChildOf)>,
-) {
-    let label_text = label_text.into();
+            commands.trigger(ReloadSidebar);
 
-    for (label_entity, _, child_of) in labels.iter() {
-        if child_of.parent() == node_entity {
-            commands.entity(label_entity).despawn();
+            let selected_dist_box = distributions.get(event.event_target());
+            match selected_dist_box {
+                Err(_e) => println!("Selected node has no associated distrbution"),
+                Ok(dist) => {
+                    let mut rng = thread_rng();
+                    println!("Selected node distribution: {:?}", dist.dist);
+                    println!("Sample from node: {}", dist.dist.sample(&mut rng))
+                }
+            };
+
         }
     }
-
-    commands.entity(node_entity).with_child((
-        NodeLabel(label_text.clone()),
-        Text2d::new(label_text.clone()),
-        TextColor(NODE_NAME_COLOR),
-        TextFont{
-            font_size: match &label_text.len() {
-                n if *n > 1 => px(NODE_LABEL_FONT_SIZE_SMALL).into(),
-                _ => px(NODE_LABEL_FONT_SIZE).into()
-            },
-            ..default()
-        },
-        Pickable::IGNORE,
-        Transform::from_xyz(0.0, 0.0, 2.0),
-    ));
 }

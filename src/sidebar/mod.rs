@@ -1,7 +1,7 @@
-pub mod random_node;
+pub mod random_menu;
 pub mod global;
-pub mod compute_node;
-pub mod scalar_node;
+pub mod compute_menu;
+pub mod scalar_menu;
 use bevy::color::palettes::css::BLACK;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;

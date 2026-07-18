@@ -7,10 +7,10 @@ mod graph;
 mod ui;
 mod constants;
 pub use constants::*;
-use sidebar::compute_node::on_open_operation_menu;
+use sidebar::compute_menu::on_open_operation_menu;
 use sidebar::global::load_global_sidebar;
 use sidebar::global::on_open_node_type_menu;
-use sidebar::random_node::on_open_distribution_menu;
+use sidebar::random_menu::on_open_distribution_menu;
 use crate::sidebar::*;
 use crate::ui::*;
 use crate::nodes::*;
@@ -47,7 +47,8 @@ fn main() {
             on_keypress, 
             on_enter_clicked,
             tick_error_toasts, 
-            click_error_toasts))
+            click_error_toasts,
+            spin_selection_indicators))
         .run();
 }
 
@@ -97,17 +98,25 @@ Global sidebar{
 }
 
 
+
 Single click allows node name editing,
 eventually will be -> popup with 
 distribution/property editing               DONE
+
 Various distribution options
+
 Single sampling/forward sampling
+
 Plot viewing
+
 Crosslink, brushing interaction
+
 WASM support and CI/CD
 
+Interval type checking
 
------------------Optional goals-----------------
+
+-----------------Optional/stretch goals-----------------
 
 Ghost arrow after shift-clicking a node
 that tracks cursor until end node clicked   
@@ -116,6 +125,9 @@ Different color schemes
 
 Rewrap all uses of .unwrap()
 
+Delete link buttons in incoming links menu
+
+Make arrows touch non-random nodes
 
 
 -------------------Bug tracker------------------
