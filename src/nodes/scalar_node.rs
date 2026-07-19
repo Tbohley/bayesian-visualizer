@@ -24,10 +24,6 @@ pub fn new_scalar(
     )).with_child((
         NodeLabel("1".to_string()),
         Text2d::new("1"),
-        TextFont{
-            font_size: px(12).into(),
-            ..default()
-        },
         TextColor(NODE_NAME_COLOR),
         Pickable::IGNORE,
         Transform::from_xyz(0.0,0.0,2.0)

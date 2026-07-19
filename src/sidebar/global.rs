@@ -69,6 +69,8 @@ pub fn load_global_sidebar(
     //TODO: context menu for selecting which type of node to create
 }
 
+
+//
 pub fn on_set_node_mode(
     event: On<Pointer<Press>>,
     menu_items: Query<&ContextMenuItem>,

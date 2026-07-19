@@ -9,3 +9,5 @@ slop/setup.rs
 slop/ui_editor.rs
 slop/visual_sync.rs
 src/.DS_Store
+/.DS_Store
+assets/cursors/.DS_Store

@@ -5,8 +5,8 @@ pub const CANVAS_WIDTH: f32 = 800.0;
 pub const SIDEBAR_WIDTH: f32 = CANVAS_WIDTH / 3.5;
 
 pub const RANDOM_NODE_RAD: f32 = 20.0;
-pub const COMPUTE_NODE_RAD: f32 = 20.0;
-pub const SCALAR_NODE_RAD: f32 = 20.0;
+pub const COMPUTE_NODE_RAD: f32 = 18.0;
+pub const SCALAR_NODE_RAD: f32 = 16.0;
 
 pub const ARROW_THICKNESS: f32 = 2.0;
 pub const ARROW_TIP_WIDTH_RATIO: f32 = 10.0;
