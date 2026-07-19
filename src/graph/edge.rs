@@ -79,7 +79,7 @@ pub fn link_transform_helper(
     let delta = to_pos - from_pos;
     let angle = delta.y.atan2(delta.x);
     let midpoint = from_pos.lerp(to_pos, 0.5);
-    let length = from_pos.distance(to_pos) - (2.0 * NODE_RAD);
+    let length = from_pos.distance(to_pos) - (2.0 * RANDOM_NODE_RAD);
 
     Some(((Transform {
             translation: midpoint,

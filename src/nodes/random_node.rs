@@ -23,7 +23,7 @@ pub fn new_random(
     commands.spawn((
         GraphNode(node_num),
         Pickable{should_block_lower: true, is_hoverable: true},
-        Mesh2d(meshes.add(Circle::new(NODE_RAD))),
+        Mesh2d(meshes.add(Circle::new(RANDOM_NODE_RAD))),
         MeshMaterial2d(materials.add(RANDOM_NODE_COLOR)),
         Transform::from_xyz(
             loc.x,
@@ -33,7 +33,7 @@ pub fn new_random(
             name: None,
             dist_type: String::from("Normal"),
             dist: Box::new(Normal::new(0.0, 1.0).unwrap().clone()),
-            params: vec![ParamValue("mean", 0.),ParamValue("std_dev",1.)]
+            params: vec![ParamValue("mean", 0.),ParamValue("std_dev", 1.)]
         }
     )).with_child((
         NodeLabel(node_num.to_string()),
@@ -174,6 +174,7 @@ pub fn on_enter_clicked(
         }
     }
 }
+
 
 pub fn refresh_var_dist(
     node: &mut RandomNode,

@@ -36,6 +36,7 @@ fn setup (
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
+        .init_resource::<GraphCursorState>()
         .add_observer(on_open_distribution_menu)
         .add_observer(on_open_node_type_menu)
         .add_observer(on_trigger_close_menus)
@@ -48,7 +49,8 @@ fn main() {
             on_enter_clicked,
             tick_error_toasts, 
             click_error_toasts,
-            spin_selection_indicators))
+            spin_selection_indicators,
+            update_graph_cursor))
         .run();
 }
 

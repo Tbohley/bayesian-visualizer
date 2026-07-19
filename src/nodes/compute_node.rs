@@ -28,7 +28,7 @@ pub fn new_compute(
     commands.spawn((
         GraphNode(node_num),
         Pickable{should_block_lower: true, is_hoverable: true},
-        Mesh2d(meshes.add(Circle::new(NODE_RAD*0.75))),
+        Mesh2d(meshes.add(Circle::new(COMPUTE_NODE_RAD))),
         MeshMaterial2d(materials.add(COMPUTE_NODE_COLOR)),
         Transform::from_xyz(
             loc.x,
@@ -36,7 +36,7 @@ pub fn new_compute(
             1.0),
         ComputeNode{      //TODO: move to global sidebar
             operation: Operation::Add,
-            params: vec![ParamValue("first", 2.),ParamValue("second",2.)]
+            params: vec![ParamValue("first", 1.),ParamValue("second", 1.)]
         }
     )).with_child((
         NodeLabel("+".to_string()),

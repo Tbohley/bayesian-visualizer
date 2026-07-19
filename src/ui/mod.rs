@@ -1,6 +1,7 @@
 use bevy::{asset::RenderAssetUsages, mesh::{Indices, PrimitiveTopology}, prelude::*};
-
+use crate::{constants::*, graph::UnfinishedLink};
 use crate::{ERR_BORDER_COLOR, nodes::SelectedIndicator};
+use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage};
 
 #[derive(Event)]
 pub struct ErrorToast {
@@ -8,9 +9,84 @@ pub struct ErrorToast {
     pub color: Color
 }
 
+#[derive(Resource, Default, PartialEq, Eq, Clone, Copy)]
+pub enum GraphCursorState {
+    #[default]
+    Default,
+    ShiftHeld,
+    FinishLink,
+}
+
 #[derive(Component)]
 pub struct ErrorToastBox {
     pub timer: Timer,
+}
+
+fn set_cursor_image(
+    commands: &mut Commands,
+    window_entity: Entity,
+    asset_server: &AssetServer,
+    path: &'static str,
+) {
+    commands.entity(window_entity).insert(CursorIcon::Custom(
+        CustomCursor::Image(CustomCursorImage {
+            handle: asset_server.load(path),
+            texture_atlas: None,
+            flip_x: false,
+            flip_y: false,
+            rect: None,
+            hotspot: match path {
+                "cursors/shift_held.png" => (8, 0),
+                "cursors/finish_link.png" => (8, 15),
+                _ => (8, 0)
+            },
+        }),
+    ));
+}
+
+pub fn update_graph_cursor(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    input: Res<ButtonInput<KeyCode>>,
+    window: Single<Entity, With<Window>>,
+    unfinished_link: Query<Entity, With<UnfinishedLink>>,
+    mut current_cursor: ResMut<GraphCursorState>,
+) {
+    let next_cursor = if !unfinished_link.is_empty() {
+        GraphCursorState::FinishLink
+    } else if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+        GraphCursorState::ShiftHeld
+    } else {
+        GraphCursorState::Default
+    };
+
+    if *current_cursor == next_cursor {
+        return;
+    }
+
+    *current_cursor = next_cursor;
+
+    match next_cursor {
+        GraphCursorState::Default => {
+            commands.entity(*window).remove::<CursorIcon>();
+        }
+        GraphCursorState::ShiftHeld => {
+            set_cursor_image(
+                &mut commands,
+                *window,
+                &asset_server,
+                "cursors/shift_held.png",
+            );
+        }
+        GraphCursorState::FinishLink => {
+            set_cursor_image(
+                &mut commands,
+                *window,
+                &asset_server,
+                "cursors/finish_link.png",
+            );
+        }
+    }
 }
 
 
@@ -19,7 +95,7 @@ pub fn spin_selection_indicators(
     mut indicators: Query<(&SelectedIndicator, &mut Transform)>,
 ) {
     for (indicator, mut transform) in indicators.iter_mut() {
-        transform.rotate_z(0.5 * time.delta_secs());
+        transform.rotate_z(SELECTION_SPIN_SPEED * time.delta_secs());
     }
 }
 

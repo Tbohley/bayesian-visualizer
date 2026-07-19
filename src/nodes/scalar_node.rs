@@ -12,7 +12,7 @@ pub fn new_scalar(
     commands.spawn((
         GraphNode(node_num),
         Pickable{should_block_lower: true, is_hoverable: true},
-        Mesh2d(meshes.add(Circle::new(NODE_RAD*0.5))),
+        Mesh2d(meshes.add(Circle::new(SCALAR_NODE_RAD))),
         MeshMaterial2d(materials.add(SCALAR_NODE_COLOR)),
         Transform::from_xyz(
             loc.x,

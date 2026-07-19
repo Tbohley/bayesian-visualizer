@@ -93,15 +93,19 @@ impl NodeDisplay for ScalarNode{
 
 //create a node on canvas
 pub fn on_background_click(
-    mut event: On<Pointer<Click>>,
+    event: On<Pointer<Click>>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: ResMut<Assets<ColorMaterial>>,
     current_nodes: Query<&GraphNode>,
     selected: Option<Single<(Entity, &mut Selected)>>,
     node_mode: Single<&NodeMode>,
     selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
+    mut unfinished_links: Query<Entity, With<UnfinishedLink>>,
 ) {
+    for entity in unfinished_links.iter_mut() {
+        commands.entity(entity).despawn();
+    }
     if let Some(single) = selected{
         let (entity, _selected_comp) = single.into_inner();
         //deselect currently selected node + close context menus
@@ -146,43 +150,40 @@ pub fn on_node_click(
     distributions: Query<&RandomNode>,
     selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
 ){
-    //if it is a shift click:
-    if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]){
 
-        //if there is an unfinished GraphLink, complete it.
-        if let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {
 
-            commands.entity(unfinished_ent).remove::<UnfinishedLink>();
+    //if there is an unfinished GraphLink, complete it.
+    if let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {
 
-            //if user tries to create a link from a node to itself
-            if ends.from == event.event_target() { 
-                commands.entity(unfinished_ent).despawn();
-                return;
-            }
-            ends.to = Some(event.event_target());
-            commands.trigger(ReloadSidebar);
-            println!("Completed a GraphLink");
+        commands.entity(unfinished_ent).remove::<UnfinishedLink>();
 
-            //add arrow
-            if let Some((arrow_transform, arrow_mesh)) = link_transform_helper(&ends, &transforms, &mut meshes) {
-                commands.entity(unfinished_ent).insert((
-                    arrow_mesh,
-                    MeshMaterial2d(materials.add(ARROW_COLOR)),
-                    arrow_transform,
-                ));
-            }
-            
-        //otherwise, create an invisible UnfinishedLink
-        }else{ 
-            commands.spawn((
-                GraphLink{
-                    from: event.event_target(),
-                    to: None
-                },
-                UnfinishedLink
-            ));
-            println!("Created an UnfinishedLink");
+        //if user tries to create a link from a node to itself
+        if ends.from == event.event_target() { 
+            commands.entity(unfinished_ent).despawn();
+            return;
         }
+        ends.to = Some(event.event_target());
+        commands.trigger(ReloadSidebar);
+        println!("Completed a GraphLink");
+
+        //add arrow
+        if let Some((arrow_transform, arrow_mesh)) = link_transform_helper(&ends, &transforms, &mut meshes) {
+            commands.entity(unfinished_ent).insert((
+                arrow_mesh,
+                MeshMaterial2d(materials.add(ARROW_COLOR)),
+                arrow_transform,
+            ));
+        }
+    //otherwise, create an invisible UnfinishedLink
+    }else if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]){ 
+        commands.spawn((
+            GraphLink{
+                from: event.event_target(),
+                to: None
+            },
+            UnfinishedLink
+        ));
+        println!("Created an UnfinishedLink");
     //normal click, select the node
     }else{
         //println!("Node click event");
@@ -207,9 +208,9 @@ pub fn on_node_click(
             ).with_child((
                     SelectedIndicator,
                     Pickable::IGNORE,
-                    Mesh2d(meshes.add(selection_indicator(NODE_RAD))),
+                    Mesh2d(meshes.add(selection_indicator(RANDOM_NODE_RAD))),
                     MeshMaterial2d(materials.add(SELECTION_INDICATOR_COLOR)),
-                    Transform::from_xyz(0.0, 0.0, -0.1)));
+                    Transform::from_xyz(0.0, 0.0, 1.)));
 
             commands.trigger(ReloadSidebar);
 
