@@ -10,6 +10,7 @@ pub use constants::*;
 use sidebar::compute_menu::on_open_operation_menu;
 use sidebar::global::load_global_sidebar;
 use sidebar::global::on_open_node_type_menu;
+use sidebar::link_params::on_open_param_link_menu;
 use sidebar::random_menu::on_open_distribution_menu;
 use crate::sidebar::*;
 use crate::ui::*;
@@ -41,6 +42,7 @@ fn main() {
         .add_observer(on_open_node_type_menu)
         .add_observer(on_trigger_close_menus)
         .add_observer(on_open_operation_menu)
+        .add_observer(on_open_param_link_menu)
         .add_observer(throw_err)
         .add_observer(reload_sidebar)
         .add_systems(Startup, (setup, load_global_sidebar))

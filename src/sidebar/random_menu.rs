@@ -4,6 +4,7 @@ use bevy::text::EditableText;
 use crate::constants::*;
 use crate::nodes::*;
 use super::*;
+use super::link_params::*;
 
 impl SidebarContent for RandomNode{
     fn build(
@@ -32,7 +33,6 @@ impl SidebarContent for RandomNode{
         available_links(&mut commands, &node_data, &finished_links, sidebar_entity, node);
         commands.entity(sidebar_entity).with_child(divider());
 
-        //TODO: add available links section
         commands.entity(sidebar_entity).with_child((
                 Text::new("Distribution:"),
                 Node {
@@ -77,14 +77,18 @@ impl SidebarContent for RandomNode{
 
         commands.entity(sidebar_entity).add_child(context_menu);
 
+        commands.entity(sidebar_entity).with_child(divider());
+
+        //HERE is where you need to add context menus per parameter.
+
+        let link_labels = get_ents_and_labels(commands, node_data, &finished_links, node);
+        
         for (i, _param) in self.params.iter().enumerate() {        
-            let child = build_param_textbox(
-                &mut *commands,
-                self,
-                i,
-            );
-            commands.entity(sidebar_entity).add_child(child);
+            build_link_param_selector(commands, link_labels.clone(), self.params.clone(), i, &sidebar_entity);
         }
+
+        commands.entity(sidebar_entity).with_child(divider());
+
         let sample_button = commands.spawn((
         Name::new("sample_button"),
         Button,
@@ -114,7 +118,7 @@ impl SidebarContent for RandomNode{
 }
 
 
-fn build_param_textbox(     //TODO: rip out param textbox, replace with context menu of graphlink options
+/*fn build_param_textbox(     //TODO: rip out param textbox, replace with context menu of graphlink options
     commands: &mut Commands,
     random_var: &RandomNode,
     param_num: usize
@@ -162,7 +166,7 @@ fn build_param_textbox(     //TODO: rip out param textbox, replace with context 
             ],
         ))
         .id()
-}
+}*/
 
 fn on_select_distribution(
     event: On<Pointer<Press>>,

@@ -2,6 +2,7 @@ pub mod random_menu;
 pub mod global;
 pub mod compute_menu;
 pub mod scalar_menu;
+pub mod link_params;
 use bevy::color::palettes::css::BLACK;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;
@@ -40,6 +41,13 @@ pub struct OpenOperationMenu{
     pub pos: Vec2,
 }
 
+#[derive(Event)]
+pub struct OpenParamLinkMenu{
+    pub pos: Vec2,
+    pub param_num: usize,
+}
+
+
 /// event will be sent to close currently open context menus
 #[derive(Event)]
 pub struct CloseContextMenus;
@@ -51,7 +59,15 @@ pub struct ReloadSidebar;
 #[derive(Component)]
 pub struct ContextMenu;
 
-/// context menu item data storing what background color `Srgba` it activates
+
+#[derive(Component)]
+pub struct ParamMenuItem {
+    pub label: String,
+    pub entity: Entity,
+    pub param_num: usize,
+}
+
+// context menu item data storing what background color `Srgba` it activates
 #[derive(Component)]
 pub struct ContextMenuItem(pub String);
 

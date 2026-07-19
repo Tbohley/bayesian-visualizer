@@ -34,9 +34,9 @@ pub fn new_compute(
             loc.x,
             loc.y,
             1.0),
-        ComputeNode{      //TODO: move to global sidebar
+        ComputeNode{
             operation: Operation::Add,
-            params: vec![ParamValue("first", 1.),ParamValue("second", 1.)]
+            params: vec![ParamValue("first", None),ParamValue("second", None)]
         }
     )).with_child((
         NodeLabel("+".to_string()),

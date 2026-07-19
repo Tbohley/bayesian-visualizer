@@ -33,7 +33,7 @@ pub fn new_random(
             name: None,
             dist_type: String::from("Normal"),
             dist: Box::new(Normal::new(0.0, 1.0).unwrap().clone()),
-            params: vec![ParamValue("mean", 0.),ParamValue("std_dev", 1.)]
+            params: vec![ParamValue("mean", None),ParamValue("std_dev", None)]
         }
     )).with_child((
         NodeLabel(node_num.to_string()),
@@ -95,9 +95,9 @@ pub fn on_keypress(
 pub fn on_enter_clicked(
     input_focus: Res<InputFocus>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut param_textboxes: Query<(&mut EditableText, &ParamTextbox, &Name), Without<ScalarValueTextbox>>,
+    //mut param_textboxes: Query<(&mut EditableText, &ParamTextbox, &Name), Without<ScalarValueTextbox>>,
     mut scalar_textboxes: Query<(&mut EditableText, &Name), With<ScalarValueTextbox>>,
-    selected_random: Option<Single<(&mut RandomNode, &Selected)>>,
+    //selected_random: Option<Single<(&mut RandomNode, &Selected)>>,
     selected_scalar: Option<Single<(Entity, &mut ScalarNode, &Selected)>>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
     mut commands: Commands,
@@ -110,7 +110,7 @@ pub fn on_enter_clicked(
     };
 
     // Existing random-node param behavior
-    if let Ok((mut text_input, param_num, _name)) = param_textboxes.get_mut(focused_entity) {
+    /*if let Ok((mut text_input, param_num, _name)) = param_textboxes.get_mut(focused_entity) {
         let Some(single) = selected_random else {
             return;
         };
@@ -145,7 +145,7 @@ pub fn on_enter_clicked(
         refresh_var_dist(&mut random_var, &mut commands);
         commands.trigger(ReloadSidebar);
         return;
-    }
+    }*/
 
     // Scalar-node value behavior
     if let Ok((mut text_input, _name)) = scalar_textboxes.get_mut(focused_entity) {
@@ -180,6 +180,7 @@ pub fn refresh_var_dist(
     node: &mut RandomNode,
     commands: &mut Commands
 ) {
+    /*
     let mut new_param_vals = Vec::<ParamValue>::new();
 
     //for all default parameters in the truth set for this distribution:
@@ -211,9 +212,9 @@ pub fn refresh_var_dist(
             other => {commands.trigger(ErrorToast{ color: ERR_COLOR, text: format!("distribution construction failed: {:?}. Please set new parameters and hit enter.", other)});}
         }
         None
-    };
+    };*/
 
-    let new_dist: Option<Box<dyn DistributionDebug<f64>>> = match node.dist_type.as_str() {
+    /*let new_dist: Option<Box<dyn DistributionDebug<f64>>> = match node.dist_type.as_str() {
         "Normal" => Normal::new(p(0), p(1))
             .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
             .unwrap_or_else(e),
@@ -243,11 +244,11 @@ pub fn refresh_var_dist(
     
     if let Some(new_dist) = new_dist {
         node.dist = new_dist;
-    }
+    }*/
 
-    let mut rng = thread_rng();
+    //let mut rng = thread_rng();
     println!("Node distribution set to: {:?}", node.dist);
-    println!("Sample from node: {}", node.dist.sample(&mut rng))
+    //println!("Sample from node: {}", node.dist.sample(&mut rng))
 }
 
 pub fn sample_node_toast(
@@ -262,13 +263,13 @@ pub fn sample_node_toast(
 }
 
 //store parameters for distributions plus a valid default value
-pub fn distribution_params() -> HashMap<String, Vec<ParamValue>> {
+pub fn distribution_params() -> HashMap<String, Vec<(String, f64)>> {
     HashMap::from([
-        (String::from("Normal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 1.)]),
-        (String::from("LogNormal"), vec![ParamValue("mean", 0.), ParamValue("std_dev", 1.)]),
-        (String::from("Gamma"), vec![ParamValue("shape", 1.), ParamValue("scale", 1.)]),
-        (String::from("Beta"), vec![ParamValue("alpha", 2.), ParamValue("beta", 2.)]),
-        (String::from("Exponential"), vec![ParamValue("rate", 2.)]),
-        (String::from("Uniform"), vec![ParamValue("min", 0.), ParamValue("max", 10.)])
+        (String::from("Normal"), vec![("mean".to_owned(), 0.), ("std_dev".to_owned(), 1.)]),
+        (String::from("LogNormal"), vec![("mean".to_owned(), 0.), ("std_dev".to_owned(), 1.)]),
+        (String::from("Gamma"), vec![("shape".to_owned(), 1.), ("scale".to_owned(), 1.)]),
+        (String::from("Beta"), vec![("alpha".to_owned(), 2.), ("beta".to_owned(), 2.)]),
+        (String::from("Exponential"), vec![("rate".to_owned(), 2.)]),
+        (String::from("Uniform"), vec![("min".to_owned(), 0.), ("max".to_owned(), 10.)])
     ])
 }

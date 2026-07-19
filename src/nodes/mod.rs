@@ -44,8 +44,8 @@ pub enum Operation{
     Product
 }
 
-#[derive(Debug)]
-pub struct ParamValue (pub &'static str, pub f64);          //TODO: change from f64 to GraphLink
+#[derive(Debug, Clone)]
+pub struct ParamValue (pub &'static str, pub Option<Entity>);          //TODO: change from f64 to GraphLink
 
 pub trait DistributionDebug<T>: Distribution<T> + std::fmt::Debug {}
 impl<T, D: Distribution<T> + std::fmt::Debug> DistributionDebug<T> for D {}
@@ -62,6 +62,7 @@ pub struct RandomNode{
     pub dist: Box<dyn DistributionDebug<f64>>,
     pub params: Vec<ParamValue>
 }
+
 impl NodeDisplay for RandomNode{
     fn label(&self) -> String{
         format!["{}{}", match self.name.clone() {
