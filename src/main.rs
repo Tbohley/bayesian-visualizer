@@ -1,11 +1,11 @@
 //use core::f32;
-
 use bevy::prelude::*;
 mod nodes;
 mod sidebar;
 mod graph;
 mod ui;
 mod constants;
+mod bayesian_core;
 pub use constants::*;
 use sidebar::compute_menu::on_open_operation_menu;
 use sidebar::global::load_global_sidebar;
@@ -140,6 +140,7 @@ Rewrap all uses of .unwrap()
 Delete link buttons in incoming links menu
 
 Make arrows touch non-random nodes
+
 
 
 -------------------Bug tracker------------------

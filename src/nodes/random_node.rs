@@ -1,10 +1,7 @@
 use bevy::input::keyboard::KeyboardInput;
-use bevy::input_focus::InputFocus;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy::text::EditableText;
 use fugue::*;
-use fugue::error::FugueError::InvalidParameters;
 use rand::thread_rng;
 use crate::constants::*;
 use crate::sidebar::*;
@@ -36,7 +33,7 @@ pub fn new_random(
             params: vec![ParamValue("mean", None),ParamValue("std_dev", None)]
         }
     )).with_child((
-        NodeLabel(node_num.to_string()),
+        NodeLabel,
         Text2d::new(node_num.to_string()),
         TextColor(NODE_NAME_COLOR),
         Pickable::IGNORE,
@@ -79,7 +76,7 @@ pub fn on_keypress(
         }
 
         commands.entity(entity).with_child((
-            NodeLabel(text.to_string()),
+            NodeLabel,
             Text2d::new(text.to_string()),
             TextColor(NODE_NAME_COLOR),
             Pickable::IGNORE,
@@ -95,7 +92,7 @@ pub fn on_keypress(
 
 pub fn refresh_var_dist(
     node: &mut RandomNode,
-    commands: &mut Commands
+    _commands: &mut Commands
 ) {
     /*
     let mut new_param_vals = Vec::<ParamValue>::new();

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 use super::*;
-use crate::nodes::{self, *};
+use crate::nodes::{*};
 
 //fn get_ents_and_labels
 /*
@@ -59,7 +59,7 @@ pub fn build_link_param_selector(
         .get(param_num)
         .expect("invalid param_num");
 
-    let param_name = param.0.clone();
+    let param_name = param.0;
     let param_entity = param.1;
 
     let param_label = param_entity
@@ -82,7 +82,7 @@ pub fn build_link_param_selector(
         Name::new(format!("param_row_{}", param_name)),
         children![
             (
-                Text::new(param_name.clone()),
+                Text::new(param_name),
                 TextColor(NODE_NAME_COLOR),
             )],
     )).id();

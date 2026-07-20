@@ -20,9 +20,6 @@ pub struct LocalSidebar;
 pub struct GlobalSidebar;
 
 #[derive(Component)]
-pub struct ParamTextbox(pub usize);
-
-#[derive(Component)]
 pub struct ScalarValueTextbox;
 
 /// event opening a new context menu at position `pos`

@@ -39,7 +39,7 @@ pub fn new_compute(
             params: vec![ParamValue("first", None),ParamValue("second", None)]
         }
     )).with_child((
-        NodeLabel("+".to_string()),
+        NodeLabel,
         Text2d::new("+"),
         TextColor(NODE_NAME_COLOR),
         Pickable::IGNORE,

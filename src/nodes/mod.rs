@@ -12,15 +12,12 @@ use crate::graph::*;
 use crate::sidebar::*;
 use crate::ui::*;
 
-use fugue::*;
-
-
 //on all node entities
 #[derive(Component)]
 pub struct GraphNode(pub u32);
 
 #[derive(Component)]
-pub struct NodeLabel(pub String);
+pub struct NodeLabel;
 
 pub enum NodeType{
     Random,
@@ -31,7 +28,7 @@ pub enum NodeType{
 #[derive(Component)]
 pub struct NodeMode(pub NodeType);
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Operation{
     Add,
     Subtract,
@@ -151,8 +148,6 @@ pub fn on_node_click(
     distributions: Query<&RandomNode>,
     selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
 ){
-
-
     //if there is an unfinished GraphLink, complete it.
     if let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {
 

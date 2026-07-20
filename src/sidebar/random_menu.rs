@@ -1,6 +1,4 @@
-use bevy::color::palettes::css::BLACK;
 use bevy::prelude::*;
-use bevy::text::EditableText;
 use crate::constants::*;
 use crate::nodes::*;
 use super::*;

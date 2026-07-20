@@ -96,7 +96,7 @@ pub fn spin_selection_indicators(
     time: Res<Time>,
     mut indicators: Query<(&SelectedIndicator, &mut Transform)>,
 ) {
-    for (indicator, mut transform) in indicators.iter_mut() {
+    for (_indicator, mut transform) in indicators.iter_mut() {
         transform.rotate_z(SELECTION_SPIN_SPEED * time.delta_secs());
     }
 }

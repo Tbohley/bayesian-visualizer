@@ -1,6 +1,4 @@
 use bevy::{input_focus::InputFocus, prelude::*, text::EditableText};
-use crate::sidebar::link_params::format_number;
-
 use super::*;
 
 
@@ -24,7 +22,7 @@ pub fn new_scalar(
             val: 1.
         }
     )).with_child((
-        NodeLabel("1".to_string()),
+        NodeLabel,
         Text2d::new("1"),
         TextColor(NODE_NAME_COLOR),
         Pickable::IGNORE,
@@ -86,7 +84,7 @@ pub fn replace_node_label(
     }
 
     commands.entity(node_entity).with_child((
-        NodeLabel(label_text.clone()),
+        NodeLabel,
         Text2d::new(label_text.clone()),
         TextColor(NODE_NAME_COLOR),
         TextFont{

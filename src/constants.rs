@@ -26,6 +26,7 @@ pub const CANVAS_COLOR: Color = Color::srgb(0.173, 0.227, 0.278); //navy-ish blu
 pub const SIDEBAR_COLOR: Color = Color::srgb(0.827, 0.827, 0.827); //light grey
 pub const AVAILABLE_LINKS_COLOR: Color = Color::srgb(123./255., 130./255., 76./255.); //army green
 pub const NODE_NAME_COLOR: Color = Color::BLACK;
+pub const BUTTON_COLOR: Color = Color::BLACK;
 pub const RANDOM_NODE_COLOR: Color = Color::srgb(0.992, 0.447, 0.447); //salmon-y red
 pub const COMPUTE_NODE_COLOR: Color = Color::srgb(0.333, 0.902, 0.757); //punchy bright teal
 pub const SCALAR_NODE_COLOR: Color = Color::srgb(0.51, 0.35, 0.62); //lavendar
