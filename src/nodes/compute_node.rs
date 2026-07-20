@@ -17,6 +17,73 @@ impl NodeDisplay for ComputeNode{
     }
 }
 
+impl Operation {
+    pub fn evaluate(&self, params: &[f64]) -> Result<f64, String> {
+        let unary = || {
+            params
+                .first()
+                .copied()
+                .filter(|_| params.len() == 1)
+                .ok_or_else(|| "operation expected 1 parameter".to_string())
+        };
+
+        let binary = || {
+            params
+                .first()
+                .zip(params.get(1))
+                .map(|(&a, &b)| (a, b))
+                .filter(|_| params.len() == 2)
+                .ok_or_else(|| "operation expected 2 parameters".to_string())
+        };
+
+        match self {
+            Operation::Add => {
+                let (a, b) = binary()?;
+                Ok(a + b)
+            }
+            Operation::Subtract => {
+                let (a, b) = binary()?;
+                Ok(a - b)
+            }
+            Operation::Multiply => {
+                let (a, b) = binary()?;
+                Ok(a * b)
+            }
+            Operation::Divide => {
+                let (a, b) = binary()?;
+
+                if b == 0.0 {
+                    return Err("division by zero".into());
+                }
+
+                Ok(a / b)
+            }
+            Operation::Exponential => Ok(unary()?.exp()),
+            Operation::Logarithm => {
+                let value = unary()?;
+
+                if value <= 0.0 {
+                    return Err("logarithm input must be positive".into());
+                }
+
+                Ok(value.ln())
+            }
+            Operation::Power => {
+                let (base, exponent) = binary()?;
+                let result = base.powf(exponent);
+
+                if !result.is_finite() {
+                    return Err("invalid power operation".into());
+                }
+
+                Ok(result)
+            }
+            Operation::Product => Err("Not implemented yet".to_string()),
+            Operation::Sum => Err("Not implemented yet".to_string())
+        }
+    }
+}
+
 
 pub fn new_compute(
     commands: &mut Commands,

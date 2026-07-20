@@ -15,24 +15,31 @@ pub fn compile(
     node_ids: Query<(Entity, &GraphNode)>
 ){
     let mut graph = compile_ir(&finished_links, &rand_nodes, &compute_nodes, &scalar_nodes, &node_ids);
+
     match graph{
         Ok(g) => match g.check_cycles(){
             Ok(()) => {commands.trigger(ErrorToast{
                 color: SAMPLE_COLOR,
                 text: String::from("Graph successfully compiled. No errors detected... yet.")
-            })},
+            });
+            println!("{}", format!("{:?}", g.ancestral_sample()));
+
+        },
             Err(node_ids) => {commands.trigger(ErrorToast{
                 color: ERR_COLOR,
                 text: String::from(format!("Graph contains a cycle including node IDs: {:?}", node_ids))
-            })}
+            });
+            return;
+        }
         }
         Err(e) => {commands.trigger(ErrorToast{
             color: ERR_COLOR,
             text: String::from(format!("{}", e))
         });
-        println!("{}", e)}
+        println!("{}", e);
+        return;
     }
-    
+    }
 }
 
 
