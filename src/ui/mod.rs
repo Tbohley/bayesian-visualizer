@@ -9,7 +9,13 @@ pub struct ErrorToast {
     pub color: Color
 }
 
-#[derive(Resource, Default, PartialEq, Eq, Clone, Copy)]
+#[derive(Resource)]
+pub struct CursorAssets {
+    pub shift_held: Handle<Image>,
+    pub finish_link: Handle<Image>,
+}
+
+#[derive(Default, PartialEq, Eq, Clone, Copy)]
 pub enum GraphCursorState {
     #[default]
     Default,
@@ -25,20 +31,24 @@ pub struct ErrorToastBox {
 fn set_cursor_image(
     commands: &mut Commands,
     window_entity: Entity,
-    asset_server: &AssetServer,
-    path: &'static str,
+    cursor_assets: &CursorAssets,
+    state: GraphCursorState
 ) {
     commands.entity(window_entity).insert(CursorIcon::Custom(
         CustomCursor::Image(CustomCursorImage {
-            handle: asset_server.load(path),
+            handle: match state {
+                GraphCursorState::ShiftHeld => cursor_assets.shift_held.clone(),
+                GraphCursorState::FinishLink => cursor_assets.finish_link.clone(),
+                GraphCursorState::Default => cursor_assets.shift_held.clone()
+            },
             texture_atlas: None,
             flip_x: false,
             flip_y: false,
             rect: None,
-            hotspot: match path {
-                "cursors/shift_held.png" => (8, 0),
-                "cursors/finish_link.png" => (8, 15),
-                _ => (8, 0)
+            hotspot: match state {
+                GraphCursorState::ShiftHeld => (16, 1),
+                GraphCursorState::FinishLink => (16, 11),
+                _ => (0, 0)
             },
         }),
     ));
@@ -46,11 +56,10 @@ fn set_cursor_image(
 
 pub fn update_graph_cursor(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
+    asset_server: Res<CursorAssets>,
     input: Res<ButtonInput<KeyCode>>,
     window: Single<Entity, With<Window>>,
     unfinished_link: Query<Entity, With<UnfinishedLink>>,
-    mut current_cursor: ResMut<GraphCursorState>,
 ) {
     let next_cursor = if !unfinished_link.is_empty() {
         GraphCursorState::FinishLink
@@ -59,13 +68,6 @@ pub fn update_graph_cursor(
     } else {
         GraphCursorState::Default
     };
-
-    if *current_cursor == next_cursor {
-        return;
-    }
-
-    *current_cursor = next_cursor;
-
     match next_cursor {
         GraphCursorState::Default => {
             commands.entity(*window).remove::<CursorIcon>();
@@ -75,7 +77,7 @@ pub fn update_graph_cursor(
                 &mut commands,
                 *window,
                 &asset_server,
-                "cursors/shift_held.png",
+                GraphCursorState::ShiftHeld
             );
         }
         GraphCursorState::FinishLink => {
@@ -83,7 +85,7 @@ pub fn update_graph_cursor(
                 &mut commands,
                 *window,
                 &asset_server,
-                "cursors/finish_link.png",
+                GraphCursorState::FinishLink
             );
         }
     }

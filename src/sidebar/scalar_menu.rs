@@ -48,15 +48,5 @@ impl SidebarContent for ScalarNode{
         
         commands.entity(sidebar_entity).with_child(divider());
 
-        commands.entity(sidebar_entity).with_child(
-            (
-                Text::new("Unfinished"),
-                Node {
-                    margin: px(4).bottom(),
-                    ..default()
-                },
-                TextColor(NODE_NAME_COLOR),
-            )
-        );
     }
 }

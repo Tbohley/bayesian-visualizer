@@ -1,4 +1,6 @@
-use bevy::prelude::*;
+use bevy::{input_focus::InputFocus, prelude::*, text::EditableText};
+use crate::sidebar::link_params::format_number;
+
 use super::*;
 
 
@@ -32,6 +34,42 @@ pub fn new_scalar(
     .observe(on_node_click);
 }
 
+// Submit the new param when Enter is pressed
+pub fn on_enter_clicked(
+    input_focus: Res<InputFocus>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut scalar_textboxes: Query<(&mut EditableText, &Name), With<ScalarValueTextbox>>,
+    selected_scalar: Option<Single<(Entity, &mut ScalarNode, &Selected)>>,
+    labels: Query<(Entity, &NodeLabel, &ChildOf)>,
+    mut commands: Commands,
+) {
+    if !keyboard_input.just_pressed(KeyCode::Enter) {
+        return;
+    }
+    let Some(focused_entity) = input_focus.get() else {
+        return;
+    }; 
+
+    // Scalar-node value behavior
+    if let Ok((mut text_input, _name)) = scalar_textboxes.get_mut(focused_entity) {
+        let Some(single) = selected_scalar else {
+            return;
+        };
+        let (scalar_entity, mut scalar_node, _selected) = single.into_inner();
+        let num = text_input.value().to_string().parse::<f64>();
+        match num {
+            Ok(f) => {
+                scalar_node.val = f;
+                replace_node_label(&mut commands,scalar_entity,format!("{f:.1}"), &labels);
+                commands.trigger(ReloadSidebar);
+            }
+            Err(_e) => {
+                println!("Not a valid scalar number!");
+                text_input.clear();
+            }
+        }
+    }
+}
 
 pub fn replace_node_label(
     commands: &mut Commands,

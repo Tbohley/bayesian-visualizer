@@ -53,6 +53,7 @@ impl SidebarContent for RandomNode{
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 border_radius: BorderRadius::MAX,
+                margin: px(4).bottom(),
                 ..default()
             },
             BorderColor::all(Color::BLACK),
@@ -184,8 +185,10 @@ fn on_select_distribution(
             println!("Selected distribution {}", item.0);
             let (mut random_var, _selected_comp) = random_vars.get_mut(entity).unwrap();
             random_var.dist_type = item.0.clone();
+            random_var.params = distribution_params().get(&random_var.dist_type).unwrap().to_vec();
             //buggy line, can panic, need to set to default params on dist change.
-            refresh_var_dist(&mut random_var, &mut commands);
+            //refresh_var_dist(&mut random_var, &mut commands);
+
             commands.trigger(CloseContextMenus);
             commands.trigger(ReloadSidebar);
             

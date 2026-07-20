@@ -71,53 +71,53 @@ pub fn build_link_param_selector(
         })
         .unwrap_or_else(|| "Pick a link".to_string());
 
-    let context_root = commands
-        .spawn((
-            Node {
-                width: percent(100.),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                margin: px(8.).bottom(),
-                ..default()
-            },
-            Name::new(format!("param_row_{}", param_name)),
-            children![
-                (
-                    Text::new(param_name.clone()),
-                    TextColor(NODE_NAME_COLOR),
-                ),
-                (
-                    Name::new(format!("param_{}_context_menu", param_name)),
-                    Button,
-                    Node {
-                        width: px(SIDEBAR_WIDTH * 0.75),
-                        height: px(30),
-                        border: UiRect::all(px(5)),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border_radius: BorderRadius::MAX,
-                        ..default()
-                    },
-                    BorderColor::all(Color::BLACK),
-                    BackgroundColor(Color::BLACK),
-                    children![(
-                        Pickable::IGNORE,
-                        Text::new(param_label),
-                        TextColor(Color::WHITE),
-                        TextShadow::default(),
-                    )],
-                ),
-            ],
-        ))
-        .observe(move |mut event: On<Pointer<Press>>, mut commands: Commands| {
-            event.propagate(false);
+    let context_root = commands.spawn((
+        Node {
+            width: percent(100.),
+            flex_direction: FlexDirection::Column,
+            row_gap: px(4.),
+            margin: px(8.).bottom(),
+            ..default()
+        },
+        Name::new(format!("param_row_{}", param_name)),
+        children![
+            (
+                Text::new(param_name.clone()),
+                TextColor(NODE_NAME_COLOR),
+            )],
+    )).id();
 
-            commands.trigger(OpenParamLinkMenu {
-                pos: event.pointer_location.position,
-                param_num,
-            });
-        })
-        .id();
+    let button = commands.spawn((
+        Name::new(format!("param_{}_context_menu", param_name)),
+        Button,
+        Node {
+            width: px(SIDEBAR_WIDTH * 0.75),
+            height: px(30),
+            border: UiRect::all(px(5)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BorderColor::all(Color::BLACK),
+        BackgroundColor(Color::BLACK),
+        children![(
+            Pickable::IGNORE,
+            Text::new(param_label),
+            TextColor(Color::WHITE),
+            TextShadow::default(),
+        )],
+    ))
+    .observe(move |mut event: On<Pointer<Press>>, mut commands: Commands| {
+        event.propagate(false);
+
+        commands.trigger(OpenParamLinkMenu {
+            pos: event.pointer_location.position,
+            param_num,
+        });
+    })
+    .id();
+    commands.entity(context_root).add_child(button);
 
     commands.entity(*sidebar_entity).add_child(context_root);
 }
@@ -331,7 +331,7 @@ fn scalar_label(scalar_node: &ScalarNode) -> String {
     format_number(scalar_node.val)
 }
 
-fn format_number(value: f64) -> String {
+pub fn format_number(value: f64) -> String {
     if value.is_finite() && value.fract() == 0.0 {
         format!("{value:.1}")
     } else {
@@ -445,7 +445,6 @@ fn compact_expression(
     if compute_node.params.is_empty() {
         return format!("{function_name}(?)");
     }
-
     let args = compute_node
         .params
         .iter()
@@ -471,49 +470,3 @@ fn is_infix_operation(operation: &Operation) -> bool {
             | Operation::Power
     )
 }
-
-pub fn default_compute_params(operation: &Operation) -> Vec<ParamValue> {
-    match operation {
-        Operation::Add => vec![
-            ParamValue("first", None),
-            ParamValue("second", None),
-        ],
-
-        Operation::Subtract => vec![
-            ParamValue("first", None),
-            ParamValue("second", None),
-        ],
-
-        Operation::Multiply => vec![
-            ParamValue("first", None),
-            ParamValue("second", None),
-        ],
-
-        Operation::Divide => vec![
-            ParamValue("dividend", None),
-            ParamValue("divisor", None),
-        ],
-
-        Operation::Power => vec![
-            ParamValue("base", None),
-            ParamValue("exponent", None),
-        ],
-
-        Operation::Exponential => vec![
-            ParamValue("input", None),
-        ],
-
-        Operation::Logarithm => vec![
-            ParamValue("input", None),
-        ],
-
-        Operation::Sum => vec![
-            ParamValue("values", None),
-        ],
-
-        Operation::Product => vec![
-            ParamValue("values", None),
-        ],
-    }
-}
-

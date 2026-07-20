@@ -91,89 +91,6 @@ pub fn on_keypress(
 
 }
 
-// Submit the new param when Enter is pressed
-pub fn on_enter_clicked(
-    input_focus: Res<InputFocus>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    //mut param_textboxes: Query<(&mut EditableText, &ParamTextbox, &Name), Without<ScalarValueTextbox>>,
-    mut scalar_textboxes: Query<(&mut EditableText, &Name), With<ScalarValueTextbox>>,
-    //selected_random: Option<Single<(&mut RandomNode, &Selected)>>,
-    selected_scalar: Option<Single<(Entity, &mut ScalarNode, &Selected)>>,
-    labels: Query<(Entity, &NodeLabel, &ChildOf)>,
-    mut commands: Commands,
-) {
-    if !keyboard_input.just_pressed(KeyCode::Enter) {
-        return;
-    }
-    let Some(focused_entity) = input_focus.get() else {
-        return;
-    };
-
-    // Existing random-node param behavior
-    /*if let Ok((mut text_input, param_num, _name)) = param_textboxes.get_mut(focused_entity) {
-        let Some(single) = selected_random else {
-            return;
-        };
-        let (mut random_var, _selected) = single.into_inner();
-        let num = text_input.value().to_string().parse::<f64>();
-
-        match num {
-            Ok(f) => {
-                println!(
-                    "Node w/{} distribution: {} set to {}",
-                    random_var.dist_type,
-                    distribution_params()
-                        .get(&random_var.dist_type)
-                        .unwrap()
-                        .get(param_num.0)
-                        .unwrap()
-                        .0,
-                    f
-                );
-                random_var
-                    .params
-                    .get_mut(param_num.0)
-                    .expect("invalid param_num")
-                    .1 = f;
-            }
-            Err(_e) => {
-                println!("Not a valid parameter number!");
-                text_input.clear();
-            }
-        }
-        println!("Dist params: {:?}", random_var.params);
-        refresh_var_dist(&mut random_var, &mut commands);
-        commands.trigger(ReloadSidebar);
-        return;
-    }*/
-
-    // Scalar-node value behavior
-    if let Ok((mut text_input, _name)) = scalar_textboxes.get_mut(focused_entity) {
-        let Some(single) = selected_scalar else {
-            return;
-        };
-        let (scalar_entity, mut scalar_node, _selected) = single.into_inner();
-        let num = text_input.value().to_string().parse::<f64>();
-        match num {
-            Ok(f) => {
-                scalar_node.val = f;
-
-                replace_node_label(
-                    &mut commands,
-                    scalar_entity,
-                    f.to_string(),
-                    &labels,
-                );
-
-                commands.trigger(ReloadSidebar);
-            }
-            Err(_e) => {
-                println!("Not a valid scalar number!");
-                text_input.clear();
-            }
-        }
-    }
-}
 
 
 pub fn refresh_var_dist(
@@ -263,13 +180,13 @@ pub fn sample_node_toast(
 }
 
 //store parameters for distributions plus a valid default value
-pub fn distribution_params() -> HashMap<String, Vec<(String, f64)>> {
+pub fn distribution_params() -> HashMap<String, Vec<ParamValue>> {
     HashMap::from([
-        (String::from("Normal"), vec![("mean".to_owned(), 0.), ("std_dev".to_owned(), 1.)]),
-        (String::from("LogNormal"), vec![("mean".to_owned(), 0.), ("std_dev".to_owned(), 1.)]),
-        (String::from("Gamma"), vec![("shape".to_owned(), 1.), ("scale".to_owned(), 1.)]),
-        (String::from("Beta"), vec![("alpha".to_owned(), 2.), ("beta".to_owned(), 2.)]),
-        (String::from("Exponential"), vec![("rate".to_owned(), 2.)]),
-        (String::from("Uniform"), vec![("min".to_owned(), 0.), ("max".to_owned(), 10.)])
+        (String::from("Normal"), vec![ParamValue("mean", None), ParamValue("std_dev", None)]),
+        (String::from("LogNormal"), vec![ParamValue("mean", None), ParamValue("std_dev", None)]),
+        (String::from("Gamma"), vec![ParamValue("shape", None), ParamValue("scale", None)]),
+        (String::from("Beta"), vec![ParamValue("alpha", None), ParamValue("beta", None)]),
+        (String::from("Exponential"), vec![ParamValue("rate", None)]),
+        (String::from("Uniform"), vec![ParamValue("min", None), ParamValue("max", None)])
     ])
 }

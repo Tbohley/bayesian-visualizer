@@ -20,6 +20,7 @@ fn setup (
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    asset_server: ResMut<AssetServer>
 ) {
     commands.spawn(Camera2d);
 
@@ -32,12 +33,17 @@ fn setup (
     ))
     .observe(on_background_click);
 
+    //load custom cursor resources
+    commands.insert_resource(CursorAssets {
+        shift_held: asset_server.load("cursors/shift_held.png"),
+        finish_link: asset_server.load("cursors/finish_link.png"),
+    });
+
 }
 
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
-        .init_resource::<GraphCursorState>()
         .add_observer(on_open_distribution_menu)
         .add_observer(on_open_node_type_menu)
         .add_observer(on_trigger_close_menus)
@@ -118,6 +124,8 @@ Crosslink, brushing interaction
 WASM support and CI/CD
 
 Interval type checking
+
+Abs() operation
 
 
 -----------------Optional/stretch goals-----------------

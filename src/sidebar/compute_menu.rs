@@ -23,7 +23,6 @@ impl SidebarContent for ComputeNode{
             },
             TextColor(NODE_NAME_COLOR),
         ));
-
         let context_menu = commands.spawn((
             Name::new("operation_context_menu"),
             Button,
@@ -56,25 +55,11 @@ impl SidebarContent for ComputeNode{
         }).id();
         commands.entity(sidebar_entity).add_child(context_menu);
         commands.entity(sidebar_entity).with_child(divider());
-
         let link_labels = get_ents_and_labels(commands, node_data, &finished_links, node);
-        
         for (i, _param) in self.params.iter().enumerate() {        
             build_link_param_selector(commands, link_labels.clone(), self.params.clone(), i, &sidebar_entity);
         }
-
         commands.entity(sidebar_entity).with_child(divider());
-        
-        commands.entity(sidebar_entity).with_child(
-            (
-                Text::new("Unfinished"),
-                Node {
-                    margin: px(4).bottom(),
-                    ..default()
-                },
-                TextColor(NODE_NAME_COLOR),
-            )
-        );
     }
 }
 
@@ -160,6 +145,7 @@ fn on_select_operation(
                 _ => Operation::Add
             };
 
+            compute_var.params = compute_params(&compute_var.operation);
             replace_node_label(
                 &mut commands,
                 entity,

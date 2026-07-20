@@ -48,3 +48,17 @@ pub fn new_compute(
     .observe(on_node_drag)
     .observe(on_node_click);
 }
+
+pub fn compute_params(operation: &Operation) -> Vec<ParamValue> {
+    match operation {
+        Operation::Add => vec![ParamValue("first", None), ParamValue("second", None),],
+        Operation::Subtract => vec![ParamValue("first", None),ParamValue("second", None),],
+        Operation::Multiply => vec![ParamValue("first", None),ParamValue("second", None),],
+        Operation::Divide => vec![ParamValue("dividend", None),ParamValue("divisor", None),],
+        Operation::Power => vec![ParamValue("base", None),ParamValue("exponent", None),],
+        Operation::Exponential => vec![ParamValue("input", None),],
+        Operation::Logarithm => vec![ParamValue("input", None),],
+        Operation::Sum => vec![ParamValue("values", None),],
+        Operation::Product => vec![ParamValue("values", None),],
+    }
+}
