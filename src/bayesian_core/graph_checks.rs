@@ -66,8 +66,7 @@ impl GraphIR{
     }
 
 
-
-    pub fn ancestral_sample(&self) -> Result<HashMap<u32, f64>, String> {
+    pub fn topological_sort(&self) -> Result<Vec<u32>, String>{
         let mut indegrees = HashMap::new();
         let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
     
@@ -110,6 +109,11 @@ impl GraphIR{
                 }
             }
         }
+        Ok(order)
+    }
+
+    pub fn ancestral_sample(&self) -> Result<HashMap<u32, f64>, String> {
+        let order = self.topological_sort()?;
     
         if order.len() != self.nodes.len() {
             return Err("graph contains a cycle".into());

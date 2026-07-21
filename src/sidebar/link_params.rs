@@ -335,7 +335,7 @@ pub fn format_number(value: f64) -> String {
     if value.is_finite() && value.fract() == 0.0 {
         format!("{value:.1}")
     } else {
-        value.to_string()
+        format!("{value:.3}")
     }
 }
 

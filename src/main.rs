@@ -6,6 +6,11 @@ mod graph;
 mod ui;
 mod constants;
 mod bayesian_core;
+mod bevy_to_fugue;
+use bevy_to_fugue::compilation::compile;
+use bevy_to_fugue::compilation::global_sample;
+use bevy_to_fugue::compilation::sample_popup;
+use bevy_to_fugue::compilation::tick_sample_popups;
 pub use constants::*;
 use sidebar::compute_menu::on_open_operation_menu;
 use sidebar::global::load_global_sidebar;
@@ -50,12 +55,15 @@ fn main() {
         .add_observer(on_open_operation_menu)
         .add_observer(on_open_param_link_menu)
         .add_observer(throw_err)
+        .add_observer(compile)
+        .add_observer(sample_popup)
         .add_observer(reload_sidebar)
         .add_systems(Startup, (setup, load_global_sidebar))
         .add_systems(Update, (
             on_keypress, 
             on_enter_clicked,
             tick_error_toasts, 
+            tick_sample_popups,
             click_error_toasts,
             spin_selection_indicators,
             update_graph_cursor))

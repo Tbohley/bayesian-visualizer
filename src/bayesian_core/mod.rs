@@ -3,6 +3,7 @@ use crate::nodes::Operation;
 pub mod graph_checks;
 use fugue::*;
 
+#[derive(Clone)]
 pub struct GraphIR {
     pub nodes: HashMap<u32, NodeIR>,  // keyed by GraphNode id
     pub edges: Vec<EdgeIR>,
@@ -14,6 +15,7 @@ impl GraphIR{
     }
 }
 
+#[derive(Clone)]
 pub enum NodeIR {
     Random {
         id: u32,
@@ -32,11 +34,13 @@ pub enum NodeIR {
     },
 }
 
+#[derive(Clone)]
 pub struct ParamIR {
     pub from_node: u32,            // param fed by node with this id
     pub param_name: Option<String>
 }
 
+#[derive(Clone)]
 pub struct EdgeIR {
     pub from: u32,
     pub to: u32,

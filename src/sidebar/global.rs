@@ -1,117 +1,12 @@
+use std::collections::HashMap;
 use bevy::prelude::*;
 use super::*;
 use crate::nodes::*;
 use crate::bayesian_core::*;
 use crate::ui::ErrorToast;
 use crate::constants::*;
+use crate::bevy_to_fugue::*;
 
-pub fn compile(
-    _event: On<Pointer<Click>>,
-    mut commands: Commands,
-    finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-    rand_nodes: Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
-    compute_nodes: Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
-    scalar_nodes: Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
-    node_ids: Query<(Entity, &GraphNode)>
-){
-    let mut graph = compile_ir(&finished_links, &rand_nodes, &compute_nodes, &scalar_nodes, &node_ids);
-
-    match graph{
-        Ok(g) => match g.check_cycles(){
-            Ok(()) => {commands.trigger(ErrorToast{
-                color: SAMPLE_COLOR,
-                text: String::from("Graph successfully compiled. No errors detected... yet.")
-            });
-            println!("{}", format!("{:?}", g.ancestral_sample()));
-
-        },
-            Err(node_ids) => {commands.trigger(ErrorToast{
-                color: ERR_COLOR,
-                text: String::from(format!("Graph contains a cycle including node IDs: {:?}", node_ids))
-            });
-            return;
-        }
-        }
-        Err(e) => {commands.trigger(ErrorToast{
-            color: ERR_COLOR,
-            text: String::from(format!("{}", e))
-        });
-        println!("{}", e);
-        return;
-    }
-    }
-}
-
-
-
-pub fn compile_ir(
-    //commands: Commands,
-    finished_links: &Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-    rand_nodes: &Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
-    compute_nodes: &Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
-    scalar_nodes: &Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
-    node_ids: &Query<(Entity, &GraphNode)>
-) -> Result<GraphIR, String>
-{
-    let mut graph = GraphIR::new();
-
-    let param_to_ir = |param: &ParamValue| -> Result<ParamIR, String> {
-        let entity = param.1
-            .ok_or_else(|| "A node has unspecified parameters!".to_string())?;
-
-        let node_id = node_ids
-            .get(entity)
-            .map_err(|_| "Parameter references a missing node!".to_string())?
-            .1
-            .0;
-    
-        Ok(ParamIR { from_node: node_id, param_name: Some(param.0.to_string()) })
-    };
-
-    for (entity, rand) in rand_nodes.into_iter(){
-        let node = node_ids.get(entity)
-        .map_err(|_| "Node is missing its GraphNode ID")?
-        .1;
-        let params = rand.params.iter().map(param_to_ir).collect::<Result<Vec<_>, _>>()?;
-        graph.nodes.insert(node.0, NodeIR::Random{
-            id: node.0,
-            label: rand.name.clone(),
-            dist_type: rand.dist_type.clone(),
-            params: params,
-        });
-    }
-
-    for (entity, compute) in compute_nodes.into_iter(){
-        let node = node_ids.get(entity)
-        .map_err(|_| "Node is missing its GraphNode ID")?
-        .1;
-        let params = compute.params.iter().map(param_to_ir).collect::<Result<Vec<_>, _>>()?;
-        graph.nodes.insert(node.0, NodeIR::Compute{
-            id: node.0,
-            operation: compute.operation,
-            params: params,
-        });
-    }
-
-    for (entity, scalar) in scalar_nodes.into_iter(){
-        let node = node_ids.get(entity)
-        .map_err(|_| "Node is missing its GraphNode ID")?
-        .1;
-        graph.nodes.insert(node.0, NodeIR::Scalar{
-            id: node.0,
-            value: scalar.val,
-        });
-    }
-
-    for (_entity, link) in finished_links.into_iter(){
-        graph.edges.push(EdgeIR{
-            from: node_ids.get(link.from).unwrap().1.0,
-            to: node_ids.get(link.to.unwrap()).unwrap().1.0
-        })
-    };
-
-    Ok(graph)
-}
 
 pub fn load_global_sidebar(
     mut commands: Commands,
@@ -158,6 +53,7 @@ pub fn load_global_sidebar(
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             border_radius: BorderRadius::MAX,
+            margin: px(4).bottom(),
             ..default()
         },
         BorderColor::all(Color::BLACK),
@@ -198,10 +94,40 @@ pub fn load_global_sidebar(
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
-    )).observe(compile).id();
+    )).observe(
+        |_event: On<Pointer<Press>>, 
+        mut commands: Commands| 
+        {
+            commands.trigger(TriggerCompilation)
+        }).id();
 
-    commands.entity(global_sidebar_entity).add_child(compile_button);
+    let sample_button = commands.spawn((
+        Name::new("sample_button"),
+        Button,
+        Node {
+            width: px(SIDEBAR_WIDTH * 0.75),
+            height: px(30),
+            border: UiRect::all(px(5)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::MAX,
+            margin: px(4).bottom(),
+            ..default()
+        },
+        BorderColor::all(BUTTON_COLOR),
+        BackgroundColor(BUTTON_COLOR),
+        children![(
+            Pickable::IGNORE,
+            Text::new("Sample all"),
+            TextColor(Color::WHITE),
+            TextShadow::default(),
+        )],
+    )).observe(compilation::global_sample).id();
+
     commands.entity(global_sidebar_entity).add_child(nodemode_menu);
+    commands.entity(global_sidebar_entity).with_child(divider());
+    commands.entity(global_sidebar_entity).add_child(compile_button);
+    commands.entity(global_sidebar_entity).add_child(sample_button);
     //TODO: context menu for selecting which type of node to create
 }
 
