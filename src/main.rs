@@ -20,6 +20,7 @@ use sidebar::random_menu::on_open_distribution_menu;
 use crate::sidebar::*;
 use crate::ui::*;
 use crate::nodes::*;
+use crate::graph::*;
 
 fn setup (
     mut commands: Commands,
@@ -36,7 +37,10 @@ fn setup (
         MeshMaterial2d(materials.add(CANVAS_COLOR)),
         NodeMode(NodeType::Random)
     ))
-    .observe(on_background_click);
+    .observe(on_background_click)
+    .observe(on_plate_drag_start)
+    .observe(on_plate_drag)
+    .observe(on_plate_drag_end);
 
     //load custom cursor resources
     commands.insert_resource(CursorAssets {

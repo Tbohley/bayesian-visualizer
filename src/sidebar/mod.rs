@@ -187,6 +187,7 @@ pub fn reload_sidebar(
     node_data: Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar: Query<(Entity, &LocalSidebar)>,
+    plates: Query<(), With<Plate>>,
 ){
     for (sidebar_entity, _comp) in sidebar.iter(){
         commands.entity(sidebar_entity).despawn();
@@ -214,7 +215,11 @@ pub fn reload_sidebar(
         }).id();
         commands.entity(sidebar_entity).with_child(
             (
-                Text::new(format!("Node ID: {}", node.0)),
+                Text::new(if plates.contains(entity) {
+                    format!("Plate ID: {}", node.0)
+                } else {
+                    format!("Node ID: {}", node.0)
+                }),
                 Node {
                     margin: px(10).bottom(),
                     ..default()
@@ -226,6 +231,7 @@ pub fn reload_sidebar(
             (Some(rv), None, None) => rv.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
             (None, Some(sc), None) => sc.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
             (None, None, Some(cn)) => cn.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
+            (None, None, None) if plates.contains(entity) => {},
             _ => warn!("Node has invalid or multiple node type components"),
         }
 

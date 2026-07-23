@@ -17,8 +17,18 @@ pub fn compile(
     compute_nodes: Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
     scalar_nodes: Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
     node_ids: Query<(Entity, &GraphNode)>,
+    node_positions: Query<(&GraphNode, &Transform), Without<Plate>>,
+    plates: Query<(&GraphNode, &Plate)>,
 ){
-    let mut graph = compile_ir(&finished_links, &rand_nodes, &compute_nodes, &scalar_nodes, &node_ids);
+    let graph = compile_ir(
+        &finished_links,
+        &rand_nodes,
+        &compute_nodes,
+        &scalar_nodes,
+        &node_ids,
+        &node_positions,
+        &plates,
+    );
 
     match graph{
         Ok(g) => match g.check_cycles(){
@@ -26,6 +36,11 @@ pub fn compile(
                 color: SAMPLE_COLOR,
                 text: String::from("Graph successfully compiled. No errors detected... yet.")
             });
+            match g.bind_debug_string() {
+                Ok(code) => println!("Generated Fugue bind model:\n{code}"),
+                Err(error) => println!("Could not render Fugue bind model: {error}"),
+            }
+            println!("Compiled plates: {:#?}", g.plates);
             println!("{}", format!("{:?}", g.ancestral_sample()));
             //save graph for other functions
             commands.insert_resource(GraphIRResource(g));
@@ -145,7 +160,9 @@ pub fn compile_ir(
     rand_nodes: &Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
     compute_nodes: &Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
     scalar_nodes: &Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
-    node_ids: &Query<(Entity, &GraphNode)>
+    node_ids: &Query<(Entity, &GraphNode)>,
+    node_positions: &Query<(&GraphNode, &Transform), Without<Plate>>,
+    plates: &Query<(&GraphNode, &Plate)>,
 ) -> Result<GraphIR, String>
 {
     let mut graph = GraphIR::new();
@@ -205,5 +222,101 @@ pub fn compile_ir(
         })
     };
 
+    let plate_bounds = plates
+        .iter()
+        .filter(|(_, plate)| plate.bounds.is_substantial())
+        .map(|(node, plate)| (node.0, plate.bounds))
+        .collect::<Vec<_>>();
+    let positions = node_positions
+        .iter()
+        .map(|(node, transform)| (node.0, transform.translation.truncate()))
+        .collect::<Vec<_>>();
+    graph.plates = compile_plate_irs(&plate_bounds, &positions);
+
     Ok(graph)
+}
+
+fn compile_plate_irs(
+    plates: &[(u32, PlateBounds)],
+    nodes: &[(u32, Vec2)],
+) -> HashMap<u32, PlateIR> {
+    let mut result = HashMap::new();
+
+    for &(plate_id, bounds) in plates {
+        let contained_plates = plates
+            .iter()
+            .filter(|(candidate_id, candidate_bounds)| {
+                *candidate_id != plate_id && bounds.contains_bounds(*candidate_bounds)
+            })
+            .copied()
+            .collect::<Vec<_>>();
+
+        let mut direct_plates = contained_plates
+            .iter()
+            .filter(|(candidate_id, candidate_bounds)| {
+                !contained_plates.iter().any(|(middle_id, middle_bounds)| {
+                    middle_id != candidate_id
+                        && middle_bounds.contains_bounds(*candidate_bounds)
+                })
+            })
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        direct_plates.sort_unstable();
+
+        let mut direct_nodes = nodes
+            .iter()
+            .filter(|(_, position)| {
+                bounds.contains_point(*position)
+                    && !contained_plates.iter().any(|(_, child_bounds)| {
+                        child_bounds.contains_point(*position)
+                    })
+            })
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        direct_nodes.sort_unstable();
+
+        result.insert(
+            plate_id,
+            PlateIR {
+                id: plate_id,
+                nodes: direct_nodes,
+                plates: direct_plates,
+            },
+        );
+    }
+
+    result
+}
+
+
+//you can tell ai wrote it when there starts to actually be tests...
+#[cfg(test)]
+mod plate_tests {
+    use super::*;
+
+    #[test]
+    fn plate_ir_records_direct_nested_contents() {
+        let plates = vec![
+            (
+                1,
+                PlateBounds::from_points(Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0)),
+            ),
+            (
+                2,
+                PlateBounds::from_points(Vec2::new(20.0, 20.0), Vec2::new(80.0, 80.0)),
+            ),
+        ];
+        let nodes = vec![
+            (1, Vec2::new(10.0, 10.0)),
+            (2, Vec2::new(50.0, 50.0)),
+            (3, Vec2::new(120.0, 120.0)),
+        ];
+
+        let result = compile_plate_irs(&plates, &nodes);
+
+        assert_eq!(result[&1].nodes, vec![1]);
+        assert_eq!(result[&1].plates, vec![2]);
+        assert_eq!(result[&2].nodes, vec![2]);
+        assert!(result[&2].plates.is_empty());
+    }
 }

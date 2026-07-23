@@ -1,5 +1,7 @@
 pub mod edge;
+pub mod plate;
 pub use edge::*;
+pub use plate::*;
 
 use bevy::prelude::*;
 
@@ -17,4 +19,3 @@ pub struct UnfinishedLink;
 //on currently selected node
 #[derive(Component)]
 pub struct Selected;
-

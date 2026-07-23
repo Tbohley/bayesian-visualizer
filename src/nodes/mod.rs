@@ -100,7 +100,18 @@ pub fn on_background_click(
     node_mode: Single<&NodeMode>,
     selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
     mut unfinished_links: Query<Entity, With<UnfinishedLink>>,
+    plate_drafts: Query<&Plate, With<PlateDraft>>,
 ) {
+    // Bevy emits Click before DragEnd when a drag is released. Do not treat
+    // a real plate gesture as a normal background click. Tiny pointer jitter
+    // remains a click; its undersized draft is removed by DragEnd.
+    if plate_drafts
+        .iter()
+        .any(|plate| plate.bounds.is_substantial())
+    {
+        return;
+    }
+
     for entity in unfinished_links.iter_mut() {
         commands.entity(entity).despawn();
     }

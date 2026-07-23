@@ -21,8 +21,12 @@ pub const CURSOR_DEFAULT: &str = "cursors/default.png";
 pub const CURSOR_SHIFT_HELD: &str = "cursors/shift_held.png";
 pub const CURSOR_FINISH_LINK: &str = "cursors/finish_link.png";
 
+pub const PLATE_Z: f32 = 0.5;
+pub const MIN_PLATE_EXTENT: f32 = 8.0;
+pub const PLATE_BORDER_THICKNESS: f32 = 7.0;
+
 //colors
-pub const CANVAS_COLOR: Color = Color::srgb(0.173, 0.227, 0.278); //navy-ish blue
+pub const CANVAS_COLOR: Color = Color::srgb(0.5294, 0.6235, 0.7098); //navy-ish blue
 pub const SIDEBAR_COLOR: Color = Color::srgb(0.827, 0.827, 0.827); //light grey
 pub const AVAILABLE_LINKS_COLOR: Color = Color::srgb(123./255., 130./255., 76./255.); //army green
 pub const NODE_NAME_COLOR: Color = Color::BLACK;
@@ -35,6 +39,8 @@ pub const ERR_COLOR: Color = Color::srgb(0.45, 0.05, 0.05); //red
 pub const SAMPLE_COLOR: Color = Color::srgb(0.05, 0.05, 0.45); //blue
 pub const ERR_BORDER_COLOR: Color = Color::srgb(0.9, 0.15, 0.15); //bright red
 pub const SELECTION_INDICATOR_COLOR: Color = Color::srgb(123./255., 130./255., 76./255.); //army green
+pub const PLATE_COLOR: Color = Color::srgb(0.04, 0.20, 0.48);
+
 
 #[derive(Component)]
 pub struct Canvas;
