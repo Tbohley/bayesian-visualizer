@@ -12,10 +12,12 @@ pub struct TriggerCompilation;
 #[derive(Event)]
 pub struct SampleDisplay{
     pos: Vec2,
-    val: f64
+    val: String,
+    console_output: Option<String>,
 }
 
 #[derive(Component)]
 pub struct SamplePopup{
-    pub timer: Timer
+    pub timer: Timer,
+    pub console_output: Option<String>,
 }

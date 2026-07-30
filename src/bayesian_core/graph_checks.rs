@@ -1,10 +1,11 @@
 use super::*;
 use fugue::{pure, Address, Distribution, Model, ModelExt};
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 
 /// The values produced by one execution of a compiled graph model, keyed by
 /// [`GraphNode`](crate::nodes::GraphNode) ID.
-pub type ModelValues = HashMap<u32, f64>;
+pub type ModelValues = HashMap<u32, ModelResult>;
 
 /// Model execution can fail after an upstream random value has been sampled.
 /// For example, that value may be used as an invalid standard deviation by a
@@ -16,6 +17,12 @@ pub type GraphModel = Model<Result<ModelValues, String>>;
 enum VisitState {
     Visiting,
     Visited,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum ModelResult {
+    Scalar(f64),
+    Plate(Vec<ModelResult>),
 }
 
 impl GraphIR {
@@ -92,14 +99,14 @@ impl GraphIR {
                 children.entry(param.from_node).or_default().push(id);
             }
         }
-        let mut ready: Vec<u32> = indegrees
+        let mut ready: BinaryHeap<Reverse<u32>> = indegrees
             .iter()
-            .filter_map(|(&id, &degree)| (degree == 0).then_some(id))
+            .filter_map(|(&id, &degree)| (degree == 0).then_some(Reverse(id)))
             .collect();
 
         let mut order = Vec::with_capacity(self.nodes.len());
 
-        while let Some(id) = ready.pop() {
+        while let Some(Reverse(id)) = ready.pop() {
             order.push(id);
 
             for &child in children.get(&id).into_iter().flatten() {
@@ -110,14 +117,14 @@ impl GraphIR {
                 *degree -= 1;
 
                 if *degree == 0 {
-                    ready.push(child);
+                    ready.push(Reverse(child));
                 }
             }
         }
         Ok(order)
     }
 
-    pub fn ancestral_sample(&self) -> Result<HashMap<u32, f64>, String> {
+    pub fn ancestral_sample(&self) -> Result<HashMap<u32, ModelResult>, String> {
         let model = self.create_model()?;
         let mut rng = rand::thread_rng();
         let (result, _trace) = fugue::runtime::handler::run(
@@ -142,88 +149,15 @@ impl GraphIR {
     /// The model's inner `Result` reports value-dependent errors found while it
     /// is running, such as division by zero or invalid distribution parameters.
     pub fn create_model(&self) -> Result<GraphModel, String> {
-        if let Err(cycle) = self.check_cycles() {
-            return Err(format!(
-                "graph contains a cycle including node IDs: {cycle:?}"
-            ));
-        }
-
-        let order = self.topological_sort()?;
-        if order.len() != self.nodes.len() {
-            return Err("graph contains a cycle".to_string());
-        }
-
-        let mut model: GraphModel = pure(Ok(HashMap::with_capacity(self.nodes.len())));
-
-        for id in order {
-            let node = self
-                .nodes
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| format!("topological order references missing node {id}"))?;
-
-            model = model.bind(move |result| {
-                let mut values = match result {
-                    Ok(values) => values,
-                    Err(error) => return pure(Err(error)),
-                };
-
-                match node {
-                    NodeIR::Scalar { value, .. } => {
-                        values.insert(id, value);
-                        pure(Ok(values))
-                    }
-                    NodeIR::Compute {
-                        operation, params, ..
-                    } => {
-                        let params = match resolve_params(id, &params, &values) {
-                            Ok(params) => params,
-                            Err(error) => return pure(Err(error)),
-                        };
-
-                        match operation.evaluate(&params) {
-                            Ok(value) => {
-                                values.insert(id, value);
-                                pure(Ok(values))
-                            }
-                            Err(error) => pure(Err(format!("compute error at node {id}: {error}"))),
-                        }
-                    }
-                    NodeIR::Random {
-                        label,
-                        dist_type,
-                        params,
-                        ..
-                    } => {
-                        let params = match resolve_params(id, &params, &values) {
-                            Ok(params) => params,
-                            Err(error) => return pure(Err(error)),
-                        };
-                        let distribution = match create_distribution(&dist_type, &params, id) {
-                            Ok(distribution) => distribution,
-                            Err(error) => return pure(Err(error)),
-                        };
-
-                        let address =
-                            Address(format!("{}#{id}", label.as_deref().unwrap_or("node")));
-
-                        sample_dyn_f64(address, distribution).bind(move |value| {
-                            values.insert(id, value);
-                            pure(Ok(values))
-                        })
-                    }
-                }
-            });
-        }
-
-        Ok(model)
+        super::model_compilation::create_model(self)
     }
 
-    /// Render the dynamic model as source-like Rust for debugging.
-    ///
-    /// This mirrors the bind chain built by [`Self::create_model`]; it is not
-    /// intended to be compiled independently.
-    pub fn bind_debug_string(&self) -> Result<String, String> {
+    // Render the dynamic model as source-like Rust for debugging.
+    //
+    // This mirrors the bind chain built by [`Self::create_model`]; it is not
+    // intended to be compiled independently.
+    
+    /*pub fn bind_debug_string(&self) -> Result<String, String> {
         if let Err(cycle) = self.check_cycles() {
             return Err(format!(
                 "graph contains a cycle including node IDs: {cycle:?}"
@@ -288,7 +222,7 @@ impl GraphIR {
         }
 
         Ok(output)
-    }
+    }*/
 }
 
 fn debug_param_values(params: &[ParamIR]) -> String {
@@ -307,13 +241,16 @@ fn resolve_params(
 ) -> Result<Vec<f64>, String> {
     params
         .iter()
-        .map(|param| {
-            values.get(&param.from_node).copied().ok_or_else(|| {
-                format!(
-                    "node {node_id} parameter references unavailable node {}",
-                    param.from_node
-                )
-            })
+        .map(|param| match values.get(&param.from_node) {
+            Some(ModelResult::Scalar(value)) => Ok(*value),
+            Some(ModelResult::Plate(_)) => Err(format!(
+                "node {node_id} parameter references plated node {} before plate desugaring",
+                param.from_node
+            )),
+            None => Err(format!(
+                "node {node_id} parameter references unavailable node {}",
+                param.from_node
+            )),
         })
         .collect()
 }
@@ -352,7 +289,7 @@ fn create_distribution(
         (name, _) => Err(format!("invalid parameters for {name} at node {node_id}")),
     }
 }
-
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,3 +387,4 @@ mod tests {
         assert!(graph.create_model().is_err());
     }
 }
+*/

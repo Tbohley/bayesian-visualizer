@@ -151,6 +151,7 @@ fn on_select_operation(
                 entity,
                 operation_symbol(&compute_var.operation),
                 &labels,
+                None
             );
             
             commands.trigger(CloseContextMenus);

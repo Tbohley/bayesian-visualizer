@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use bevy::prelude::*;
 use super::*;
+use crate::bayesian_core::graph_checks::ModelResult;
 use crate::nodes::*;
 use crate::bayesian_core::*;
 use crate::sidebar::link_params::format_number;
@@ -19,7 +20,7 @@ pub fn compile(
     node_ids: Query<(Entity, &GraphNode)>,
     node_positions: Query<(&GraphNode, &Transform), Without<Plate>>,
     plates: Query<(&GraphNode, &Plate)>,
-){
+) {
     let graph = compile_ir(
         &finished_links,
         &rand_nodes,
@@ -30,38 +31,51 @@ pub fn compile(
         &plates,
     );
 
-    match graph{
-        Ok(g) => match g.check_cycles(){
-            Ok(()) => {commands.trigger(ErrorToast{
-                color: SAMPLE_COLOR,
-                text: String::from("Graph successfully compiled. No errors detected... yet.")
-            });
-            match g.bind_debug_string() {
-                Ok(code) => println!("Generated Fugue bind model:\n{code}"),
-                Err(error) => println!("Could not render Fugue bind model: {error}"),
+    match graph {
+        Ok(g) => {
+            if let Err(error) = g.validate_plate_semantics() {
+                commands.trigger(ErrorToast {
+                    color: ERR_COLOR,
+                    text: error.clone(),
+                });
+                println!("{error}");
+                commands.remove_resource::<GraphIRResource>();
+                return;
             }
-            println!("Compiled plates: {:#?}", g.plates);
-            println!("{}", format!("{:?}", g.ancestral_sample()));
-            //save graph for other functions
-            commands.insert_resource(GraphIRResource(g));
-        },
-            Err(node_ids) => {commands.trigger(ErrorToast{
+
+            match g.check_cycles() {
+                Ok(()) => {
+                    commands.trigger(ErrorToast {
+                        color: SAMPLE_COLOR,
+                        text: String::from(
+                            "Graph successfully compiled. No errors detected... yet.",
+                        ),
+                    });
+                    println!("Compiled plates: {:#?}", g.plates);
+                    //save graph for other functions
+                    commands.insert_resource(GraphIRResource(g));
+                }
+                Err(node_ids) => {
+                    commands.trigger(ErrorToast {
+                        color: ERR_COLOR,
+                        text: format!(
+                            "Graph contains a cycle including node IDs: {:?}",
+                            node_ids
+                        ),
+                    });
+                    commands.remove_resource::<GraphIRResource>();
+                }
+            }
+        }
+        Err(error) => {
+            commands.trigger(ErrorToast {
                 color: ERR_COLOR,
-                text: String::from(format!("Graph contains a cycle including node IDs: {:?}", node_ids))
+                text: error.clone(),
             });
+            println!("{error}");
             commands.remove_resource::<GraphIRResource>();
-            return;
         }
-        }
-        Err(e) => {commands.trigger(ErrorToast{
-            color: ERR_COLOR,
-            text: String::from(format!("{}", e))
-        });
-        println!("{}", e);
-        commands.remove_resource::<GraphIRResource>();
-        return;
-    }
-    }
+    };
 }
 
 
@@ -90,7 +104,7 @@ pub fn global_sample(
         return;
     }
     let sample_res = g.ancestral_sample();
-    let vals: HashMap<u32, f64>;
+    let vals: HashMap<u32, ModelResult>;
     let order = g.topological_sort().expect("Topological ordering should be validated by compilation.");
 
     if let Err(e) = sample_res {
@@ -100,15 +114,33 @@ pub fn global_sample(
         });
         return;
     }else{vals = sample_res.unwrap();}
+
+    match g.format_model_values(&vals) {
+        Ok(output) => println!("Ancestral sample:\n{output}"),
+        Err(error) => println!("Could not format ancestral sample: {error}"),
+    }
     
     for node_id in order{
         let (_, _, transform) = node_ids.iter()
         .find(|(_, node, _)| node.0 == node_id)
         .expect("node not found");
+        let value = vals
+            .get(&node_id)
+            .expect("sampled node val doesn't exist");
+        let console_output = match value {
+            ModelResult::Scalar(_) => None,
+            ModelResult::Plate(_) => Some(
+                g.format_node_value(node_id, value)
+                    .unwrap_or_else(|error| format!("Could not format node {node_id}: {error}")),
+            ),
+        };
 
         commands.trigger(SampleDisplay{
             pos: Vec2{x: transform.translation.x, y: transform.translation.y},
-            val: *vals.get(&node_id).expect("sampled node val doesn't exist")
+            val: first_scalar(value)
+                .map(format_number)
+                .unwrap_or_else(|| "empty".to_string()),
+            console_output,
         })
     }
 
@@ -126,18 +158,45 @@ pub fn sample_popup(
         Mesh2d(meshes.add(Rectangle::new(100., 30.))),
         MeshMaterial2d(materials.add(ColorMaterial::from_color(SAMPLE_COLOR))),
         SamplePopup {
-            timer: Timer::from_seconds(5.0, TimerMode::Once),
+            timer: Timer::from_seconds(15.0, TimerMode::Once),
+            console_output: event.console_output.clone(),
+        },
+        Pickable {
+            should_block_lower: true,
+            is_hoverable: true,
         },
         Transform::from_xyz(event.pos.x, event.pos.y + 50., 99.),
         children![(
-            Text2d::new(format_number(event.val)),
+            Pickable::IGNORE,
+            Text2d::new(event.val.clone()),
             TextColor(Color::WHITE),
             TextFont {
                 font_size: FontSize::Px(14.),
                 ..default()
             },
         )],
-    ));
+    ))
+    .observe(print_plate_sample);
+}
+
+fn first_scalar(value: &ModelResult) -> Option<f64> {
+    match value {
+        ModelResult::Scalar(value) => Some(*value),
+        ModelResult::Plate(values) => values.iter().find_map(first_scalar),
+    }
+}
+
+fn print_plate_sample(
+    mut event: On<Pointer<Click>>,
+    popups: Query<&SamplePopup>,
+) {
+    event.propagate(false);
+    let Ok(popup) = popups.get(event.event_target()) else {
+        return;
+    };
+    if let Some(output) = &popup.console_output {
+        println!("Plate sample:\n{output}");
+    }
 }
 
 pub fn tick_sample_popups(
@@ -225,27 +284,51 @@ pub fn compile_ir(
     let plate_bounds = plates
         .iter()
         .filter(|(_, plate)| plate.bounds.is_substantial())
-        .map(|(node, plate)| (node.0, plate.bounds))
+        .map(|(node, plate)| (node.0, plate.bounds, plate.n))
         .collect::<Vec<_>>();
     let positions = node_positions
         .iter()
         .map(|(node, transform)| (node.0, transform.translation.truncate()))
         .collect::<Vec<_>>();
-    graph.plates = compile_plate_irs(&plate_bounds, &positions);
+    graph.plates = compile_plate_irs(&plate_bounds, &positions)?;
 
     Ok(graph)
 }
 
 fn compile_plate_irs(
-    plates: &[(u32, PlateBounds)],
+    plates: &[(u32, PlateBounds, usize)],
     nodes: &[(u32, Vec2)],
-) -> HashMap<u32, PlateIR> {
+) -> Result<HashMap<u32, PlateIR>, String> {
+    for (index, &(left_id, left_bounds, _)) in plates.iter().enumerate() {
+        for &(right_id, right_bounds, _) in &plates[index + 1..] {
+            let left_contains_right = left_bounds.contains_bounds(right_bounds);
+            let right_contains_left = right_bounds.contains_bounds(left_bounds);
+
+            if left_contains_right && right_contains_left {
+                return Err(format!(
+                    "plates {left_id} and {right_id} have identical bounds"
+                ));
+            }
+
+            let interiors_overlap = left_bounds.min.x < right_bounds.max.x
+                && left_bounds.max.x > right_bounds.min.x
+                && left_bounds.min.y < right_bounds.max.y
+                && left_bounds.max.y > right_bounds.min.y;
+
+            if interiors_overlap && !left_contains_right && !right_contains_left {
+                return Err(format!(
+                    "plates {left_id} and {right_id} partially overlap; plates must be disjoint or fully nested"
+                ));
+            }
+        }
+    }
+
     let mut result = HashMap::new();
 
-    for &(plate_id, bounds) in plates {
+    for &(plate_id, bounds, n) in plates {
         let contained_plates = plates
             .iter()
-            .filter(|(candidate_id, candidate_bounds)| {
+            .filter(|(candidate_id, candidate_bounds, _)| {
                 *candidate_id != plate_id && bounds.contains_bounds(*candidate_bounds)
             })
             .copied()
@@ -253,13 +336,13 @@ fn compile_plate_irs(
 
         let mut direct_plates = contained_plates
             .iter()
-            .filter(|(candidate_id, candidate_bounds)| {
-                !contained_plates.iter().any(|(middle_id, middle_bounds)| {
+            .filter(|(candidate_id, candidate_bounds, _)| {
+                !contained_plates.iter().any(|(middle_id, middle_bounds, _)| {
                     middle_id != candidate_id
                         && middle_bounds.contains_bounds(*candidate_bounds)
                 })
             })
-            .map(|(id, _)| *id)
+            .map(|(id, _, _)| *id)
             .collect::<Vec<_>>();
         direct_plates.sort_unstable();
 
@@ -267,7 +350,7 @@ fn compile_plate_irs(
             .iter()
             .filter(|(_, position)| {
                 bounds.contains_point(*position)
-                    && !contained_plates.iter().any(|(_, child_bounds)| {
+                    && !contained_plates.iter().any(|(_, child_bounds, _)| {
                         child_bounds.contains_point(*position)
                     })
             })
@@ -279,15 +362,26 @@ fn compile_plate_irs(
             plate_id,
             PlateIR {
                 id: plate_id,
+                n,
                 nodes: direct_nodes,
                 plates: direct_plates,
             },
         );
     }
 
-    result
-}
+    let mut node_owners = HashMap::<u32, u32>::new();
+    for (&plate_id, plate) in &result {
+        for &node_id in &plate.nodes {
+            if let Some(previous_owner) = node_owners.insert(node_id, plate_id) {
+                return Err(format!(
+                    "node {node_id} belongs to multiple sibling plates: {previous_owner} and {plate_id}"
+                ));
+            }
+        }
+    }
 
+    Ok(result)
+}
 
 //you can tell ai wrote it when there starts to actually be tests...
 #[cfg(test)]
@@ -300,10 +394,12 @@ mod plate_tests {
             (
                 1,
                 PlateBounds::from_points(Vec2::new(0.0, 0.0), Vec2::new(100.0, 100.0)),
+                10,
             ),
             (
                 2,
                 PlateBounds::from_points(Vec2::new(20.0, 20.0), Vec2::new(80.0, 80.0)),
+                15,
             ),
         ];
         let nodes = vec![
@@ -312,11 +408,68 @@ mod plate_tests {
             (3, Vec2::new(120.0, 120.0)),
         ];
 
-        let result = compile_plate_irs(&plates, &nodes);
+        let result = compile_plate_irs(&plates, &nodes).unwrap();
 
         assert_eq!(result[&1].nodes, vec![1]);
         assert_eq!(result[&1].plates, vec![2]);
         assert_eq!(result[&2].nodes, vec![2]);
         assert!(result[&2].plates.is_empty());
+    }
+
+    #[test]
+    fn plate_ir_rejects_partial_overlap() {
+        let plates = vec![
+            (
+                10,
+                PlateBounds::from_points(Vec2::ZERO, Vec2::new(100.0, 100.0)),
+                3,
+            ),
+            (
+                11,
+                PlateBounds::from_points(Vec2::new(50.0, 50.0), Vec2::new(150.0, 150.0)),
+                4,
+            ),
+        ];
+
+        let error = compile_plate_irs(&plates, &[]).unwrap_err();
+        assert!(error.contains("partially overlap"));
+    }
+
+    #[test]
+    fn plate_ir_allows_touching_sibling_borders() {
+        let plates = vec![
+            (
+                10,
+                PlateBounds::from_points(Vec2::ZERO, Vec2::new(50.0, 50.0)),
+                3,
+            ),
+            (
+                11,
+                PlateBounds::from_points(Vec2::new(50.0, 0.0), Vec2::new(100.0, 50.0)),
+                4,
+            ),
+        ];
+
+        assert!(compile_plate_irs(&plates, &[]).is_ok());
+    }
+
+    #[test]
+    fn plate_ir_rejects_node_on_shared_sibling_border() {
+        let plates = vec![
+            (
+                10,
+                PlateBounds::from_points(Vec2::ZERO, Vec2::new(50.0, 50.0)),
+                3,
+            ),
+            (
+                11,
+                PlateBounds::from_points(Vec2::new(50.0, 0.0), Vec2::new(100.0, 50.0)),
+                4,
+            ),
+        ];
+        let nodes = vec![(1, Vec2::new(50.0, 25.0))];
+
+        let error = compile_plate_irs(&plates, &nodes).unwrap_err();
+        assert!(error.contains("multiple sibling plates"));
     }
 }

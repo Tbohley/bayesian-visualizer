@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use crate::nodes::Operation;
 pub mod graph_checks;
+mod model_compilation;
+mod plate_validation;
 use fugue::*;
 
 #[derive(Clone)]
@@ -54,8 +56,7 @@ pub struct EdgeIR {
 #[derive(Clone, Debug)]
 pub struct PlateIR {
     pub id: u32,
-    /// Nodes directly contained by this plate.
+    pub n: usize,
     pub nodes: Vec<u32>,
-    /// Plates directly nested inside this plate.
     pub plates: Vec<u32>,
 }

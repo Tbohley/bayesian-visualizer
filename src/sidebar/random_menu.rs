@@ -88,7 +88,7 @@ impl SidebarContent for RandomNode{
 
         commands.entity(sidebar_entity).with_child(divider());
 
-        let sample_button = commands.spawn((
+        /*let sample_button = commands.spawn((
         Name::new("sample_button"),
         Button,
         Node {
@@ -112,7 +112,8 @@ impl SidebarContent for RandomNode{
         )).observe(sample_node_toast).id();
         commands.entity(sidebar_entity).add_child(sample_button);
         commands.entity(sidebar_entity).with_child(divider());
-        }
+        */
+    }
 
 }
 

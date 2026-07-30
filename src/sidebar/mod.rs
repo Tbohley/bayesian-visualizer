@@ -3,6 +3,7 @@ pub mod global;
 pub mod compute_menu;
 pub mod scalar_menu;
 pub mod link_params;
+pub mod plate_menu;
 use bevy::color::palettes::css::BLACK;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;
@@ -21,6 +22,9 @@ pub struct GlobalSidebar;
 
 #[derive(Component)]
 pub struct ScalarValueTextbox;
+
+#[derive(Component)]
+pub struct PlateNTextbox;
 
 /// event opening a new context menu at position `pos`
 #[derive(Event)]
@@ -187,7 +191,7 @@ pub fn reload_sidebar(
     node_data: Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar: Query<(Entity, &LocalSidebar)>,
-    plates: Query<(), With<Plate>>,
+    plates: Query<&Plate>,
 ){
     for (sidebar_entity, _comp) in sidebar.iter(){
         commands.entity(sidebar_entity).despawn();
@@ -231,7 +235,7 @@ pub fn reload_sidebar(
             (Some(rv), None, None) => rv.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
             (None, Some(sc), None) => sc.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
             (None, None, Some(cn)) => cn.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
-            (None, None, None) if plates.contains(entity) => {},
+            (None, None, None) if plates.contains(entity) => plates.get(entity).expect("non-empty query should not be empty").build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
             _ => warn!("Node has invalid or multiple node type components"),
         }
 

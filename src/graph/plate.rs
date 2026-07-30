@@ -1,14 +1,8 @@
-use super::Selected;
-use crate::nodes::{GraphNode, SelectedIndicator};
+use super::{Plate, PlateBorder, PlateBounds, PlateDraft, Selected};
+use crate::constants::*;
+use crate::nodes::{GraphNode, NodeLabel, SelectedIndicator, replace_node_label};
 use crate::sidebar::ReloadSidebar;
 use bevy::prelude::*;
-use crate::constants::*;
-
-#[derive(Clone, Copy, Debug)]
-pub struct PlateBounds {
-    pub min: Vec2,
-    pub max: Vec2,
-}
 
 impl PlateBounds {
     pub fn from_points(a: Vec2, b: Vec2) -> Self {
@@ -43,22 +37,6 @@ impl PlateBounds {
     }
 }
 
-#[derive(Component, Debug)]
-pub struct Plate {
-    pub origin: Vec2,
-    pub bounds: PlateBounds,
-}
-
-#[derive(Component)]
-pub struct PlateDraft;
-
-#[derive(Component, Clone, Copy)]
-pub(crate) enum PlateBorder {
-    Top,
-    Right,
-    Bottom,
-    Left,
-}
 
 pub fn on_plate_drag_start(
     event: On<Pointer<DragStart>>,
@@ -84,10 +62,12 @@ pub fn on_plate_drag_start(
             Plate {
                 origin: start,
                 bounds: PlateBounds::from_points(start, start),
+                n: 10
             },
             GraphNode(id),
             PlateDraft,
             Pickable::IGNORE,
+            Visibility::default(),
             Transform::from_xyz(start.x, start.y, PLATE_Z),
         ))
         .observe(on_plate_click)
@@ -164,10 +144,12 @@ pub fn on_plate_drag_end(
     _event: On<Pointer<DragEnd>>,
     mut commands: Commands,
     plate: Single<(Entity, &Plate), With<PlateDraft>>,
+    labels: Query<(Entity, &NodeLabel, &ChildOf)>,
 ) {
     let (entity, plate) = plate.into_inner();
     if plate.bounds.is_substantial() {
         commands.entity(entity).remove::<PlateDraft>();
+        replace_node_label(&mut commands,entity,format!("N"), &labels, Some(&plate))
     } else {
         commands.entity(entity).despawn();
     }

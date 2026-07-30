@@ -1,4 +1,4 @@
-use bevy::{input_focus::InputFocus, prelude::*, text::EditableText};
+use bevy::{input_focus::InputFocus, prelude::*, sprite::Anchor, text::EditableText};
 use super::*;
 
 
@@ -32,48 +32,13 @@ pub fn new_scalar(
     .observe(on_node_click);
 }
 
-// Submit the new param when Enter is pressed
-pub fn on_enter_clicked(
-    input_focus: Res<InputFocus>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut scalar_textboxes: Query<(&mut EditableText, &Name), With<ScalarValueTextbox>>,
-    selected_scalar: Option<Single<(Entity, &mut ScalarNode, &Selected)>>,
-    labels: Query<(Entity, &NodeLabel, &ChildOf)>,
-    mut commands: Commands,
-) {
-    if !keyboard_input.just_pressed(KeyCode::Enter) {
-        return;
-    }
-    let Some(focused_entity) = input_focus.get() else {
-        return;
-    }; 
-
-    // Scalar-node value behavior
-    if let Ok((mut text_input, _name)) = scalar_textboxes.get_mut(focused_entity) {
-        let Some(single) = selected_scalar else {
-            return;
-        };
-        let (scalar_entity, mut scalar_node, _selected) = single.into_inner();
-        let num = text_input.value().to_string().parse::<f64>();
-        match num {
-            Ok(f) => {
-                scalar_node.val = f;
-                replace_node_label(&mut commands,scalar_entity,format!("{f:.1}"), &labels);
-                commands.trigger(ReloadSidebar);
-            }
-            Err(_e) => {
-                println!("Not a valid scalar number!");
-                text_input.clear();
-            }
-        }
-    }
-}
 
 pub fn replace_node_label(
     commands: &mut Commands,
     node_entity: Entity,
     label_text: impl Into<String>,
     labels: &Query<(Entity, &NodeLabel, &ChildOf)>,
+    selected_plate: Option<&Plate>
 ) {
     let label_text = label_text.into();
 
@@ -83,18 +48,34 @@ pub fn replace_node_label(
         }
     }
 
-    commands.entity(node_entity).with_child((
-        NodeLabel,
-        Text2d::new(label_text.clone()),
-        TextColor(NODE_NAME_COLOR),
-        TextFont{
-            font_size: match &label_text.len() {
-                n if *n > 1 => px(NODE_LABEL_FONT_SIZE_SMALL).into(),
-                _ => px(NODE_LABEL_FONT_SIZE).into()
+    if let Some(plate) = selected_plate {
+        commands.entity(node_entity).with_child((
+            NodeLabel,
+            Text2d::new(label_text.clone()),
+            TextColor(PLATE_COLOR),
+            Anchor::BOTTOM_RIGHT,
+            TextFont{
+                font_size: px(NODE_LABEL_FONT_SIZE).into(),
+                ..default()
             },
-            ..default()
-        },
-        Pickable::IGNORE,
-        Transform::from_xyz(0.0, 0.0, 2.0),
-    ));
+            Pickable::IGNORE,
+            Transform::from_translation(plate.get_corner_pos())
+        ));
+    }else{
+        commands.entity(node_entity).with_child((
+            NodeLabel,
+            Text2d::new(label_text.clone()),
+            TextColor(NODE_NAME_COLOR),
+            TextFont{
+                font_size: match &label_text.len() {
+                    n if *n > 1 => px(NODE_LABEL_FONT_SIZE_SMALL).into(),
+                    _ => px(NODE_LABEL_FONT_SIZE).into()
+                },
+                ..default()
+            },
+            Pickable::IGNORE,
+            Transform::from_xyz(0.0, 0.0, 2.0),
+        ));
+    }
+    
 }
