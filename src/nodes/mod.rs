@@ -83,6 +83,67 @@ pub struct ScalarNode{
 #[derive(Component)]
 pub struct SelectedIndicator;
 
+#[derive(Component)]
+pub struct ObservedNode;
+
+pub fn update_node_observation_colors(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    plates: Query<&Plate>,
+    labels: Query<(Entity, &NodeLabel, &ChildOf)>,
+    mut nodes: Query<(
+        Entity,
+        &mut MeshMaterial2d<ColorMaterial>,
+        Option<&RandomNode>,
+        Option<&ScalarNode>,
+        Has<ObservedNode>,
+    ), Or<(With<RandomNode>, With<ScalarNode>)>>,
+) {
+    for (entity, mut material, random, scalar, is_darkened) in &mut nodes {
+        let is_observed = plates.iter().any(|plate| {
+            plate
+                .mapping
+                .get(&entity)
+                .is_some_and(|column| column != "unobserved")
+        });
+
+        if is_observed == is_darkened {
+            continue;
+        }
+
+        let color = match (random, scalar, is_observed) {
+            (Some(_), None, true) => OBSERVED_RANDOM_NODE_COLOR,
+            (Some(_), None, false) => RANDOM_NODE_COLOR,
+            (None, Some(_), true) => OBSERVED_SCALAR_NODE_COLOR,
+            (None, Some(_), false) => SCALAR_NODE_COLOR,
+            _ => continue,
+        };
+        material.0 = materials.add(color);
+
+        if is_observed {
+            commands.entity(entity).insert(ObservedNode);
+            if scalar.is_some() {
+                for (label_entity, _, child_of) in &labels {
+                    if child_of.parent() == entity {
+                        commands.entity(label_entity).despawn();
+                    }
+                }
+            }
+        } else {
+            commands.entity(entity).remove::<ObservedNode>();
+            if let Some(scalar) = scalar {
+                replace_node_label(
+                    &mut commands,
+                    entity,
+                    format!("{:.1}", scalar.val),
+                    &labels,
+                    None,
+                );
+            }
+        }
+    }
+}
+
 impl NodeDisplay for ScalarNode{
     fn label(&self) -> String{
         format!["{:.2}", self.val]

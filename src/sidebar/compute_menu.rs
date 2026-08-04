@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use super::{link_params::{build_link_param_selector, get_ents_and_labels}, *};
+use super::{link_params::{apply_observed_scalar_labels, build_link_param_selector, get_ents_and_labels}, *};
 use crate::nodes::replace_node_label;
 
 impl SidebarContent for ComputeNode{
@@ -9,10 +9,12 @@ impl SidebarContent for ComputeNode{
         sidebar_entity: Entity,
         node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
         finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-        node: Entity
+        node: Entity,
+        _observed: bool,
+        observed_columns: &std::collections::HashMap<Entity, String>,
     ){
         commands.entity(sidebar_entity).with_child(divider());
-        available_links(&mut commands, &node_data, &finished_links, sidebar_entity, node);
+        available_links(&mut commands, &node_data, &finished_links, sidebar_entity, node, observed_columns);
         commands.entity(sidebar_entity).with_child(divider());
 
         commands.entity(sidebar_entity).with_child((
@@ -55,7 +57,8 @@ impl SidebarContent for ComputeNode{
         }).id();
         commands.entity(sidebar_entity).add_child(context_menu);
         commands.entity(sidebar_entity).with_child(divider());
-        let link_labels = get_ents_and_labels(commands, node_data, &finished_links, node);
+        let mut link_labels = get_ents_and_labels(commands, node_data, &finished_links, node);
+        apply_observed_scalar_labels(&mut link_labels, node_data, observed_columns);
         for (i, _param) in self.params.iter().enumerate() {        
             build_link_param_selector(commands, link_labels.clone(), self.params.clone(), i, &sidebar_entity);
         }

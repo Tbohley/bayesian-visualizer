@@ -11,7 +11,9 @@ impl SidebarContent for RandomNode{
         sidebar_entity: Entity, 
         node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
         finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-        node: Entity
+        node: Entity,
+        _observed: bool,
+        observed_columns: &std::collections::HashMap<Entity, String>,
     ){
         commands.entity(sidebar_entity).with_child(
             (
@@ -28,7 +30,7 @@ impl SidebarContent for RandomNode{
             ));
         commands.entity(sidebar_entity).with_child(divider());
         
-        available_links(&mut commands, &node_data, &finished_links, sidebar_entity, node);
+        available_links(&mut commands, &node_data, &finished_links, sidebar_entity, node, observed_columns);
         commands.entity(sidebar_entity).with_child(divider());
 
         commands.entity(sidebar_entity).with_child((
@@ -80,7 +82,8 @@ impl SidebarContent for RandomNode{
 
         //HERE is where you need to add context menus per parameter.
 
-        let link_labels = get_ents_and_labels(commands, node_data, &finished_links, node);
+        let mut link_labels = get_ents_and_labels(commands, node_data, &finished_links, node);
+        apply_observed_scalar_labels(&mut link_labels, node_data, observed_columns);
         
         for (i, _param) in self.params.iter().enumerate() {        
             build_link_param_selector(commands, link_labels.clone(), self.params.clone(), i, &sidebar_entity);

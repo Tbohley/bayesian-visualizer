@@ -32,8 +32,10 @@ pub const AVAILABLE_LINKS_COLOR: Color = Color::srgb(123./255., 130./255., 76./2
 pub const NODE_NAME_COLOR: Color = Color::BLACK;
 pub const BUTTON_COLOR: Color = Color::BLACK;
 pub const RANDOM_NODE_COLOR: Color = Color::srgb(0.992, 0.447, 0.447); //salmon-y red
+pub const OBSERVED_RANDOM_NODE_COLOR: Color = Color::srgb(0.645, 0.291, 0.291);
 pub const COMPUTE_NODE_COLOR: Color = Color::srgb(0.333, 0.902, 0.757); //punchy bright teal
 pub const SCALAR_NODE_COLOR: Color = Color::srgb(0.51, 0.35, 0.62); //lavendar
+pub const OBSERVED_SCALAR_NODE_COLOR: Color = Color::srgb(0.332, 0.228, 0.403);
 pub const ARROW_COLOR: Color = Color::srgb(0.973, 0.937, 0.729); //light yellow-ish
 pub const ERR_COLOR: Color = Color::srgb(0.45, 0.05, 0.05); //red
 pub const SAMPLE_COLOR: Color = Color::srgb(0.05, 0.05, 0.45); //blue
@@ -44,4 +46,3 @@ pub const PLATE_COLOR: Color = Color::srgb(0.04, 0.20, 0.48);
 
 #[derive(Component)]
 pub struct Canvas;
-

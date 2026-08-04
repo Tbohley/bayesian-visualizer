@@ -56,6 +56,7 @@ pub(crate) fn create_model(graph: &GraphIR) -> Result<GraphModel, String> {
     )
 }
 
+//recursively compile the current plate's scope into a Fugue model (i.e. start at root, recurse on each nested plate)
 fn compile_scope(
     graph: &GraphIR,
     normalized: &NormalizedPlates,
@@ -80,8 +81,36 @@ fn compile_scope(
             .cloned()
             .ok_or_else(|| format!("node {node_id} has no normalized plate path"))?;
         let params = compiled_params(node_params(&node), &normalized.node_paths)?;
+        let data_value = if let Some(plate) = scope.plate {
+            let plate_ir = graph
+                .plates
+                .get(&plate.id)
+                .ok_or_else(|| format!("normalized scope references missing plate {}", plate.id))?;
 
-        model = compile_node_instance(node, params, plate_ids, indices.to_vec(), model);
+            if let Some(column) = plate_ir.mapping.get(&node_id) {
+                let row = *indices
+                    .last()
+                    .ok_or_else(|| format!("plate {} node {node_id} has no row index", plate.id))?;
+                Some(
+                    *plate_ir
+                        .data
+                        .get(column)
+                        .and_then(|values| values.get(row))
+                        .ok_or_else(|| {
+                            format!(
+                                "plate {} column {column:?} has no value at row {row}",
+                                plate.id
+                            )
+                        })?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        model = compile_node_instance(node, params, plate_ids, indices.to_vec(), data_value, model);
     }
 
     for child in &scope.children {
@@ -99,11 +128,14 @@ fn compile_scope(
     Ok(model)
 }
 
+//actually extend the model to include next dependent node by bind()ing
+//creates distributions, compiles compute nodes, and places scalar values into model
 fn compile_node_instance(
     node: NodeIR,
     params: Vec<CompiledParam>,
     plate_ids: Vec<u32>,
     indices: Vec<usize>,
+    data_value: Option<f64>,
     model: ExecutionModel,
 ) -> ExecutionModel {
     let node_id = node_id(&node);
@@ -121,7 +153,7 @@ fn compile_node_instance(
 
         match node {
             NodeIR::Scalar { value, .. } => {
-                state.values.insert(key, value);
+                state.values.insert(key, data_value.unwrap_or(value));
                 pure(Ok(state))
             }
             NodeIR::Compute { operation, .. } => {
@@ -156,15 +188,34 @@ fn compile_node_instance(
                     }
                 };
 
-                sample_dyn_f64(Address(address), distribution).bind(move |value| {
-                    state.values.insert(key, value);
-                    pure(Ok(state))
-                })
+                if let Some(value) = data_value {
+                    Model::ObserveF64 {
+                        addr: Address(address),
+                        dist: distribution,
+                        value,
+                        k: Box::new(pure),
+                    }
+                    .bind(move |_| {
+                        state.values.insert(key, value);
+                        pure(Ok(state))
+                    })
+                } else {
+                    Model::SampleF64 {
+                        addr: Address(address),
+                        dist: distribution,
+                        k: Box::new(pure),
+                    }
+                    .bind(move |value| {
+                        state.values.insert(key, value);
+                        pure(Ok(state))
+                    })
+                }
             }
         }
     })
 }
 
+//formats node parameters that come from within a plate, i.e. must be duplicated
 fn compiled_params(
     params: &[ParamIR],
     node_paths: &HashMap<u32, Vec<u32>>,
@@ -185,6 +236,7 @@ fn compiled_params(
         .collect()
 }
 
+//actually handles plated parameters
 fn resolve_params(
     params: &[CompiledParam],
     consumer_indices: &[usize],
@@ -293,10 +345,10 @@ fn materialize_node(
 }
 
 impl GraphIR {
-    pub fn ancestral_sample_debug(&self) -> Result<String, String> {
-        let values = self.ancestral_sample()?;
-        self.format_model_values(&values)
-    }
+    // pub fn ancestral_sample_debug(&self) -> Result<String, String> {
+    //     let values = self.ancestral_sample()?;
+    //     self.format_model_values(&values)
+    // }
 
     pub fn format_model_values(&self, values: &ModelValues) -> Result<String, String> {
         let normalized = self.validated_plates()?;
@@ -437,14 +489,6 @@ fn node_params(node: &NodeIR) -> &[ParamIR] {
     }
 }
 
-fn sample_dyn_f64(addr: Address, dist: DynDistribution) -> Model<f64> {
-    Model::SampleF64 {
-        addr,
-        dist,
-        k: Box::new(pure),
-    }
-}
-
 fn boxed<D: Distribution<f64> + 'static>(
     result: FugueResult<D>,
 ) -> Result<DynDistribution, String> {
@@ -462,5 +506,61 @@ fn create_distribution(dist_type: &str, params: &[f64]) -> Result<DynDistributio
         ("Gamma", &[shape, rate]) => boxed(Gamma::new(shape, rate)),
         ("LogNormal", &[mu, sigma]) => boxed(LogNormal::new(mu, sigma)),
         (name, _) => Err(format!("wrong number of parameters for {name}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bayesian_core::PlateIR;
+
+    #[test]
+    fn linked_column_observes_random_nodes_and_replaces_scalar_literals() {
+        let mut graph = GraphIR::new();
+        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 0.0 });
+        graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 1.0 });
+        graph.nodes.insert(
+            3,
+            NodeIR::Random {
+                id: 3,
+                label: None,
+                dist_type: "Normal".to_string(),
+                params: vec![
+                    ParamIR {
+                        from_node: 1,
+                        param_name: None,
+                    },
+                    ParamIR {
+                        from_node: 2,
+                        param_name: None,
+                    },
+                ],
+            },
+        );
+        graph.nodes.insert(
+            4,
+            NodeIR::Scalar {
+                id: 4,
+                value: 999.0,
+            },
+        );
+        graph.plates.insert(
+            10,
+            PlateIR {
+                id: 10,
+                n: 2,
+                nodes: vec![3, 4],
+                plates: Vec::new(),
+                data: HashMap::from([("x".to_string(), vec![1.25, -0.5])]),
+                mapping: HashMap::from([(3, "x".to_string()), (4, "x".to_string())]),
+            },
+        );
+
+        let values = graph.ancestral_sample().unwrap();
+        let expected =
+            ModelResult::Plate(vec![ModelResult::Scalar(1.25), ModelResult::Scalar(-0.5)]);
+
+        assert_eq!(values[&3], expected);
+        assert_eq!(values[&4], expected);
     }
 }

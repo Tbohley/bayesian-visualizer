@@ -42,6 +42,8 @@ impl GraphIR {
         Ok(normalized)
     }
 
+    //Check that plates don't overlap and have legal node contents, create a pathway to each node through its nested plates
+    //
     pub(crate) fn normalize_plates(&self) -> Result<NormalizedPlates, String> {
         let mut parents = HashMap::<u32, u32>::new();
         let mut node_owners = HashMap::<u32, u32>::new();
@@ -59,6 +61,9 @@ impl GraphIR {
                     plate.id
                 ));
             }
+            if plate.data.is_empty() {
+                return Err(format!("plate {plate_id} has no dataset"));
+            }
 
             ensure_unique(&plate.nodes, |node_id| {
                 format!("plate {plate_id} lists node {node_id} more than once")
@@ -74,6 +79,24 @@ impl GraphIR {
                 if let Some(previous_owner) = node_owners.insert(node_id, plate_id) {
                     return Err(format!(
                         "node {node_id} belongs directly to both plate {previous_owner} and plate {plate_id}"
+                    ));
+                }
+            }
+
+            for (&node_id, column) in &plate.mapping {
+                if !plate.nodes.contains(&node_id) {
+                    return Err(format!(
+                        "plate {plate_id} maps column {column:?} to node {node_id}, which is not a direct member"
+                    ));
+                }
+                if !plate.data.contains_key(column) {
+                    return Err(format!(
+                        "plate {plate_id} maps node {node_id} to missing column {column:?}"
+                    ));
+                }
+                if matches!(self.nodes.get(&node_id), Some(NodeIR::Compute { .. })) {
+                    return Err(format!(
+                        "plate {plate_id} cannot map dataset column {column:?} to compute node {node_id}"
                     ));
                 }
             }
@@ -219,6 +242,7 @@ impl GraphIR {
         Ok(())
     }
 
+    //ensure there are no links from within plates to outside of plates, from sibling plates to each other, etc
     fn validate_dependency_scopes(&self, normalized: &NormalizedPlates) -> Result<(), String> {
         let mut consumer_ids = self.nodes.keys().copied().collect::<Vec<_>>();
         consumer_ids.sort_unstable();
@@ -306,6 +330,8 @@ mod tests {
             n,
             nodes,
             plates,
+            data: HashMap::from([("value".to_string(), vec![0.0; n])]),
+            mapping: HashMap::new(),
         }
     }
 

@@ -4,6 +4,7 @@ pub mod compute_menu;
 pub mod scalar_menu;
 pub mod link_params;
 pub mod plate_menu;
+use std::collections::HashMap;
 use bevy::color::palettes::css::BLACK;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;
@@ -35,6 +36,22 @@ pub struct OpenDistributionMenu {
 #[derive(Event)]
 pub struct OpenNodeTypeMenu{
     pub pos: Vec2,
+}
+
+#[derive(Resource)]
+pub struct Datasets {
+    pub datasets: Vec<Dataset>,
+}
+
+#[derive(Event)]
+pub struct OpenDatasetMenu{
+    pub pos: Vec2,
+}
+
+#[derive(Event)]
+pub struct OpenPlateMappingMenu {
+    pub pos: Vec2,
+    pub node: Entity,
 }
 
 #[derive(Event)]
@@ -80,7 +97,9 @@ trait SidebarContent {
         sidebar_entity: Entity,
         node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
         finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-        node: Entity
+        node: Entity,
+        observed: bool,
+        observed_columns: &HashMap<Entity, String>,
     );
 }
 
@@ -119,7 +138,8 @@ pub fn available_links(
     node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
     finished_links: &Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar_entity: Entity,
-    node: Entity
+    node: Entity,
+    observed_columns: &HashMap<Entity, String>,
 ){
     commands.entity(sidebar_entity).with_child((
         Text::new("Incoming links:"),
@@ -147,7 +167,13 @@ pub fn available_links(
 
             let label = match (maybe_random, maybe_scalar, maybe_transform) {
                 (Some(rv), None, None) => rv.label(),
-                (None, Some(sc), None) => "scalar: ".to_string() + &sc.label(),
+                (None, Some(sc), None) => format!(
+                    "scalar: {}",
+                    observed_columns
+                        .get(&ends.from)
+                        .cloned()
+                        .unwrap_or_else(|| sc.label())
+                ),
                 (None, None, Some(cn)) => "operation: ".to_string() + &cn.label(),
                 _ => "sidebar/mod.rs BUG: ".to_string(),
             };
@@ -187,11 +213,15 @@ pub fn available_links(
 pub fn reload_sidebar(
     _event: On<ReloadSidebar>,
     mut commands: Commands,
-    selected: Option<Single<(Entity, &mut Selected, &mut GraphNode)>>,
+    selected: Option<Single<(Entity, &Selected, &GraphNode)>>,
     node_data: Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
+    plate_nodes: Query<
+        (Entity, &GraphNode, &Transform, Option<&RandomNode>, Option<&ScalarNode>),
+        Or<(With<RandomNode>, With<ScalarNode>)>,
+    >,
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar: Query<(Entity, &LocalSidebar)>,
-    plates: Query<&Plate>,
+    mut plates: Query<&mut Plate>,
 ){
     for (sidebar_entity, _comp) in sidebar.iter(){
         commands.entity(sidebar_entity).despawn();
@@ -231,11 +261,26 @@ pub fn reload_sidebar(
                 TextColor(NODE_NAME_COLOR),
             ));
         let (maybe_random, maybe_scalar, maybe_transform) = node_data.get(entity).unwrap();
+        let observed_columns = plates
+            .iter()
+            .flat_map(|plate| plate.mapping.iter())
+            .filter(|(_, column)| column.as_str() != "unobserved")
+            .map(|(entity, column)| (*entity, column.clone()))
+            .collect::<HashMap<_, _>>();
+        let is_observed = plates.iter().any(|plate| {
+            plate
+                .mapping
+                .get(&entity)
+                .is_some_and(|column| column != "unobserved")
+        });
         match (maybe_random, maybe_scalar, maybe_transform) {
-            (Some(rv), None, None) => rv.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
-            (None, Some(sc), None) => sc.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
-            (None, None, Some(cn)) => cn.build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
-            (None, None, None) if plates.contains(entity) => plates.get(entity).expect("non-empty query should not be empty").build(&mut commands, sidebar_entity, &node_data, finished_links, entity),
+            (Some(rv), None, None) => rv.build(&mut commands, sidebar_entity, &node_data, finished_links, entity, is_observed, &observed_columns),
+            (None, Some(sc), None) => sc.build(&mut commands, sidebar_entity, &node_data, finished_links, entity, is_observed, &observed_columns),
+            (None, None, Some(cn)) => cn.build(&mut commands, sidebar_entity, &node_data, finished_links, entity, is_observed, &observed_columns),
+            (None, None, None) if plates.contains(entity) => plates
+                .get_mut(entity)
+                .expect("selected plate should exist")
+                .build(&mut commands, sidebar_entity, &plate_nodes),
             _ => warn!("Node has invalid or multiple node type components"),
         }
 

@@ -3,7 +3,6 @@ use crate::nodes::Operation;
 pub mod graph_checks;
 mod model_compilation;
 mod plate_validation;
-use fugue::*;
 
 #[derive(Clone)]
 pub struct GraphIR {
@@ -59,4 +58,6 @@ pub struct PlateIR {
     pub n: usize,
     pub nodes: Vec<u32>,
     pub plates: Vec<u32>,
+    pub data: HashMap<String, Vec<f64>>,
+    pub mapping: HashMap<u32, String>,
 }

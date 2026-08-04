@@ -8,11 +8,13 @@ impl SidebarContent for ScalarNode{
         sidebar_entity: Entity,
         _node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
         _finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-        _node: Entity
+        _node: Entity,
+        observed: bool,
+        _observed_columns: &std::collections::HashMap<Entity, String>,
     ){
         commands.entity(sidebar_entity).with_child(divider());
 
-        commands.entity(sidebar_entity).with_child((
+        let value_box = commands.spawn((
             Node {
                 width: percent(100.),
                 flex_direction: FlexDirection::Column,
@@ -21,12 +23,30 @@ impl SidebarContent for ScalarNode{
                 ..default()
             },
             Name::new(format!("value_box")),
-            children![
-                (
-                    Text::new("value"),
-                    TextColor(NODE_NAME_COLOR),
-                ),
-                (
+        )).id();
+        commands.entity(sidebar_entity).add_child(value_box);
+        commands.entity(value_box).with_child((
+            Text::new("value"),
+            TextColor(NODE_NAME_COLOR),
+        ));
+
+        if observed {
+            commands.entity(value_box).with_child((
+                Node {
+                    width: px(120.),
+                    min_height: px(25.),
+                    border: px(2).all(),
+                    padding: px(4).all(),
+                    ..default()
+                },
+                BorderColor::from(Color::from(SLATE_300)),
+                BackgroundColor(DARK_GREY.into()),
+                Text::new("from data"),
+                TextLayout::no_wrap(),
+                Name::new("value_textbox"),
+            ));
+        } else {
+            commands.entity(value_box).with_child((
                     ScalarValueTextbox,
                     Node {
                         width: px(120.),
@@ -42,9 +62,8 @@ impl SidebarContent for ScalarNode{
                     TextCursorStyle::default(),
                     TabIndex(0),
                     Name::new(format!("value_textbox")),
-                ),
-            ],
-        ));
+            ));
+        }
         
         commands.entity(sidebar_entity).with_child(divider());
 
@@ -97,7 +116,7 @@ pub fn on_enter_clicked(
         let num = text_input.value().to_string().parse::<usize>();
         match num {
             Ok(f) => {
-                plate_node.n = f;
+                plate_node.data.n = f;
                 replace_node_label(&mut commands,plate_entity,format!("{f:}"), &labels, Some(&plate_node));
                 commands.trigger(ReloadSidebar);
             }

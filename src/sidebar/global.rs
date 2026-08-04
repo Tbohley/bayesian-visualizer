@@ -43,6 +43,8 @@ pub fn load_global_sidebar(
             TextColor(NODE_NAME_COLOR),
         ));
 
+    commands.entity(global_sidebar_entity).with_child(divider());
+
     let nodemode_menu = commands.spawn((
         Name::new("node_mode_context_menu"),
         Button,

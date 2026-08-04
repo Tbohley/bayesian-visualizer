@@ -1,9 +1,11 @@
 pub mod edge;
 pub mod plate;
+use std::collections::HashMap;
+
 pub use edge::*;
 pub use plate::*;
 
-use bevy::prelude::*;
+use bevy::{prelude::*, reflect::TypeData};
 
 //on links between nodes
 #[derive(Component)]    
@@ -26,11 +28,19 @@ pub struct PlateBounds {
     pub max: Vec2,
 }
 
+#[derive(Clone, Debug)]
+pub struct Dataset{
+    pub name: String,
+    pub n: usize,
+    pub data: HashMap<String, Vec<f64>>,
+}
+
 #[derive(Component, Debug)]
 pub struct Plate {
     pub origin: Vec2,
     pub bounds: PlateBounds,
-    pub n: usize
+    pub data: Dataset,
+    pub mapping: HashMap<Entity, String> //maps observed nodes/scalar nodes to column names
 }
 
 impl Plate{

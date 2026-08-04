@@ -284,13 +284,38 @@ pub fn compile_ir(
     let plate_bounds = plates
         .iter()
         .filter(|(_, plate)| plate.bounds.is_substantial())
-        .map(|(node, plate)| (node.0, plate.bounds, plate.n))
+        .map(|(node, plate)| (node.0, plate.bounds, plate.data.n))
         .collect::<Vec<_>>();
     let positions = node_positions
         .iter()
         .map(|(node, transform)| (node.0, transform.translation.truncate()))
         .collect::<Vec<_>>();
     graph.plates = compile_plate_irs(&plate_bounds, &positions)?;
+
+    for (node, plate) in plates.iter().filter(|(_, plate)| plate.bounds.is_substantial()) {
+        if plate.data.data.is_empty() {
+            return Err(format!("plate {} has no dataset", node.0));
+        }
+
+        let plate_ir = graph
+            .plates
+            .get_mut(&node.0)
+            .expect("substantial plates should have compiled IR");
+        plate_ir.data = plate.data.data.clone();
+
+        for (&entity, column) in &plate.mapping {
+            if column == "unobserved" {
+                continue;
+            }
+
+            let node_id = node_ids
+                .get(entity)
+                .map_err(|_| format!("plate {} maps a missing node", node.0))?
+                .1
+                .0;
+            plate_ir.mapping.insert(node_id, column.clone());
+        }
+    }
 
     Ok(graph)
 }
@@ -365,6 +390,8 @@ fn compile_plate_irs(
                 n,
                 nodes: direct_nodes,
                 plates: direct_plates,
+                data: HashMap::new(),
+                mapping: HashMap::new(),
             },
         );
     }

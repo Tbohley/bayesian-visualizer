@@ -15,6 +15,7 @@ use sidebar::compute_menu::on_open_operation_menu;
 use sidebar::global::load_global_sidebar;
 use sidebar::global::on_open_node_type_menu;
 use sidebar::link_params::on_open_param_link_menu;
+use sidebar::plate_menu::{on_open_dataset_menu, on_open_plate_mapping_menu};
 use sidebar::random_menu::on_open_distribution_menu;
 use sidebar::scalar_menu::on_enter_clicked;
 use crate::sidebar::*;
@@ -48,12 +49,18 @@ fn setup (
         finish_link: asset_server.load("cursors/finish_link.png"),
     });
 
+    commands.insert_resource(Datasets {
+        datasets: vec![Dataset::from_csv("assets/data/SATandGPA.csv").expect("prefilled data should be valid")]
+    });
+
 }
 
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
         .add_observer(on_open_distribution_menu)
+        .add_observer(on_open_dataset_menu)
+        .add_observer(on_open_plate_mapping_menu)
         .add_observer(on_open_node_type_menu)
         .add_observer(on_trigger_close_menus)
         .add_observer(on_open_operation_menu)
@@ -70,6 +77,7 @@ fn main() {
             tick_sample_popups,
             click_error_toasts,
             spin_selection_indicators,
+            update_node_observation_colors,
             update_graph_cursor))
         .run();
 }

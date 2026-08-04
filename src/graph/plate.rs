@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use super::{Plate, PlateBorder, PlateBounds, PlateDraft, Selected};
 use crate::constants::*;
-use crate::nodes::{GraphNode, NodeLabel, SelectedIndicator, replace_node_label};
+use crate::nodes::{GraphNode, NodeLabel, RandomNode, ScalarNode, SelectedIndicator, replace_node_label};
 use crate::sidebar::ReloadSidebar;
 use bevy::prelude::*;
 
@@ -62,7 +64,8 @@ pub fn on_plate_drag_start(
             Plate {
                 origin: start,
                 bounds: PlateBounds::from_points(start, start),
-                n: 10
+                data: super::Dataset { name: "No dataset".to_string(), n: 10, data: HashMap::new() },
+                mapping: HashMap::new()
             },
             GraphNode(id),
             PlateDraft,
@@ -143,11 +146,18 @@ pub fn on_plate_drag(
 pub fn on_plate_drag_end(
     _event: On<Pointer<DragEnd>>,
     mut commands: Commands,
-    plate: Single<(Entity, &Plate), With<PlateDraft>>,
+    plate: Single<(Entity, &mut Plate), With<PlateDraft>>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
+    nodes: Query<(Entity, &Transform), Or<(With<RandomNode>, With<ScalarNode>)>>,
 ) {
-    let (entity, plate) = plate.into_inner();
+    let (entity, mut plate) = plate.into_inner();
     if plate.bounds.is_substantial() {
+        for (node_entity, transform) in &nodes {
+            if plate.bounds.contains_point(transform.translation.truncate()) {
+                plate.mapping.insert(node_entity, "unobserved".to_string());
+            }
+        }
+
         commands.entity(entity).remove::<PlateDraft>();
         replace_node_label(&mut commands,entity,format!("N"), &labels, Some(&plate))
     } else {

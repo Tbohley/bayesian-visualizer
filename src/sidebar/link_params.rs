@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 use super::*;
@@ -40,6 +40,27 @@ pub fn get_ents_and_labels(
             }
         })
         .collect()
+}
+
+pub fn apply_observed_scalar_labels(
+    link_labels: &mut [(Entity, String)],
+    node_data: &Query<(
+        Option<&RandomNode>,
+        Option<&ScalarNode>,
+        Option<&ComputeNode>,
+    )>,
+    observed_columns: &HashMap<Entity, String>,
+) {
+    for (entity, label) in link_labels {
+        let is_scalar = node_data
+            .get(*entity)
+            .is_ok_and(|(_, scalar, _)| scalar.is_some());
+        if is_scalar {
+            if let Some(column) = observed_columns.get(entity) {
+                *label = column.clone();
+            }
+        }
+    }
 }
 
 //fn build_link_param_selector
@@ -128,16 +149,24 @@ pub fn on_open_param_link_menu(
     mut commands: Commands,
     node_data: Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+    plates: Query<&Plate>,
     selected: Single<(Entity, &Selected, &GraphNode)>,
 ) {
     let (node, _selected_comp, _graphnode) = selected.into_inner();
 
-    let link_labels = get_ents_and_labels(
+    let mut link_labels = get_ents_and_labels(
         &mut commands,
         &node_data,
         &finished_links,
         node,
     );
+    let observed_columns = plates
+        .iter()
+        .flat_map(|plate| plate.mapping.iter())
+        .filter(|(_, column)| column.as_str() != "unobserved")
+        .map(|(entity, column)| (*entity, column.clone()))
+        .collect::<HashMap<_, _>>();
+    apply_observed_scalar_labels(&mut link_labels, &node_data, &observed_columns);
 
     commands.trigger(CloseContextMenus);
 
