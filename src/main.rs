@@ -13,7 +13,11 @@ use bevy_to_fugue::compilation::tick_sample_popups;
 pub use constants::*;
 use sidebar::compute_menu::on_open_operation_menu;
 use sidebar::global::load_global_sidebar;
+use sidebar::global::invalidate_compilation_on_graph_change;
 use sidebar::global::on_open_node_type_menu;
+use sidebar::global::set_inference_controls_enabled;
+use sidebar::global::set_posterior_sample_enabled;
+use sidebar::global::update_random_seed_placeholder;
 use sidebar::link_params::on_open_param_link_menu;
 use sidebar::plate_menu::{on_open_dataset_menu, on_open_plate_mapping_menu};
 use sidebar::random_menu::on_open_distribution_menu;
@@ -50,7 +54,8 @@ fn setup (
     });
 
     commands.insert_resource(Datasets {
-        datasets: vec![Dataset::from_csv("assets/data/SATandGPA.csv").expect("prefilled data should be valid")]
+        datasets: vec![Dataset::from_csv("assets/data/SATandGPA.csv").expect("prefilled data should be valid"),
+        ]
     });
 
 }
@@ -67,12 +72,16 @@ fn main() {
         .add_observer(on_open_param_link_menu)
         .add_observer(throw_err)
         .add_observer(compile)
+        .add_observer(set_inference_controls_enabled)
+        .add_observer(set_posterior_sample_enabled)
         .add_observer(sample_popup)
         .add_observer(reload_sidebar)
         .add_systems(Startup, (setup, load_global_sidebar))
         .add_systems(Update, (
             on_keypress, 
             on_enter_clicked,
+            invalidate_compilation_on_graph_change,
+            update_random_seed_placeholder,
             tick_error_toasts, 
             tick_sample_popups,
             click_error_toasts,

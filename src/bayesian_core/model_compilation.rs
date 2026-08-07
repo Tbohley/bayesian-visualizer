@@ -8,12 +8,14 @@ use fugue::{
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+/// Flat runtime identity for one concrete node instance at specific plate indices.
 struct InstanceKey {
     node_id: u32,
     indices: Vec<usize>,
 }
 
 #[derive(Default)]
+/// Flat collection of scalar values produced during one model execution.
 struct ExecutionState {
     values: HashMap<InstanceKey, f64>,
 }
@@ -21,48 +23,110 @@ struct ExecutionState {
 type ExecutionModel = Model<Result<ExecutionState, String>>;
 type DynDistribution = Box<dyn Distribution<f64>>;
 
+#[derive(Clone, Copy)]
+enum ExecutionMode {
+    Inference,
+    Predictive,
+}
+
+/// Preprocessed parameter metadata used to locate the applicable producer instance.
 struct CompiledParam {
     from_node: u32,
     producer_depth: usize,
     producer_plate_ids: Vec<u32>,
 }
 
+/// Plate path and extents needed to reconstruct one node's public result shape.
+#[derive(Clone)]
 struct NodeShape {
     node_id: u32,
     plate_ids: Vec<u32>,
     extents: Vec<usize>,
 }
 
-pub(crate) fn create_model(graph: &GraphIR) -> Result<GraphModel, String> {
-    if let Err(cycle) = graph.check_cycles() {
-        return Err(format!(
-            "graph contains a cycle including node IDs: {cycle:?}"
-        ));
-    }
-
-    let order = graph.topological_sort()?;
-    if order.len() != graph.nodes.len() {
-        return Err("graph contains a cycle".to_string());
-    }
-
-    let normalized = graph.validated_plates()?;
-    let mut model = pure(Ok(ExecutionState::default()));
-    model = compile_scope(graph, &normalized, &normalized.root, &order, &[], model)?;
-
-    let shapes = node_shapes(graph, &normalized)?;
-    Ok(
-        model
-            .bind(move |result| pure(result.and_then(|state| materialize_values(&state, &shapes)))),
-    )
+/// Structurally validated graph data that can cheaply create fresh Fugue models.
+///
+/// Fugue consumes a model on every execution, so the bind tree is rebuilt for
+/// each proposal. Cycle checks, topological sorting, plate normalization, and
+/// result-shape derivation are retained here and performed only once.
+pub struct CompiledGraph {
+    graph: GraphIR,
+    normalized: NormalizedPlates,
+    order: Vec<u32>,
+    shapes: Vec<NodeShape>,
 }
 
-//recursively compile the current plate's scope into a Fugue model (i.e. start at root, recurse on each nested plate)
+impl CompiledGraph {
+    pub(crate) fn new(graph: GraphIR) -> Result<Self, String> {
+        if let Err(cycle) = graph.check_cycles() {
+            return Err(format!(
+                "graph contains a cycle including node IDs: {cycle:?}"
+            ));
+        }
+
+        let order = graph.topological_sort()?;
+        if order.len() != graph.nodes.len() {
+            return Err("graph contains a cycle".to_string());
+        }
+
+        let normalized = graph.validated_plates()?;
+        let shapes = node_shapes(&graph, &normalized)?;
+        let compiled = Self {
+            graph,
+            normalized,
+            order,
+            shapes,
+        };
+
+        // Surface deterministic model-construction errors at compile time.
+        compiled.model()?;
+        Ok(compiled)
+    }
+
+    pub fn graph(&self) -> &GraphIR {
+        &self.graph
+    }
+
+    pub fn model(&self) -> Result<GraphModel, String> {
+        self.model_for(ExecutionMode::Inference)
+    }
+
+    pub(crate) fn predictive_model(&self) -> Result<GraphModel, String> {
+        self.model_for(ExecutionMode::Predictive)
+    }
+
+    fn model_for(&self, mode: ExecutionMode) -> Result<GraphModel, String> {
+        let mut model = pure(Ok(ExecutionState::default()));
+        model = compile_scope(
+            &self.graph,
+            &self.normalized,
+            &self.normalized.root,
+            &self.order,
+            &[],
+            mode,
+            model,
+        )?;
+
+        let shapes = self.shapes.clone();
+        Ok(model.bind(move |result: Result<ExecutionState, String>| {
+            pure(result.and_then(|state| materialize_values(&state, &shapes)))
+        }))
+    }
+}
+
+/// Validates and compiles a graph into an executable hierarchical Fugue model.
+pub(crate) fn create_model(graph: &GraphIR) -> Result<GraphModel, String> {
+    CompiledGraph::new(graph.clone())?.model()
+}
+
+/// Recursively compiles one normalized plate scope and its child scopes into a Fugue model.
 fn compile_scope(
     graph: &GraphIR,
     normalized: &NormalizedPlates,
     scope: &NormalizedScope,
     order: &[u32],
     indices: &[usize],
+    mode: ExecutionMode,
     mut model: ExecutionModel,
 ) -> Result<ExecutionModel, String> {
     for &node_id in order {
@@ -110,7 +174,15 @@ fn compile_scope(
             None
         };
 
-        model = compile_node_instance(node, params, plate_ids, indices.to_vec(), data_value, model);
+        model = compile_node_instance(
+            node,
+            params,
+            plate_ids,
+            indices.to_vec(),
+            data_value,
+            mode,
+            model,
+        );
     }
 
     for child in &scope.children {
@@ -121,21 +193,29 @@ fn compile_scope(
         for index in 0..plate.n {
             let mut child_indices = indices.to_vec();
             child_indices.push(index);
-            model = compile_scope(graph, normalized, child, order, &child_indices, model)?;
+            model = compile_scope(
+                graph,
+                normalized,
+                child,
+                order,
+                &child_indices,
+                mode,
+                model,
+            )?;
         }
     }
 
     Ok(model)
 }
 
-//actually extend the model to include next dependent node by bind()ing
-//creates distributions, compiles compute nodes, and places scalar values into model
+/// Extends the execution model with one node instance at its plate indices.
 fn compile_node_instance(
     node: NodeIR,
     params: Vec<CompiledParam>,
     plate_ids: Vec<u32>,
     indices: Vec<usize>,
     data_value: Option<f64>,
+    mode: ExecutionMode,
     model: ExecutionModel,
 ) -> ExecutionModel {
     let node_id = node_id(&node);
@@ -188,7 +268,7 @@ fn compile_node_instance(
                     }
                 };
 
-                if let Some(value) = data_value {
+                if let (ExecutionMode::Inference, Some(value)) = (mode, data_value) {
                     Model::ObserveF64 {
                         addr: Address(address),
                         dist: distribution,
@@ -215,7 +295,7 @@ fn compile_node_instance(
     })
 }
 
-//formats node parameters that come from within a plate, i.e. must be duplicated
+/// Records each parameter producer's plate depth so instances can be resolved correctly.
 fn compiled_params(
     params: &[ParamIR],
     node_paths: &HashMap<u32, Vec<u32>>,
@@ -236,7 +316,7 @@ fn compiled_params(
         .collect()
 }
 
-//actually handles plated parameters
+/// Resolves parameter values from the execution state at the producer's plate depth.
 fn resolve_params(
     params: &[CompiledParam],
     consumer_indices: &[usize],
@@ -268,6 +348,7 @@ fn resolve_params(
         .collect()
 }
 
+/// Derives the plate dimensions needed to reconstruct each node's hierarchical value.
 fn node_shapes(graph: &GraphIR, normalized: &NormalizedPlates) -> Result<Vec<NodeShape>, String> {
     let mut node_ids = graph.nodes.keys().copied().collect::<Vec<_>>();
     node_ids.sort_unstable();
@@ -302,6 +383,7 @@ fn node_shapes(graph: &GraphIR, normalized: &NormalizedPlates) -> Result<Vec<Nod
         .collect()
 }
 
+/// Rebuilds the flat execution-state values into results keyed by graph node ID.
 fn materialize_values(state: &ExecutionState, shapes: &[NodeShape]) -> Result<ModelValues, String> {
     let mut values = HashMap::with_capacity(shapes.len());
     for shape in shapes {
@@ -311,6 +393,7 @@ fn materialize_values(state: &ExecutionState, shapes: &[NodeShape]) -> Result<Mo
     Ok(values)
 }
 
+/// Recursively materializes a scalar node instance or its nested plate values.
 fn materialize_node(
     state: &ExecutionState,
     shape: &NodeShape,
@@ -350,6 +433,7 @@ impl GraphIR {
     //     self.format_model_values(&values)
     // }
 
+    /// Formats every sampled node value as human-readable instance lines.
     pub fn format_model_values(&self, values: &ModelValues) -> Result<String, String> {
         let normalized = self.validated_plates()?;
         let mut node_ids = self.nodes.keys().copied().collect::<Vec<_>>();
@@ -366,6 +450,7 @@ impl GraphIR {
         Ok(lines.join("\n"))
     }
 
+    /// Formats one node's scalar or plated result as human-readable instance lines.
     pub fn format_node_value(&self, node_id: u32, value: &ModelResult) -> Result<String, String> {
         let normalized = self.validated_plates()?;
         let mut lines = Vec::new();
@@ -386,6 +471,7 @@ impl GraphIR {
     }
 }
 
+/// Formats all instances of a node according to its normalized plate path.
 fn format_node_instances(
     graph: &GraphIR,
     normalized: &NormalizedPlates,
@@ -414,6 +500,7 @@ fn format_node_instances(
     )
 }
 
+/// Walks a nested model result and appends one display line for each scalar instance.
 fn format_instances(
     node_id: u32,
     display_name: &str,
@@ -457,6 +544,7 @@ fn format_instances(
     }
 }
 
+/// Builds the stable textual address for a node instance and its plate indices.
 fn instance_address(node_id: u32, plate_ids: &[u32], indices: &[usize]) -> String {
     let mut address = format!("node#{node_id}");
     for (&plate_id, &index) in plate_ids.iter().zip(indices) {
@@ -465,6 +553,7 @@ fn instance_address(node_id: u32, plate_ids: &[u32], indices: &[usize]) -> Strin
     address
 }
 
+/// Returns a node's label when present, or a fallback name based on its ID.
 fn node_display_name(node: &NodeIR) -> String {
     match node {
         NodeIR::Random {
@@ -476,12 +565,14 @@ fn node_display_name(node: &NodeIR) -> String {
     }
 }
 
+/// Extracts the ID stored by any graph node variant.
 fn node_id(node: &NodeIR) -> u32 {
     match node {
         NodeIR::Random { id, .. } | NodeIR::Scalar { id, .. } | NodeIR::Compute { id, .. } => *id,
     }
 }
 
+/// Returns a node's upstream parameters, or an empty slice for scalar nodes.
 fn node_params(node: &NodeIR) -> &[ParamIR] {
     match node {
         NodeIR::Random { params, .. } | NodeIR::Compute { params, .. } => params,
@@ -489,6 +580,7 @@ fn node_params(node: &NodeIR) -> &[ParamIR] {
     }
 }
 
+/// Boxes a concrete Fugue distribution while converting construction errors to strings.
 fn boxed<D: Distribution<f64> + 'static>(
     result: FugueResult<D>,
 ) -> Result<DynDistribution, String> {
@@ -497,6 +589,7 @@ fn boxed<D: Distribution<f64> + 'static>(
         .map_err(|error| error.to_string())
 }
 
+/// Constructs the requested distribution after checking its expected parameter arity.
 fn create_distribution(dist_type: &str, params: &[f64]) -> Result<DynDistribution, String> {
     match (dist_type, params) {
         ("Normal", &[mu, sigma]) => boxed(Normal::new(mu, sigma)),
@@ -515,6 +608,7 @@ mod tests {
     use crate::bayesian_core::PlateIR;
 
     #[test]
+    /// Verifies mapped data columns observe random nodes and override scalar literals.
     fn linked_column_observes_random_nodes_and_replaces_scalar_literals() {
         let mut graph = GraphIR::new();
         graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 0.0 });

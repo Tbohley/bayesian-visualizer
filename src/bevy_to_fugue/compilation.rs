@@ -5,9 +5,14 @@ use crate::bayesian_core::graph_checks::ModelResult;
 use crate::nodes::*;
 use crate::bayesian_core::*;
 use crate::sidebar::link_params::format_number;
+use crate::sidebar::SetInferenceControlsEnabled;
+use crate::sidebar::SetPosteriorSampleEnabled;
+use crate::sidebar::{NumberOfSamplesTextbox, NumberOfWarmupTextbox, RandomSeedTextbox};
 use crate::ui::ErrorToast;
 use crate::constants::*;
 use crate::graph::*;
+use bevy::text::EditableText;
+use rand::Rng;
 
 
 pub fn compile(
@@ -21,6 +26,9 @@ pub fn compile(
     node_positions: Query<(&GraphNode, &Transform), Without<Plate>>,
     plates: Query<(&GraphNode, &Plate)>,
 ) {
+    // Any compile attempt supersedes posterior results from the previous graph.
+    commands.remove_resource::<InferenceResultResource>();
+    commands.trigger(SetPosteriorSampleEnabled(false));
     let graph = compile_ir(
         &finished_links,
         &rand_nodes,
@@ -40,6 +48,7 @@ pub fn compile(
                 });
                 println!("{error}");
                 commands.remove_resource::<GraphIRResource>();
+                commands.trigger(SetInferenceControlsEnabled(false));
                 return;
             }
 
@@ -53,7 +62,22 @@ pub fn compile(
                     });
                     println!("Compiled plates: {:#?}", g.plates);
                     //save graph for other functions
-                    commands.insert_resource(GraphIRResource(g));
+                    match g.compile() {
+                        Ok(compiled) => {
+                            commands.insert_resource(GraphIRResource(compiled));
+                            commands.remove_resource::<InferenceResultResource>();
+                            commands.trigger(SetInferenceControlsEnabled(true));
+                        }
+                        Err(error) => {
+                            commands.trigger(ErrorToast {
+                                color: ERR_COLOR,
+                                text: format!("Compilation error: {error}"),
+                            });
+                            commands.remove_resource::<GraphIRResource>();
+                            commands.remove_resource::<InferenceResultResource>();
+                            commands.trigger(SetInferenceControlsEnabled(false));
+                        }
+                    }
                 }
                 Err(node_ids) => {
                     commands.trigger(ErrorToast {
@@ -64,6 +88,7 @@ pub fn compile(
                         ),
                     });
                     commands.remove_resource::<GraphIRResource>();
+                    commands.trigger(SetInferenceControlsEnabled(false));
                 }
             }
         }
@@ -74,6 +99,7 @@ pub fn compile(
             });
             println!("{error}");
             commands.remove_resource::<GraphIRResource>();
+            commands.trigger(SetInferenceControlsEnabled(false));
         }
     };
 }
@@ -82,55 +108,113 @@ pub fn compile(
 pub fn global_sample(
     _event: On<Pointer<Click>>,
     mut commands: Commands,
-    finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-    rand_nodes: Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
-    compute_nodes: Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
-    scalar_nodes: Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
     node_ids: Query<(Entity, &GraphNode, &Transform)>,
-    graph_resource: Option<ResMut<GraphIRResource>>,
+    graph_resource: Option<Res<GraphIRResource>>,
     old_samples: Query<(Entity, &SamplePopup)>
 ){
     for samp in old_samples.iter(){
         commands.entity(samp.0).despawn();
     }
-    let g: GraphIR;
-    if let Some(graph) = graph_resource {
-        g = graph.into_inner().0.clone();
-    }else{
+    let Some(compiled) = graph_resource else {
         commands.trigger(ErrorToast{
             text: "Graph not compiled.".to_string(),
             color: ERR_COLOR
         });
         return;
-    }
+    };
+    let g = compiled.0.graph();
     let sample_res = g.ancestral_sample();
-    let vals: HashMap<u32, ModelResult>;
-    let order = g.topological_sort().expect("Topological ordering should be validated by compilation.");
 
-    if let Err(e) = sample_res {
-        commands.trigger(ErrorToast{
-            text: format!("Sampling error: {}", e),
-            color: ERR_COLOR
+    let vals = match sample_res {
+        Ok(values) => values,
+        Err(error) => {
+            commands.trigger(ErrorToast{
+                text: format!("Sampling error: {error}"),
+                color: ERR_COLOR
+            });
+            return;
+        }
+    };
+
+    display_sample(&mut commands, g, &vals, &node_ids, "Basic sample");
+}
+
+pub fn posterior_sample(
+    _event: On<Pointer<Click>>,
+    mut commands: Commands,
+    graph_resource: Option<Res<GraphIRResource>>,
+    inference_results: Option<Res<InferenceResultResource>>,
+    node_ids: Query<(Entity, &GraphNode, &Transform)>,
+    old_samples: Query<(Entity, &SamplePopup)>,
+) {
+    for (entity, _) in &old_samples {
+        commands.entity(entity).despawn();
+    }
+    let (Some(compiled), Some(results)) = (graph_resource, inference_results) else {
+        commands.trigger(ErrorToast {
+            text: "Run inference before taking a posterior sample.".to_string(),
+            color: ERR_COLOR,
         });
         return;
-    }else{vals = sample_res.unwrap();}
-
-    match g.format_model_values(&vals) {
-        Ok(output) => println!("Ancestral sample:\n{output}"),
-        Err(error) => println!("Could not format ancestral sample: {error}"),
+    };
+    if results.0.traces.is_empty() {
+        commands.trigger(ErrorToast {
+            text: "Inference produced no posterior traces.".to_string(),
+            color: ERR_COLOR,
+        });
+        return;
     }
-    
-    for node_id in order{
+
+    let mut rng = rand::thread_rng();
+    let draw_index = rng.gen_range(0..results.0.traces.len());
+    let values = match compiled
+        .0
+        .posterior_predictive_sample(&results.0.traces[draw_index])
+    {
+        Ok(values) => values,
+        Err(error) => {
+            commands.trigger(ErrorToast {
+                text: format!("Posterior sampling error: {error}"),
+                color: ERR_COLOR,
+            });
+            return;
+        }
+    };
+    display_sample(
+        &mut commands,
+        compiled.0.graph(),
+        &values,
+        &node_ids,
+        &format!("Posterior predictive sample from draw {}", draw_index + 1),
+    );
+}
+
+fn display_sample(
+    commands: &mut Commands,
+    graph: &GraphIR,
+    values: &HashMap<u32, ModelResult>,
+    node_ids: &Query<(Entity, &GraphNode, &Transform)>,
+    title: &str,
+) {
+    match graph.format_model_values(values) {
+        Ok(output) => println!("{title}:\n{output}"),
+        Err(error) => println!("Could not format sample: {error}"),
+    }
+    let order = graph
+        .topological_sort()
+        .expect("topological ordering should be validated by compilation");
+
+    for node_id in order {
         let (_, _, transform) = node_ids.iter()
         .find(|(_, node, _)| node.0 == node_id)
         .expect("node not found");
-        let value = vals
+        let value = values
             .get(&node_id)
             .expect("sampled node val doesn't exist");
         let console_output = match value {
             ModelResult::Scalar(_) => None,
             ModelResult::Plate(_) => Some(
-                g.format_node_value(node_id, value)
+                graph.format_node_value(node_id, value)
                     .unwrap_or_else(|error| format!("Could not format node {node_id}: {error}")),
             ),
         };
@@ -143,9 +227,106 @@ pub fn global_sample(
             console_output,
         })
     }
+}
 
+pub fn run_inference(
+    _event: On<Pointer<Click>>,
+    mut commands: Commands,
+    graph_resource: Option<Res<GraphIRResource>>,
+    seed_text: Single<&EditableText, With<RandomSeedTextbox>>,
+    sample_text: Single<&EditableText, With<NumberOfSamplesTextbox>>,
+    warmup_text: Single<&EditableText, With<NumberOfWarmupTextbox>>,
+) {
+    let Some(compiled) = graph_resource else {
+        commands.trigger(ErrorToast {
+            text: "Graph not compiled.".to_string(),
+            color: ERR_COLOR,
+        });
+        return;
+    };
 
+    let seed_string = seed_text.value().to_string();
+    let seed = if seed_string.trim().is_empty() {
+        rand::random::<u64>()
+    } else {
+        match seed_string.trim().parse::<u64>() {
+            Ok(seed) => seed,
+            Err(_) => {
+                commands.trigger(ErrorToast {
+                    text: "Random seed must be a non-negative whole number or blank.".to_string(),
+                    color: ERR_COLOR,
+                });
+                return;
+            }
+        }
+    };
 
+    let n_samples = match parse_positive_count(&sample_text, "number of samples") {
+        Ok(value) => value,
+        Err(error) => {
+            commands.trigger(ErrorToast {
+                text: error,
+                color: ERR_COLOR,
+            });
+            return;
+        }
+    };
+    let n_warmup = match parse_count(&warmup_text, "number of rounds") {
+        Ok(value) => value,
+        Err(error) => {
+            commands.trigger(ErrorToast {
+                text: error,
+                color: ERR_COLOR,
+            });
+            return;
+        }
+    };
+
+    println!(
+        "Running inference: seed={seed}, samples={n_samples}, warmup={n_warmup}"
+    );
+    match compiled.0.run_inference(seed, n_samples, n_warmup) {
+        Ok(results) => {
+            println!(
+                "Inference complete: retained {} samples after {} warmup rounds (seed {}).",
+                results.n_samples, results.n_warmup, results.seed
+            );
+            commands.insert_resource(InferenceResultResource(results));
+            commands.trigger(SetPosteriorSampleEnabled(true));
+            commands.trigger(ErrorToast {
+                text: format!(
+                    "Inference complete: {n_samples} samples (seed {seed}). Click a node for its summary."
+                ),
+                color: SAMPLE_COLOR,
+            });
+        }
+        Err(error) => {
+            println!("Inference error: {error}");
+            commands.remove_resource::<InferenceResultResource>();
+            commands.trigger(SetPosteriorSampleEnabled(false));
+            commands.trigger(ErrorToast {
+                text: format!("Inference error: {error}"),
+                color: ERR_COLOR,
+            });
+        }
+    }
+}
+
+fn parse_positive_count(text: &EditableText, label: &str) -> Result<usize, String> {
+    let value = parse_count(text, label)?;
+    if value == 0 {
+        Err(format!("{label} must be greater than zero"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn parse_count(text: &EditableText, label: &str) -> Result<usize, String> {
+    text.value()
+        .to_string()
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| format!("{label} must be a non-negative whole number"))
 }
 
 pub fn sample_popup(

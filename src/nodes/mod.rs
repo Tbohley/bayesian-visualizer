@@ -11,6 +11,8 @@ use bevy::prelude::*;
 use crate::graph::*;
 use crate::sidebar::*;
 use crate::ui::*;
+use crate::bayesian_core::NodeInstanceSummary;
+use crate::bevy_to_fugue::InferenceResultResource;
 
 //on all node entities
 #[derive(Component)]
@@ -18,6 +20,9 @@ pub struct GraphNode(pub u32);
 
 #[derive(Component)]
 pub struct NodeLabel;
+
+#[derive(Component)]
+pub struct NodeInterior;
 
 pub enum NodeType{
     Random,
@@ -89,17 +94,20 @@ pub struct ObservedNode;
 pub fn update_node_observation_colors(
     mut commands: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    plates: Query<&Plate>,
+    plates: Query<&Plate, Without<PlateDraft>>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
-    mut nodes: Query<(
+    nodes: Query<(
         Entity,
-        &mut MeshMaterial2d<ColorMaterial>,
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Has<ObservedNode>,
-    ), Or<(With<RandomNode>, With<ScalarNode>)>>,
+    ), With<RandomNode>>,
+    mut interiors: Query<
+        (&ChildOf, &mut MeshMaterial2d<ColorMaterial>),
+        With<NodeInterior>,
+    >,
 ) {
-    for (entity, mut material, random, scalar, is_darkened) in &mut nodes {
+    for (entity, random, scalar, was_observed) in &nodes {
         let is_observed = plates.iter().any(|plate| {
             plate
                 .mapping
@@ -107,18 +115,21 @@ pub fn update_node_observation_colors(
                 .is_some_and(|column| column != "unobserved")
         });
 
-        if is_observed == is_darkened {
+        if is_observed == was_observed {
             continue;
         }
 
         let color = match (random, scalar, is_observed) {
-            (Some(_), None, true) => OBSERVED_RANDOM_NODE_COLOR,
-            (Some(_), None, false) => RANDOM_NODE_COLOR,
-            (None, Some(_), true) => OBSERVED_SCALAR_NODE_COLOR,
-            (None, Some(_), false) => SCALAR_NODE_COLOR,
+            (Some(_), None, true) => RANDOM_NODE_COLOR,
+            (None, Some(_), true) => SCALAR_NODE_COLOR,
+            (Some(_), None, false) | (None, Some(_), false) => CANVAS_COLOR,
             _ => continue,
         };
-        material.0 = materials.add(color);
+        for (child_of, mut material) in &mut interiors {
+            if child_of.parent() == entity {
+                material.0 = materials.add(color);
+            }
+        }
 
         if is_observed {
             commands.entity(entity).insert(ObservedNode);
@@ -217,8 +228,9 @@ pub fn on_node_click(
     mut materials: ResMut<Assets<ColorMaterial>>,
     transforms: Query<&mut Transform>,
     selected: Option<Single<(Entity, &mut Selected)>>,
-    distributions: Query<&RandomNode>,
     selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
+    node_ids: Query<&GraphNode>,
+    inference_results: Option<Res<InferenceResultResource>>,
 ){
     //if there is an unfinished GraphLink, complete it.
     if let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {
@@ -282,16 +294,85 @@ pub fn on_node_click(
 
             commands.trigger(ReloadSidebar);
 
-            let selected_dist_box = distributions.get(event.event_target());
-            match selected_dist_box {
-                Err(_e) => println!("Selected node has no associated distrbution"),
-                Ok(dist) => {
-                    let mut rng = thread_rng();
-                    println!("Selected node distribution: {:?}", dist.dist);
-                    println!("Sample from node: {}", dist.dist.sample(&mut rng))
-                }
-            };
+            if let (Ok(node), Some(results)) = (
+                node_ids.get(event.event_target()),
+                inference_results.as_deref(),
+            ) {
+                display_inference_summary(&mut commands, node.0, &results.0);
+            }
+
 
         }
     }
+}
+
+fn display_inference_summary(
+    commands: &mut Commands,
+    node_id: u32,
+    results: &crate::bayesian_core::InferenceResult,
+) {
+    let summaries = match results.summaries_for_node(node_id) {
+        Ok(summaries) if !summaries.is_empty() => summaries,
+        Ok(_) => {
+            commands.trigger(ErrorToast {
+                text: format!("Node {node_id} has no posterior values."),
+                color: ERR_COLOR,
+            });
+            return;
+        }
+        Err(error) => {
+            commands.trigger(ErrorToast {
+                text: format!("Could not summarize node {node_id}: {error}"),
+                color: ERR_COLOR,
+            });
+            return;
+        }
+    };
+
+    let lines = summaries
+        .iter()
+        .map(|summary| format_summary(node_id, summary))
+        .collect::<Vec<_>>();
+    println!("Posterior summary for node {node_id}:\n{}", lines.join("\n"));
+
+    let first = &summaries[0];
+    let instance = instance_label(node_id, &first.indices);
+    let remaining = summaries.len().saturating_sub(1);
+    let suffix = if remaining == 0 {
+        String::new()
+    } else {
+        format!(" (+{remaining} row{}; see console)", if remaining == 1 { "" } else { "s" })
+    };
+    commands.trigger(ErrorToast {
+        text: format!(
+            "{instance}: mean {:.4}, sd {:.4}, median {:.4}, 95% CrI [{:.4}, {:.4}]{suffix}",
+            first.mean,
+            first.standard_deviation,
+            first.median,
+            first.lower_95,
+            first.upper_95,
+        ),
+        color: SAMPLE_COLOR,
+    });
+}
+
+fn format_summary(node_id: u32, summary: &NodeInstanceSummary) -> String {
+    format!(
+        "{}: n={}, mean={:.6}, sd={:.6}, median={:.6}, 95% CrI=[{:.6}, {:.6}]",
+        instance_label(node_id, &summary.indices),
+        summary.count,
+        summary.mean,
+        summary.standard_deviation,
+        summary.median,
+        summary.lower_95,
+        summary.upper_95,
+    )
+}
+
+fn instance_label(node_id: u32, indices: &[usize]) -> String {
+    let mut label = format!("node#{node_id}");
+    for index in indices {
+        label.push_str(&format!("[{index}]"));
+    }
+    label
 }

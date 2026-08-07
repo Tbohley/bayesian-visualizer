@@ -37,6 +37,11 @@ impl PlateBounds {
         let size = self.size();
         size.x >= MIN_PLATE_EXTENT && size.y >= MIN_PLATE_EXTENT
     }
+
+    fn translate(&mut self, delta: Vec2) {
+        self.min += delta;
+        self.max += delta;
+    }
 }
 
 
@@ -74,6 +79,8 @@ pub fn on_plate_drag_start(
             Transform::from_xyz(start.x, start.y, PLATE_Z),
         ))
         .observe(on_plate_click)
+        .observe(on_completed_plate_drag)
+        .observe(on_completed_plate_drag_end)
         .id();
 
     commands.entity(plate).with_children(|parent| {
@@ -95,6 +102,47 @@ pub fn on_plate_drag_start(
             ));
         }
     });
+}
+
+fn on_completed_plate_drag(
+    event: On<Pointer<Drag>>,
+    mut plates: Query<(&mut Plate, &mut Transform), Without<PlateDraft>>,
+) {
+    let Ok((mut plate, mut transform)) = plates.get_mut(event.event_target()) else {
+        return;
+    };
+    let delta = Vec2::new(event.delta.x, -event.delta.y);
+
+    plate.origin += delta;
+    plate.bounds.translate(delta);
+    transform.translation.x += delta.x;
+    transform.translation.y += delta.y;
+}
+
+fn on_completed_plate_drag_end(
+    event: On<Pointer<DragEnd>>,
+    mut commands: Commands,
+    mut plates: Query<&mut Plate, Without<PlateDraft>>,
+    nodes: Query<(Entity, &Transform), Or<(With<RandomNode>, With<ScalarNode>)>>,
+) {
+    let Ok(mut plate) = plates.get_mut(event.event_target()) else {
+        return;
+    };
+
+    let bounds = plate.bounds;
+    plate.mapping.retain(|entity, _| {
+        nodes
+            .get(*entity)
+            .is_ok_and(|(_, transform)| bounds.contains_point(transform.translation.truncate()))
+    });
+    for (entity, transform) in &nodes {
+        if bounds.contains_point(transform.translation.truncate()) {
+            plate.mapping
+                .entry(entity)
+                .or_insert_with(|| "unobserved".to_string());
+        }
+    }
+    commands.trigger(ReloadSidebar);
 }
 
 pub fn on_plate_drag(
@@ -201,5 +249,17 @@ mod tests {
 
         assert!(!jitter.is_substantial());
         assert!(plate.is_substantial());
+    }
+
+    #[test]
+    fn translating_a_plate_preserves_its_size() {
+        let mut bounds = PlateBounds::from_points(Vec2::new(10.0, 20.0), Vec2::new(50.0, 80.0));
+        let size = bounds.size();
+
+        bounds.translate(Vec2::new(-15.0, 25.0));
+
+        assert_eq!(bounds.size(), size);
+        assert_eq!(bounds.min, Vec2::new(-5.0, 45.0));
+        assert_eq!(bounds.max, Vec2::new(35.0, 105.0));
     }
 }

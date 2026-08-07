@@ -3,8 +3,13 @@ use crate::nodes::Operation;
 pub mod graph_checks;
 mod model_compilation;
 mod plate_validation;
+mod inference;
+
+pub use inference::{InferenceResult, NodeInstanceSummary};
+pub use model_compilation::CompiledGraph;
 
 #[derive(Clone)]
+/// Intermediate representation of the complete probabilistic graph and its plates.
 pub struct GraphIR {
     pub nodes: HashMap<u32, NodeIR>,  // keyed by GraphNode id
     pub edges: Vec<EdgeIR>,
@@ -12,6 +17,7 @@ pub struct GraphIR {
 }
 
 impl GraphIR{
+    /// Creates an empty graph intermediate representation with no nodes, edges, or plates.
     pub fn new() -> Self {
         Self {
             nodes: HashMap::<u32, NodeIR>::new(),
@@ -41,18 +47,21 @@ pub enum NodeIR {
 }
 
 #[derive(Clone, Debug)]
+/// Reference from a node parameter to the node that supplies its value.
 pub struct ParamIR {
     pub from_node: u32,            // param fed by node with this id
     pub param_name: Option<String>
 }
 
 #[derive(Clone)]
+/// Directed graph edge between two node IDs.
 pub struct EdgeIR {
     pub from: u32,
     pub to: u32,
 }
 
 #[derive(Clone, Debug)]
+/// Dataset-backed repeated scope containing its direct nodes and child plates.
 pub struct PlateIR {
     pub id: u32,
     pub n: usize,

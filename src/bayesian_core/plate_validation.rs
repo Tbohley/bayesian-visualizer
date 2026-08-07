@@ -2,12 +2,14 @@ use super::{GraphIR, NodeIR, ParamIR, PlateIR};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
+/// Validated plate tree paired with a direct lookup of every node's plate path.
 pub(crate) struct NormalizedPlates {
     pub(crate) root: NormalizedScope,
     pub(crate) node_paths: HashMap<u32, Vec<u32>>,
 }
 
 #[derive(Debug)]
+/// One scope in the normalized hierarchy, including its direct nodes and child scopes.
 pub(crate) struct NormalizedScope {
     pub(crate) plate: Option<NormalizedPlate>,
     pub(crate) nodes: Vec<u32>,
@@ -15,6 +17,7 @@ pub(crate) struct NormalizedScope {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Minimal validated identity and extent for one plate.
 pub(crate) struct NormalizedPlate {
     pub(crate) id: u32,
     pub(crate) n: usize,
@@ -27,23 +30,20 @@ enum VisitState {
 }
 
 impl GraphIR {
-    /// Validate plate containment and all parameter dependencies between scopes.
-    ///
-    /// A dependency is valid when the producer's plate path is a prefix of the
-    /// consumer's path. This permits values to flow into the same scope or a
-    /// nested scope, while rejecting flows out of a plate or across siblings.
+    /// Validates plate containment and parameter dependencies between scopes.
+    /// Dependencies may flow from an enclosing or matching scope into a consumer, but not outward or across siblings.
     pub fn validate_plate_semantics(&self) -> Result<(), String> {
         self.validated_plates().map(|_| ())
     }
 
+    /// Normalizes plates and verifies that all node dependencies respect their scopes.
     pub(crate) fn validated_plates(&self) -> Result<NormalizedPlates, String> {
         let normalized = self.normalize_plates()?;
         self.validate_dependency_scopes(&normalized)?;
         Ok(normalized)
     }
 
-    //Check that plates don't overlap and have legal node contents, create a pathway to each node through its nested plates
-    //
+    /// Validates plate ownership and containment, then derives each node's nested plate path.
     pub(crate) fn normalize_plates(&self) -> Result<NormalizedPlates, String> {
         let mut parents = HashMap::<u32, u32>::new();
         let mut node_owners = HashMap::<u32, u32>::new();
@@ -160,6 +160,7 @@ impl GraphIR {
         })
     }
 
+    /// Builds a normalized scope subtree while recording its nodes' full plate paths.
     fn build_normalized_scope(
         &self,
         plate_id: u32,
@@ -198,7 +199,9 @@ impl GraphIR {
         })
     }
 
+    /// Detects containment cycles in the plate hierarchy.
     fn check_plate_cycles(&self) -> Result<(), String> {
+        /// Traverses plate descendants and reports a cycle found on the current DFS stack.
         fn visit(
             plate_id: u32,
             plates: &HashMap<u32, PlateIR>,
@@ -242,7 +245,7 @@ impl GraphIR {
         Ok(())
     }
 
-    //ensure there are no links from within plates to outside of plates, from sibling plates to each other, etc
+    /// Ensures dependencies flow only from an enclosing or matching plate scope into a consumer.
     fn validate_dependency_scopes(&self, normalized: &NormalizedPlates) -> Result<(), String> {
         let mut consumer_ids = self.nodes.keys().copied().collect::<Vec<_>>();
         consumer_ids.sort_unstable();
@@ -279,6 +282,7 @@ impl GraphIR {
     }
 }
 
+/// Rejects duplicate IDs in a collection using the caller's contextual error message.
 fn ensure_unique(values: &[u32], error: impl Fn(u32) -> String) -> Result<(), String> {
     let mut seen = HashSet::with_capacity(values.len());
     for &value in values {
@@ -289,6 +293,7 @@ fn ensure_unique(values: &[u32], error: impl Fn(u32) -> String) -> Result<(), St
     Ok(())
 }
 
+/// Returns a node's incoming parameters, or an empty slice when it is scalar.
 fn node_params(node: &NodeIR) -> &[ParamIR] {
     match node {
         NodeIR::Random { params, .. } | NodeIR::Compute { params, .. } => params,
@@ -296,6 +301,7 @@ fn node_params(node: &NodeIR) -> &[ParamIR] {
     }
 }
 
+/// Formats a plate path for validation error messages.
 fn format_scope(path: &[u32]) -> String {
     if path.is_empty() {
         "root".to_string()
@@ -309,10 +315,12 @@ mod tests {
     use super::*;
     use crate::nodes::Operation;
 
+    /// Creates a scalar node fixture with a fixed value.
     fn scalar(id: u32) -> NodeIR {
         NodeIR::Scalar { id, value: 1.0 }
     }
 
+    /// Creates a compute node fixture that consumes one upstream node.
     fn compute(id: u32, from_node: u32) -> NodeIR {
         NodeIR::Compute {
             id,
@@ -324,6 +332,7 @@ mod tests {
         }
     }
 
+    /// Creates a plate fixture with a single data column sized to its extent.
     fn plate(id: u32, n: usize, nodes: Vec<u32>, plates: Vec<u32>) -> PlateIR {
         PlateIR {
             id,
@@ -336,6 +345,7 @@ mod tests {
     }
 
     #[test]
+    /// Verifies nested plates and root nodes receive their expected normalized paths.
     fn normalizes_arbitrarily_nested_plates_and_root_nodes() {
         let mut graph = GraphIR::new();
         graph.nodes.insert(1, scalar(1));
@@ -359,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    /// Verifies normalization rejects missing contents and multiple direct owners.
     fn rejects_missing_and_multiply_owned_contents() {
         let mut missing = GraphIR::new();
         missing.plates.insert(10, plate(10, 1, vec![99], vec![]));
@@ -388,6 +399,7 @@ mod tests {
     }
 
     #[test]
+    /// Verifies validation rejects cycles in the plate containment hierarchy.
     fn rejects_plate_cycles() {
         let mut graph = GraphIR::new();
         graph.plates.insert(10, plate(10, 1, vec![], vec![11]));
@@ -397,6 +409,7 @@ mod tests {
     }
 
     #[test]
+    /// Verifies dependencies can flow into the same or a nested plate scope.
     fn allows_dependencies_into_same_or_nested_scope() {
         let mut graph = GraphIR::new();
         graph.nodes.insert(1, scalar(1));
@@ -410,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    /// Verifies validation rejects dependencies that leave or cross plate scopes.
     fn rejects_dependencies_out_of_or_across_plates() {
         let mut outward = GraphIR::new();
         outward.nodes.insert(1, scalar(1));

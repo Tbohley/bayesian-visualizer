@@ -111,7 +111,10 @@ impl Plate{
 
         for (entity, graph_node, _, random, scalar) in contents {
             let label = match (random, scalar) {
-                (Some(random), None) => random.label(),
+                (Some(random), None) => match &random.name {
+                    Some(_) => random.label(),
+                    None => format!("var id {} ~ {}", graph_node.0, random.dist_type),
+                },
                 (None, Some(_)) => format!("scalar {}", graph_node.0),
                 _ => continue,
             };

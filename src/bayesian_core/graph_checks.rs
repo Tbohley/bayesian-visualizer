@@ -26,7 +26,14 @@ pub enum ModelResult {
 }
 
 impl GraphIR {
+    /// Validates this graph once and retains its reusable execution metadata.
+    pub fn compile(self) -> Result<super::CompiledGraph, String> {
+        super::model_compilation::CompiledGraph::new(self)
+    }
+
+    /// Detects dependency cycles among graph nodes using depth-first search.
     pub fn check_cycles(&self) -> Result<(), Vec<u32>> {
+        /// Returns the parameter list for nodes that consume upstream values.
         fn params(node: &NodeIR) -> &[ParamIR] {
             match node {
                 NodeIR::Random { params, .. } => params,
@@ -35,6 +42,7 @@ impl GraphIR {
             }
         }
 
+        /// Traverses one node's dependencies and reports the cycle currently on the DFS stack.
         fn visit(
             node_id: u32,
             graph: &GraphIR,
@@ -79,6 +87,7 @@ impl GraphIR {
         Ok(())
     }
 
+    /// Produces a stable dependency-respecting order for all graph nodes.
     pub fn topological_sort(&self) -> Result<Vec<u32>, String> {
         let mut indegrees = HashMap::new();
         let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
@@ -124,6 +133,7 @@ impl GraphIR {
         Ok(order)
     }
 
+    /// Samples every node in dependency order from the graph's prior model.
     pub fn ancestral_sample(&self) -> Result<HashMap<u32, ModelResult>, String> {
         let model = self.create_model()?;
         let mut rng = rand::thread_rng();
@@ -137,16 +147,8 @@ impl GraphIR {
         result
     }
 
-    /// Compile this graph into a single hierarchical Fugue model.
-    ///
-    /// Nodes are appended in topological order. Scalar and compute nodes are
-    /// deterministic `pure` steps; random nodes become Fugue sample or observe
-    /// sites. Since each step is attached with `bind`, a downstream distribution
-    /// is not constructed until its upstream values are available.
-    ///
-    /// The outer `Result` reports graph-structure errors found while compiling.
-    /// The model's inner `Result` reports value-dependent errors found while it
-    /// is running, such as division by zero or invalid distribution parameters.
+    /// Compiles this graph into a hierarchical Fugue model after validating its structure.
+    /// Compilation errors are returned immediately, while value-dependent errors are retained in the model result.
     pub fn create_model(&self) -> Result<GraphModel, String> {
         super::model_compilation::create_model(self)
     }

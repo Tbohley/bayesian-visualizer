@@ -27,6 +27,35 @@ pub struct ScalarValueTextbox;
 #[derive(Component)]
 pub struct PlateNTextbox;
 
+#[derive(Component)]
+pub struct RequiresCompilation;
+
+#[derive(Component)]
+pub struct RequiresInference;
+
+#[derive(Component)]
+pub struct InferenceTextbox {
+    pub tab_index: i32,
+}
+
+#[derive(Component)]
+pub struct RandomSeedTextbox;
+
+#[derive(Component)]
+pub struct NumberOfSamplesTextbox;
+
+#[derive(Component)]
+pub struct NumberOfWarmupTextbox;
+
+#[derive(Component)]
+pub struct RandomSeedPlaceholder;
+
+#[derive(Event)]
+pub struct SetInferenceControlsEnabled(pub bool);
+
+#[derive(Event)]
+pub struct SetPosteriorSampleEnabled(pub bool);
+
 /// event opening a new context menu at position `pos`
 #[derive(Event)]
 pub struct OpenDistributionMenu {
@@ -302,7 +331,6 @@ pub fn reload_sidebar(
                 Pickable::IGNORE,
                 Text::new("Delete"),
                 TextColor(Color::WHITE),
-                TextShadow::default(),
             )],
             )).observe(  //delete button functionality
                 |

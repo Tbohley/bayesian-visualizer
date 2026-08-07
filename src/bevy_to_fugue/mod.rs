@@ -1,10 +1,13 @@
 pub mod compilation;
 use bevy::prelude::*;
-use crate::bayesian_core::GraphIR;
+use crate::bayesian_core::{CompiledGraph, InferenceResult};
 
 
 #[derive(Resource)]
-pub struct GraphIRResource(GraphIR);
+pub struct GraphIRResource(pub CompiledGraph);
+
+#[derive(Resource)]
+pub struct InferenceResultResource(pub InferenceResult);
 
 #[derive(Event)]
 pub struct TriggerCompilation;

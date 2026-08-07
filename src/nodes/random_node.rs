@@ -33,6 +33,12 @@ pub fn new_random(
             params: vec![ParamValue("mean", None),ParamValue("std_dev", None)]
         }
     )).with_child((
+        NodeInterior,
+        Pickable::IGNORE,
+        Mesh2d(meshes.add(Circle::new(RANDOM_NODE_RAD - NODE_BORDER_WEIGHT))),
+        MeshMaterial2d(materials.add(CANVAS_COLOR)),
+        Transform::from_xyz(0.0, 0.0, 0.01),
+    )).with_child((
         NodeLabel,
         Text2d::new(node_num.to_string()),
         TextColor(NODE_NAME_COLOR),
@@ -86,94 +92,6 @@ pub fn on_keypress(
         commands.trigger(ReloadSidebar);
     }
 
-}
-
-
-
-pub fn refresh_var_dist(
-    node: &mut RandomNode,
-    _commands: &mut Commands
-) {
-    /*
-    let mut new_param_vals = Vec::<ParamValue>::new();
-
-    //for all default parameters in the truth set for this distribution:
-    for new_param_truth in distribution_params().get(&node.dist_type).unwrap() {
-        let value = node
-            .params
-            .iter()
-            .find(|old_param_val| old_param_val.0 == new_param_truth.0)
-            .map(|old_param_val| old_param_val.1)
-            .unwrap_or(new_param_truth.1);
-    
-        new_param_vals.push(ParamValue(new_param_truth.0, value));
-    }
-    
-    node.params = new_param_vals;
-    println!("New params: {:?}", &node.params);
-
-
-    let p = |i: usize| {
-        node.params
-            .get(i).unwrap().1
-    };
-
-    let e = |err| {
-        match err {
-            InvalidParameters { distribution, reason, code, context: _ } => {
-                commands.trigger(ErrorToast{ color: ERR_COLOR, text: format!("{} failed: {} (Code: {:?}). Please set new parameters and hit enter.", distribution, reason, code)});
-            }
-            other => {commands.trigger(ErrorToast{ color: ERR_COLOR, text: format!("distribution construction failed: {:?}. Please set new parameters and hit enter.", other)});}
-        }
-        None
-    };*/
-
-    /*let new_dist: Option<Box<dyn DistributionDebug<f64>>> = match node.dist_type.as_str() {
-        "Normal" => Normal::new(p(0), p(1))
-            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
-            .unwrap_or_else(e),
-        "LogNormal" => LogNormal::new(p(0), p(1))
-            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
-            .unwrap_or_else(e),
-        "Exponential" => Exponential::new(p(0))
-            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
-            .unwrap_or_else(e),
-        "Gamma" => Gamma::new(p(0), p(1))
-            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
-            .unwrap_or_else(e),
-        "Beta" => Beta::new(p(0), p(1))
-            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
-            .unwrap_or_else(e),
-        "Uniform" => Uniform::new(p(0), p(1))
-            .map(|d| Some(Box::new(d.clone()) as Box<dyn DistributionDebug<f64>>))
-            .unwrap_or_else(e),
-        other => {
-            commands.trigger(ErrorToast {
-                text: format!("unsupported distribution type: {}", other),
-                color: ERR_COLOR
-            });
-            None
-        }
-    };
-    
-    if let Some(new_dist) = new_dist {
-        node.dist = new_dist;
-    }*/
-
-    //let mut rng = thread_rng();
-    println!("Node distribution set to: {:?}", node.dist);
-    //println!("Sample from node: {}", node.dist.sample(&mut rng))
-}
-
-pub fn sample_node_toast(
-    _event: On<Pointer<Click>>,
-    mut node: Single<&mut RandomNode, With<Selected>>,
-    mut commands: Commands
-) {
-    let mut rng = thread_rng();
-    refresh_var_dist(&mut node, &mut commands);
-    println!("Sample from node: {}", node.dist.sample(&mut rng));
-    commands.trigger(ErrorToast{text: format!("Sample from node: {}", node.dist.sample(&mut rng)), color: SAMPLE_COLOR})
 }
 
 //store parameters for distributions plus a valid default value
