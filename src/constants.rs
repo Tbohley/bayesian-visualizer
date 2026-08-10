@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
-pub const CANVAS_HEIGHT: f32 = 500.0;
-pub const CANVAS_WIDTH: f32 = 800.0;
-pub const SIDEBAR_WIDTH: f32 = CANVAS_WIDTH / 3.5;
+pub const CANVAS_HEIGHT: f32 = 1000.0;
+pub const CANVAS_WIDTH: f32 = 2000.0;
+pub const SIDEBAR_WIDTH: f32 = 300.0;
 
 pub const RANDOM_NODE_RAD: f32 = 20.0;
 pub const COMPUTE_NODE_RAD: f32 = 18.0;

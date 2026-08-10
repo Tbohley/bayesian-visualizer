@@ -11,8 +11,8 @@ use bevy::prelude::*;
 use crate::graph::*;
 use crate::sidebar::*;
 use crate::ui::*;
-use crate::bayesian_core::NodeInstanceSummary;
 use crate::bevy_to_fugue::InferenceResultResource;
+use crate::data_vis::{CloseHistogramPanel, OpenHistogramPanel};
 
 //on all node entities
 #[derive(Component)]
@@ -174,6 +174,7 @@ pub fn on_background_click(
     mut unfinished_links: Query<Entity, With<UnfinishedLink>>,
     plate_drafts: Query<&Plate, With<PlateDraft>>,
 ) {
+    commands.trigger(CloseHistogramPanel);
     // Bevy emits Click before DragEnd when a drag is released. Do not treat
     // a real plate gesture as a normal background click. Tiny pointer jitter
     // remains a click; its undersized draft is removed by DragEnd.
@@ -294,85 +295,15 @@ pub fn on_node_click(
 
             commands.trigger(ReloadSidebar);
 
-            if let (Ok(node), Some(results)) = (
-                node_ids.get(event.event_target()),
-                inference_results.as_deref(),
-            ) {
-                display_inference_summary(&mut commands, node.0, &results.0);
+            if let Ok(node) = node_ids.get(event.event_target()) {
+                if inference_results.is_some() {
+                    commands.trigger(OpenHistogramPanel { node_id: node.0 });
+                } else {
+                    commands.trigger(CloseHistogramPanel);
+                }
             }
 
 
         }
     }
-}
-
-fn display_inference_summary(
-    commands: &mut Commands,
-    node_id: u32,
-    results: &crate::bayesian_core::InferenceResult,
-) {
-    let summaries = match results.summaries_for_node(node_id) {
-        Ok(summaries) if !summaries.is_empty() => summaries,
-        Ok(_) => {
-            commands.trigger(ErrorToast {
-                text: format!("Node {node_id} has no posterior values."),
-                color: ERR_COLOR,
-            });
-            return;
-        }
-        Err(error) => {
-            commands.trigger(ErrorToast {
-                text: format!("Could not summarize node {node_id}: {error}"),
-                color: ERR_COLOR,
-            });
-            return;
-        }
-    };
-
-    let lines = summaries
-        .iter()
-        .map(|summary| format_summary(node_id, summary))
-        .collect::<Vec<_>>();
-    println!("Posterior summary for node {node_id}:\n{}", lines.join("\n"));
-
-    let first = &summaries[0];
-    let instance = instance_label(node_id, &first.indices);
-    let remaining = summaries.len().saturating_sub(1);
-    let suffix = if remaining == 0 {
-        String::new()
-    } else {
-        format!(" (+{remaining} row{}; see console)", if remaining == 1 { "" } else { "s" })
-    };
-    commands.trigger(ErrorToast {
-        text: format!(
-            "{instance}: mean {:.4}, sd {:.4}, median {:.4}, 95% CrI [{:.4}, {:.4}]{suffix}",
-            first.mean,
-            first.standard_deviation,
-            first.median,
-            first.lower_95,
-            first.upper_95,
-        ),
-        color: SAMPLE_COLOR,
-    });
-}
-
-fn format_summary(node_id: u32, summary: &NodeInstanceSummary) -> String {
-    format!(
-        "{}: n={}, mean={:.6}, sd={:.6}, median={:.6}, 95% CrI=[{:.6}, {:.6}]",
-        instance_label(node_id, &summary.indices),
-        summary.count,
-        summary.mean,
-        summary.standard_deviation,
-        summary.median,
-        summary.lower_95,
-        summary.upper_95,
-    )
-}
-
-fn instance_label(node_id: u32, indices: &[usize]) -> String {
-    let mut label = format!("node#{node_id}");
-    for index in indices {
-        label.push_str(&format!("[{index}]"));
-    }
-    label
 }

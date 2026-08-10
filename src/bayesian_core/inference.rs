@@ -16,15 +16,70 @@ pub struct InferenceResult {
     pub traces: Vec<Trace>,
 }
 
+/// One scalar posterior value and the retained draw that produced it.
+///
+/// `draw_index` is stable across nodes, so selections made in one variable's
+/// histogram can be applied to every other variable from the same draws.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PosteriorSample {
+    pub draw_index: usize,
+    pub value: f64,
+}
+
+/// Posterior samples for one concrete scalar instance of a node.
+///
+/// Scalar nodes use an empty `indices` path. Plate values use paths such as
+/// `[0]` or `[2, 4]`, preserving each concrete row independently.
 #[derive(Clone, Debug, PartialEq)]
-pub struct NodeInstanceSummary {
+pub struct NodeInstanceSamples {
     pub indices: Vec<usize>,
-    pub count: usize,
-    pub mean: f64,
-    pub standard_deviation: f64,
-    pub median: f64,
-    pub lower_95: f64,
-    pub upper_95: f64,
+    pub samples: Vec<PosteriorSample>,
+}
+
+impl NodeInstanceSamples {
+    pub fn count(&self) -> usize {
+        self.samples.len()
+    }
+
+    pub fn mean(&self) -> f64 {
+        self.samples.iter().map(|sample| sample.value).sum::<f64>() / self.count() as f64
+    }
+
+    pub fn standard_deviation(&self) -> f64 {
+        if self.count() <= 1 {
+            return 0.0;
+        }
+        let mean = self.mean();
+        let variance = self
+            .samples
+            .iter()
+            .map(|sample| (sample.value - mean).powi(2))
+            .sum::<f64>()
+            / (self.count() - 1) as f64;
+        variance.sqrt()
+    }
+
+    pub fn median(&self) -> f64 {
+        self.quantile(0.5)
+    }
+
+    pub fn lower_95(&self) -> f64 {
+        self.quantile(0.025)
+    }
+
+    pub fn upper_95(&self) -> f64 {
+        self.quantile(0.975)
+    }
+
+    fn quantile(&self, probability: f64) -> f64 {
+        let mut values = self
+            .samples
+            .iter()
+            .map(|sample| sample.value)
+            .collect::<Vec<_>>();
+        values.sort_by(f64::total_cmp);
+        quantile(&values, probability)
+    }
 }
 
 impl CompiledGraph {
@@ -104,74 +159,62 @@ impl CompiledGraph {
 }
 
 impl InferenceResult {
-    /// Computes summaries independently for every concrete plate-row instance.
-    pub fn summaries_for_node(&self, node_id: u32) -> Result<Vec<NodeInstanceSummary>, String> {
+    /// Returns draw-indexed values independently for every concrete node instance.
+    pub fn samples_for_node(&self, node_id: u32) -> Result<Vec<NodeInstanceSamples>, String> {
         let draws = self
             .samples_by_node
             .get(&node_id)
             .ok_or_else(|| format!("inference results do not contain node {node_id}"))?;
-        let mut values_by_instance = BTreeMap::<Vec<usize>, Vec<f64>>::new();
+        let mut samples_by_instance = BTreeMap::<Vec<usize>, Vec<PosteriorSample>>::new();
 
-        for draw in draws {
-            flatten_result(draw, &mut Vec::new(), &mut values_by_instance);
+        for (draw_index, draw) in draws.iter().enumerate() {
+            flatten_result(
+                draw,
+                draw_index,
+                &mut Vec::new(),
+                &mut samples_by_instance,
+            );
         }
 
-        values_by_instance
+        samples_by_instance
             .into_iter()
-            .map(|(indices, values)| summarize(indices, values))
+            .map(|(indices, samples)| {
+                if samples.is_empty() {
+                    return Err("cannot display an empty posterior".to_string());
+                }
+                if samples.iter().any(|sample| !sample.value.is_finite()) {
+                    return Err(format!(
+                        "node instance {indices:?} contains non-finite values"
+                    ));
+                }
+                Ok(NodeInstanceSamples { indices, samples })
+            })
             .collect()
     }
 }
 
 fn flatten_result(
     value: &ModelResult,
+    draw_index: usize,
     indices: &mut Vec<usize>,
-    output: &mut BTreeMap<Vec<usize>, Vec<f64>>,
+    output: &mut BTreeMap<Vec<usize>, Vec<PosteriorSample>>,
 ) {
     match value {
-        ModelResult::Scalar(value) => output.entry(indices.clone()).or_default().push(*value),
+        ModelResult::Scalar(value) => output
+            .entry(indices.clone())
+            .or_default()
+            .push(PosteriorSample {
+                draw_index,
+                value: *value,
+            }),
         ModelResult::Plate(items) => {
             for (index, item) in items.iter().enumerate() {
                 indices.push(index);
-                flatten_result(item, indices, output);
+                flatten_result(item, draw_index, indices, output);
                 indices.pop();
             }
         }
     }
-}
-
-fn summarize(indices: Vec<usize>, mut values: Vec<f64>) -> Result<NodeInstanceSummary, String> {
-    if values.is_empty() {
-        return Err("cannot summarize an empty posterior".to_string());
-    }
-    if values.iter().any(|value| !value.is_finite()) {
-        return Err(format!(
-            "node instance {indices:?} contains non-finite values"
-        ));
-    }
-
-    values.sort_by(f64::total_cmp);
-    let count = values.len();
-    let mean = values.iter().sum::<f64>() / count as f64;
-    let variance = if count > 1 {
-        values
-            .iter()
-            .map(|value| (value - mean).powi(2))
-            .sum::<f64>()
-            / (count - 1) as f64
-    } else {
-        0.0
-    };
-
-    Ok(NodeInstanceSummary {
-        indices,
-        count,
-        mean,
-        standard_deviation: variance.sqrt(),
-        median: quantile(&values, 0.5),
-        lower_95: quantile(&values, 0.025),
-        upper_95: quantile(&values, 0.975),
-    })
 }
 
 fn quantile(sorted: &[f64], probability: f64) -> f64 {
@@ -188,7 +231,7 @@ mod tests {
     use crate::bayesian_core::{GraphIR, NodeIR, ParamIR, PlateIR};
 
     #[test]
-    fn summaries_preserve_plate_rows() {
+    fn samples_preserve_plate_rows_and_draw_indices() {
         let result = InferenceResult {
             seed: 1,
             n_samples: 3,
@@ -204,12 +247,14 @@ mod tests {
             traces: Vec::new(),
         };
 
-        let summaries = result.summaries_for_node(7).unwrap();
-        assert_eq!(summaries.len(), 2);
-        assert_eq!(summaries[0].indices, vec![0]);
-        assert_eq!(summaries[0].mean, 2.0);
-        assert_eq!(summaries[1].indices, vec![1]);
-        assert_eq!(summaries[1].mean, 20.0);
+        let instances = result.samples_for_node(7).unwrap();
+        assert_eq!(instances.len(), 2);
+        assert_eq!(instances[0].indices, vec![0]);
+        assert_eq!(instances[0].mean(), 2.0);
+        assert_eq!(instances[0].samples[1].draw_index, 1);
+        assert_eq!(instances[0].samples[1].value, 2.0);
+        assert_eq!(instances[1].indices, vec![1]);
+        assert_eq!(instances[1].mean(), 20.0);
     }
 
     #[test]
@@ -243,7 +288,7 @@ mod tests {
         assert_eq!(result.samples_by_node[&1].len(), 8);
         assert_eq!(result.samples_by_node[&2].len(), 8);
         assert_eq!(result.samples_by_node[&3].len(), 8);
-        assert_eq!(result.summaries_for_node(3).unwrap()[0].count, 8);
+        assert_eq!(result.samples_for_node(3).unwrap()[0].count(), 8);
     }
 
     #[test]

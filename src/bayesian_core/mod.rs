@@ -5,7 +5,7 @@ mod model_compilation;
 mod plate_validation;
 mod inference;
 
-pub use inference::{InferenceResult, NodeInstanceSummary};
+pub use inference::{InferenceResult, NodeInstanceSamples, PosteriorSample};
 pub use model_compilation::CompiledGraph;
 
 #[derive(Clone)]

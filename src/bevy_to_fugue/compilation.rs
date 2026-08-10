@@ -11,6 +11,7 @@ use crate::sidebar::{NumberOfSamplesTextbox, NumberOfWarmupTextbox, RandomSeedTe
 use crate::ui::ErrorToast;
 use crate::constants::*;
 use crate::graph::*;
+use crate::data_vis::CloseHistogramPanel;
 use bevy::text::EditableText;
 use rand::Rng;
 
@@ -28,6 +29,7 @@ pub fn compile(
 ) {
     // Any compile attempt supersedes posterior results from the previous graph.
     commands.remove_resource::<InferenceResultResource>();
+    commands.trigger(CloseHistogramPanel);
     commands.trigger(SetPosteriorSampleEnabled(false));
     let graph = compile_ir(
         &finished_links,
@@ -237,6 +239,8 @@ pub fn run_inference(
     sample_text: Single<&EditableText, With<NumberOfSamplesTextbox>>,
     warmup_text: Single<&EditableText, With<NumberOfWarmupTextbox>>,
 ) {
+    // Never leave a visualization of superseded posterior draws on screen.
+    commands.trigger(CloseHistogramPanel);
     let Some(compiled) = graph_resource else {
         commands.trigger(ErrorToast {
             text: "Graph not compiled.".to_string(),

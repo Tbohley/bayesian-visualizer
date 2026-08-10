@@ -9,6 +9,7 @@ use crate::bayesian_core::GraphIR;
 use crate::nodes::*;
 use crate::constants::*;
 use crate::bevy_to_fugue::*;
+use crate::data_vis::CloseHistogramPanel;
 
 const DISABLED_CONTROL_COLOR: Color = Color::srgb(0.35, 0.35, 0.35);
 const DISABLED_TEXT_COLOR: Color = Color::srgb(0.65, 0.65, 0.65);
@@ -303,6 +304,7 @@ fn add_inference_field(
     commands.entity(field).add_child(textbox);
 }
 
+//un-grays out control panel when compilation is done
 pub fn set_inference_controls_enabled(
     event: On<SetInferenceControlsEnabled>,
     mut commands: Commands,
@@ -363,6 +365,7 @@ pub fn set_inference_controls_enabled(
     }
 }
 
+///un-grays out posterior sample button once inference has been run.
 pub fn set_posterior_sample_enabled(
     event: On<SetPosteriorSampleEnabled>,
     mut commands: Commands,
@@ -409,6 +412,7 @@ pub fn update_random_seed_placeholder(
     }
 }
 
+//greys out controls on graph changes in order to require recompilation
 pub fn invalidate_compilation_on_graph_change(
     mut commands: Commands,
     graph_resource: Option<Res<GraphIRResource>>,
@@ -447,6 +451,7 @@ pub fn invalidate_compilation_on_graph_change(
         commands.remove_resource::<InferenceResultResource>();
         commands.trigger(SetInferenceControlsEnabled(false));
         commands.trigger(SetPosteriorSampleEnabled(false));
+        commands.trigger(CloseHistogramPanel);
     }
 }
 

@@ -5,6 +5,7 @@ mod sidebar;
 mod graph;
 mod ui;
 mod constants;
+mod data_vis;
 mod bayesian_core;
 mod bevy_to_fugue;
 use bevy_to_fugue::compilation::compile;
@@ -26,6 +27,7 @@ use crate::sidebar::*;
 use crate::ui::*;
 use crate::nodes::*;
 use crate::graph::*;
+use crate::data_vis::{close_histogram_panel, open_histogram_panel};
 
 fn setup (
     mut commands: Commands,
@@ -76,6 +78,8 @@ fn main() {
         .add_observer(set_posterior_sample_enabled)
         .add_observer(sample_popup)
         .add_observer(reload_sidebar)
+        .add_observer(open_histogram_panel)
+        .add_observer(close_histogram_panel)
         .add_systems(Startup, (setup, load_global_sidebar))
         .add_systems(Update, (
             on_keypress, 
