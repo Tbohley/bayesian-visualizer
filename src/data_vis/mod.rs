@@ -1,17 +1,23 @@
 
 
-use bevy::prelude::*;
+use bevy::{
+    input_focus::{InputFocus, tab_navigation::TabIndex},
+    prelude::*,
+    text::{EditableText, TextCursorStyle},
+};
 use crate::bayesian_core::{NodeInstanceSamples, PosteriorSample};
 use crate::bevy_to_fugue::InferenceResultResource;
 use crate::constants::{ERR_COLOR, SAMPLE_COLOR, SIDEBAR_WIDTH};
 use crate::ui::ErrorToast;
 
 pub const DEFAULT_HISTOGRAM_BINS: usize = 20;
+pub const MAX_HISTOGRAM_BINS: usize = 200;
 pub const HISTOGRAM_PANEL_HEIGHT: f32 = 260.0;
 
 #[derive(Event)]
 pub struct OpenHistogramPanel {
     pub node_id: u32,
+    pub bin_count: usize,
 }
 
 #[derive(Event)]
@@ -210,7 +216,8 @@ pub fn open_histogram_panel(
             },
         )
     };
-    let histogram = match build_histogram(&displayed_samples.samples, DEFAULT_HISTOGRAM_BINS) {
+    let bin_count = event.bin_count.clamp(1, MAX_HISTOGRAM_BINS);
+    let histogram = match build_histogram(&displayed_samples.samples, bin_count) {
         Ok(histogram) => histogram,
         Err(error) => {
             commands.trigger(ErrorToast {
@@ -227,7 +234,7 @@ pub fn open_histogram_panel(
             HistogramView {
                 node_id: event.node_id,
                 scope: scope.clone(),
-                bin_count: DEFAULT_HISTOGRAM_BINS,
+                bin_count,
             },
             Node {
                 position_type: PositionType::Absolute,
@@ -249,7 +256,13 @@ pub fn open_histogram_panel(
         })
         .id();
 
-    let stats = spawn_stats(&mut commands, event.node_id, &displayed_samples, &scope);
+    let stats = spawn_stats(
+        &mut commands,
+        event.node_id,
+        &displayed_samples,
+        &scope,
+        bin_count,
+    );
     let chart = spawn_chart(&mut commands, &histogram);
     commands.entity(panel).add_children(&[stats, chart]);
 }
@@ -276,6 +289,7 @@ fn spawn_stats(
     node_id: u32,
     instance: &NodeInstanceSamples,
     scope: &HistogramScope,
+    bin_count: usize,
 ) -> Entity {
     let stats = commands
         .spawn(Node {
@@ -303,7 +317,6 @@ fn spawn_stats(
             format!("95% CrI: [{:.4}, {:.4}]", instance.lower_95(), instance.upper_95()),
             14.0,
         ),
-        (format!("Bins: {DEFAULT_HISTOGRAM_BINS}"), 14.0),
     ];
 
     for (line, font_size) in lines {
@@ -320,13 +333,156 @@ fn spawn_stats(
             .id();
         commands.entity(stats).add_child(text);
     }
+    let stepper = spawn_bin_stepper(commands, bin_count);
+    commands.entity(stats).add_child(stepper);
     stats
+}
+
+fn spawn_bin_stepper(commands: &mut Commands, bin_count: usize) -> Entity {
+    let row = commands
+        .spawn(Node {
+            align_items: AlignItems::Center,
+            column_gap: px(5.0),
+            ..default()
+        })
+        .id();
+    let label = commands
+        .spawn((
+            Pickable::IGNORE,
+            Text::new("Bins:"),
+            TextColor(Color::WHITE),
+            TextFont {
+                font_size: FontSize::Px(14.0),
+                ..default()
+            },
+        ))
+        .id();
+    let decrement = spawn_bin_button(commands, "-");
+    commands.entity(decrement).observe(decrement_histogram_bins);
+    let input = commands
+        .spawn((
+            HistogramBinCountInput,
+            Node {
+                width: px(48.0),
+                min_height: px(24.0),
+                border: px(1.0).all(),
+                padding: UiRect::axes(px(5.0), px(2.0)),
+                ..default()
+            },
+            BorderColor::all(Color::srgb(0.55, 0.57, 0.64)),
+            BackgroundColor(Color::srgb(0.16, 0.17, 0.21)),
+            EditableText::new(bin_count.to_string()),
+            TextColor(Color::WHITE),
+            TextLayout::no_wrap(),
+            TextCursorStyle::default(),
+            TabIndex(0),
+            Name::new("histogram_bin_count_input"),
+        ))
+        .id();
+    let increment = spawn_bin_button(commands, "+");
+    commands.entity(increment).observe(increment_histogram_bins);
+    commands
+        .entity(row)
+        .add_children(&[label, decrement, input, increment]);
+    row
+}
+
+#[derive(Component)]
+pub struct HistogramBinCountInput;
+
+fn spawn_bin_button(commands: &mut Commands, label: &'static str) -> Entity {
+    commands
+        .spawn((
+            Button,
+            Node {
+                width: px(24.0),
+                height: px(24.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.28, 0.30, 0.36)),
+            children![(
+                Pickable::IGNORE,
+                Text::new(label),
+                TextColor(Color::WHITE),
+                TextFont {
+                    font_size: FontSize::Px(15.0),
+                    ..default()
+                },
+            )],
+        ))
+        .id()
+}
+
+fn decrement_histogram_bins(
+    mut event: On<Pointer<Click>>,
+    mut commands: Commands,
+    view: Single<&HistogramView>,
+) {
+    event.propagate(false);
+    reopen_histogram(&mut commands, &view, view.bin_count.saturating_sub(1).max(1));
+}
+
+fn increment_histogram_bins(
+    mut event: On<Pointer<Click>>,
+    mut commands: Commands,
+    view: Single<&HistogramView>,
+) {
+    event.propagate(false);
+    reopen_histogram(
+        &mut commands,
+        &view,
+        view.bin_count.saturating_add(1).min(MAX_HISTOGRAM_BINS),
+    );
+}
+
+fn reopen_histogram(commands: &mut Commands, view: &HistogramView, bin_count: usize) {
+    commands.trigger(OpenHistogramPanel {
+        node_id: view.node_id,
+        bin_count,
+    });
+}
+
+pub fn apply_typed_histogram_bin_count(
+    input_focus: Res<InputFocus>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    inputs: Query<&EditableText, With<HistogramBinCountInput>>,
+    view: Option<Single<&HistogramView>>,
+    mut commands: Commands,
+) {
+    if !keyboard_input.just_pressed(KeyCode::Enter) {
+        return;
+    }
+    let Some(focused_entity) = input_focus.get() else {
+        return;
+    };
+    let Ok(input) = inputs.get(focused_entity) else {
+        return;
+    };
+    let Some(view) = view else {
+        return;
+    };
+    let parsed = input.value().to_string().trim().parse::<usize>();
+    match parsed {
+        Ok(bin_count @ 1..=MAX_HISTOGRAM_BINS) => {
+            reopen_histogram(&mut commands, &view, bin_count);
+        }
+        _ => {
+            commands.trigger(ErrorToast {
+                text: format!("Histogram bins must be from 1 to {MAX_HISTOGRAM_BINS}."),
+                color: ERR_COLOR,
+            });
+            reopen_histogram(&mut commands, &view, view.bin_count);
+        }
+    }
 }
 
 fn spawn_chart(commands: &mut Commands, histogram: &Histogram) -> Entity {
     let chart = commands
         .spawn(Node {
             flex_grow: 1.0,
+            min_width: px(0.0),
             height: percent(100.0),
             flex_direction: FlexDirection::Column,
             row_gap: px(5.0),
@@ -353,11 +509,13 @@ fn spawn_chart(commands: &mut Commands, histogram: &Histogram) -> Entity {
             },
             Node {
                 width: percent(100.0),
+                min_width: px(0.0),
                 flex_grow: 1.0,
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::End,
-                column_gap: px(2.0),
+                column_gap: px(0.0),
                 padding: UiRect::new(px(8.0), px(8.0), px(8.0), px(0.0)),
+                overflow: Overflow::clip_x(),
                 ..default()
             },
             BackgroundColor(Color::srgb(0.16, 0.17, 0.21)),
@@ -389,6 +547,7 @@ fn spawn_chart(commands: &mut Commands, histogram: &Histogram) -> Entity {
             .spawn(Node {
                 flex_grow: 1.0,
                 flex_basis: px(0.0),
+                min_width: px(0.0),
                 height: percent(100.0),
                 align_items: AlignItems::End,
                 ..default()
@@ -405,6 +564,7 @@ fn spawn_chart(commands: &mut Commands, histogram: &Histogram) -> Entity {
                 Pickable::IGNORE,
                 Node {
                     width: percent(100.0),
+                    min_width: px(0.0),
                     height: percent(height),
                     min_height: if bin.count == 0 { px(0.0) } else { px(1.0) },
                     ..default()

@@ -416,14 +416,20 @@ pub fn update_random_seed_placeholder(
 pub fn invalidate_compilation_on_graph_change(
     mut commands: Commands,
     graph_resource: Option<Res<GraphIRResource>>,
-    changed_graph: Query<(), Or<(
-        Changed<GraphNode>,
-        Changed<RandomNode>,
-        Changed<ComputeNode>,
-        Changed<ScalarNode>,
-        Changed<GraphLink>,
-        Changed<Plate>,
-    )>>,
+    changed_graph: Query<
+        (),
+        (
+            Or<(
+                Changed<GraphNode>,
+                Changed<RandomNode>,
+                Changed<ComputeNode>,
+                Changed<ScalarNode>,
+                Changed<GraphLink>,
+                Changed<Plate>,
+            )>,
+            Without<PlateDraft>,
+        ),
+    >,
     changed_positions: Query<(), (
         Changed<Transform>,
         With<GraphNode>,

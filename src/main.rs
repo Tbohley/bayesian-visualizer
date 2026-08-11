@@ -27,7 +27,11 @@ use crate::sidebar::*;
 use crate::ui::*;
 use crate::nodes::*;
 use crate::graph::*;
-use crate::data_vis::{close_histogram_panel, open_histogram_panel};
+use crate::data_vis::{
+    apply_typed_histogram_bin_count,
+    close_histogram_panel,
+    open_histogram_panel,
+};
 
 fn setup (
     mut commands: Commands,
@@ -57,6 +61,7 @@ fn setup (
 
     commands.insert_resource(Datasets {
         datasets: vec![Dataset::from_csv("assets/data/SATandGPA.csv").expect("prefilled data should be valid"),
+        Dataset::from_csv("assets/data/poly_reg.csv").expect("prefilled data should be valid")
         ]
     });
 
@@ -72,6 +77,7 @@ fn main() {
         .add_observer(on_trigger_close_menus)
         .add_observer(on_open_operation_menu)
         .add_observer(on_open_param_link_menu)
+        .add_observer(autofill_next_param)
         .add_observer(throw_err)
         .add_observer(compile)
         .add_observer(set_inference_controls_enabled)
@@ -84,6 +90,7 @@ fn main() {
         .add_systems(Update, (
             on_keypress, 
             on_enter_clicked,
+            apply_typed_histogram_bin_count,
             invalidate_compilation_on_graph_change,
             update_random_seed_placeholder,
             tick_error_toasts, 

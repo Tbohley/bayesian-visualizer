@@ -50,17 +50,11 @@ pub fn on_plate_drag_start(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    graph_nodes: Query<&GraphNode>,
 ) {
     let Some(position) = event.hit.position else {
         return;
     };
     let start = position.truncate();
-
-    let mut id = 1;
-    while graph_nodes.iter().any(|node| node.0 == id) {
-        id += 1;
-    }
 
     let border_mesh = meshes.add(Rectangle::new(1.0, 1.0));
     let border_material = materials.add(PLATE_COLOR);
@@ -72,7 +66,6 @@ pub fn on_plate_drag_start(
                 data: super::Dataset { name: "No dataset".to_string(), n: 10, data: HashMap::new() },
                 mapping: HashMap::new()
             },
-            GraphNode(id),
             PlateDraft,
             Pickable::IGNORE,
             Visibility::default(),
@@ -197,16 +190,21 @@ pub fn on_plate_drag_end(
     plate: Single<(Entity, &mut Plate), With<PlateDraft>>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
     nodes: Query<(Entity, &Transform), Or<(With<RandomNode>, With<ScalarNode>)>>,
+    graph_nodes: Query<&GraphNode>,
 ) {
     let (entity, mut plate) = plate.into_inner();
     if plate.bounds.is_substantial() {
+        let mut id = 1;
+        while graph_nodes.iter().any(|node| node.0 == id) {
+            id += 1;
+        }
         for (node_entity, transform) in &nodes {
             if plate.bounds.contains_point(transform.translation.truncate()) {
                 plate.mapping.insert(node_entity, "unobserved".to_string());
             }
         }
 
-        commands.entity(entity).remove::<PlateDraft>();
+        commands.entity(entity).insert(GraphNode(id)).remove::<PlateDraft>();
         replace_node_label(&mut commands,entity,format!("N"), &labels, Some(&plate))
     } else {
         commands.entity(entity).despawn();

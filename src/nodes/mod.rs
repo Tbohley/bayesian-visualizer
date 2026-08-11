@@ -2,7 +2,6 @@ pub mod random_node;
 pub mod compute_node;
 pub mod scalar_node;
 use fugue::Distribution;
-use rand::thread_rng;
 pub use random_node::*;
 pub use compute_node::*;
 pub use scalar_node::*;
@@ -12,7 +11,7 @@ use crate::graph::*;
 use crate::sidebar::*;
 use crate::ui::*;
 use crate::bevy_to_fugue::InferenceResultResource;
-use crate::data_vis::{CloseHistogramPanel, OpenHistogramPanel};
+use crate::data_vis::{CloseHistogramPanel, OpenHistogramPanel, DEFAULT_HISTOGRAM_BINS};
 
 //on all node entities
 #[derive(Component)]
@@ -48,6 +47,31 @@ pub enum Operation{
 
 #[derive(Debug, Clone)]
 pub struct ParamValue (pub &'static str, pub Option<Entity>);          //TODO: change from f64 to GraphLink
+
+#[derive(Event)]
+pub struct AutofillNextParam {
+    pub node: Entity,
+    pub linked_node: Entity,
+}
+
+pub fn autofill_next_param(
+    event: On<AutofillNextParam>,
+    mut random_nodes: Query<&mut RandomNode>,
+    mut compute_nodes: Query<&mut ComputeNode>,
+) {
+    let params = if let Ok(node) = random_nodes.get_mut(event.node) {
+        node.into_inner().params.as_mut_slice()
+    } else if let Ok(node) = compute_nodes.get_mut(event.node) {
+        node.into_inner().params.as_mut_slice()
+    } else {
+        return;
+    };
+
+    if let Some(param) = params.iter_mut().find(|param| param.1.is_none()) {
+        param.1 = Some(event.linked_node);
+        println!("Autofilled parameter '{}' from completed link", param.0);
+    }
+}
 
 pub trait DistributionDebug<T>: Distribution<T> + std::fmt::Debug {}
 impl<T, D: Distribution<T> + std::fmt::Debug> DistributionDebug<T> for D {}
@@ -243,7 +267,12 @@ pub fn on_node_click(
             commands.entity(unfinished_ent).despawn();
             return;
         }
-        ends.to = Some(event.event_target());
+        let target = event.event_target();
+        ends.to = Some(target);
+        commands.trigger(AutofillNextParam {
+            node: target,
+            linked_node: ends.from,
+        });
         commands.trigger(ReloadSidebar);
         println!("Completed a GraphLink");
 
@@ -297,7 +326,10 @@ pub fn on_node_click(
 
             if let Ok(node) = node_ids.get(event.event_target()) {
                 if inference_results.is_some() {
-                    commands.trigger(OpenHistogramPanel { node_id: node.0 });
+                    commands.trigger(OpenHistogramPanel {
+                        node_id: node.0,
+                        bin_count: DEFAULT_HISTOGRAM_BINS,
+                    });
                 } else {
                     commands.trigger(CloseHistogramPanel);
                 }
