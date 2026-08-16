@@ -30,6 +30,22 @@ enum VisitState {
 }
 
 impl GraphIR {
+    /// Rejects graph features represented by the IR but not safely executable
+    /// in the current application iteration.
+    pub fn validate_current_feature_support(&self) -> Result<(), String> {
+        let mut parent_ids = self.plates.keys().copied().collect::<Vec<_>>();
+        parent_ids.sort_unstable();
+        for parent_id in parent_ids {
+            let plate = &self.plates[&parent_id];
+            if let Some(child_id) = plate.plates.iter().copied().min() {
+                return Err(format!(
+                    "Nested plates are not supported in the current version: plate {parent_id} contains plate {child_id}. Move the plates so they do not contain one another before compiling."
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Validates plate containment and parameter dependencies between scopes.
     /// Dependencies may flow from an enclosing or matching scope into a consumer, but not outward or across siblings.
     pub fn validate_plate_semantics(&self) -> Result<(), String> {
@@ -366,6 +382,21 @@ mod tests {
         assert_eq!(normalized.node_paths[&1], Vec::<u32>::new());
         assert_eq!(normalized.node_paths[&2], vec![10]);
         assert_eq!(normalized.node_paths[&3], vec![10, 11]);
+    }
+
+    #[test]
+    fn current_iteration_rejects_nested_but_allows_sibling_plates() {
+        let mut nested = GraphIR::new();
+        nested.plates.insert(10, plate(10, 2, vec![], vec![11]));
+        nested.plates.insert(11, plate(11, 3, vec![], vec![]));
+
+        let error = nested.validate_current_feature_support().unwrap_err();
+        assert!(error.contains("plate 10 contains plate 11"));
+
+        let mut siblings = GraphIR::new();
+        siblings.plates.insert(10, plate(10, 2, vec![], vec![]));
+        siblings.plates.insert(11, plate(11, 3, vec![], vec![]));
+        assert_eq!(siblings.validate_current_feature_support(), Ok(()));
     }
 
     #[test]

@@ -53,6 +53,35 @@ pub fn load_global_sidebar(
             TextColor(NODE_NAME_COLOR),
         ));
 
+    let load_preset_button = commands.spawn((
+        Name::new("load_preset_button"),
+        Button,
+        Node {
+            width: px(SIDEBAR_WIDTH * 0.75),
+            height: px(30),
+            border: UiRect::all(px(5)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::MAX,
+            margin: px(4).bottom(),
+            ..default()
+        },
+        BorderColor::all(BUTTON_COLOR),
+        BackgroundColor(BUTTON_COLOR),
+        children![(
+            Pickable::IGNORE,
+            Text::new("Load preset"),
+            TextColor(Color::WHITE),
+            TextShadow::default(),
+        )],
+    )).observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
+        event.propagate(false);
+        commands.trigger(OpenPresetMenu {
+            pos: event.pointer_location.position,
+        });
+    }).id();
+    commands.entity(global_sidebar_entity).add_child(load_preset_button);
+
     commands.entity(global_sidebar_entity).with_child(divider());
 
     commands.entity(global_sidebar_entity).with_child((

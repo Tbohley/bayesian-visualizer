@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use super::{Plate, PlateBorder, PlateBounds, PlateDraft, Selected};
 use crate::constants::*;
-use crate::nodes::{GraphNode, NodeLabel, RandomNode, ScalarNode, SelectedIndicator, replace_node_label};
+use crate::nodes::{
+    GraphNode, NodeLabel, RandomNode, ScalarNode, SelectedIndicator, replace_node_label,
+};
 use crate::sidebar::ReloadSidebar;
 use bevy::prelude::*;
 
@@ -44,7 +46,6 @@ impl PlateBounds {
     }
 }
 
-
 pub fn on_plate_drag_start(
     event: On<Pointer<DragStart>>,
     mut commands: Commands,
@@ -56,15 +57,17 @@ pub fn on_plate_drag_start(
     };
     let start = position.truncate();
 
-    let border_mesh = meshes.add(Rectangle::new(1.0, 1.0));
-    let border_material = materials.add(PLATE_COLOR);
     let plate = commands
         .spawn((
             Plate {
                 origin: start,
                 bounds: PlateBounds::from_points(start, start),
-                data: super::Dataset { name: "No dataset".to_string(), n: 10, data: HashMap::new() },
-                mapping: HashMap::new()
+                data: super::Dataset {
+                    name: "No dataset".to_string(),
+                    n: 10,
+                    data: HashMap::new(),
+                },
+                mapping: HashMap::new(),
             },
             PlateDraft,
             Pickable::IGNORE,
@@ -76,13 +79,101 @@ pub fn on_plate_drag_start(
         .observe(on_completed_plate_drag_end)
         .id();
 
+    add_plate_borders(&mut commands, plate, None, &mut meshes, &mut materials);
+}
+
+pub fn spawn_completed_plate(
+    commands: &mut Commands,
+    node_num: u32,
+    plate: Plate,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
+) -> Entity {
+    let bounds = plate.bounds;
+    let size = bounds.size();
+    let plate_entity = commands
+        .spawn((
+            GraphNode(node_num),
+            plate,
+            Pickable::IGNORE,
+            Visibility::default(),
+            Transform::from_xyz(bounds.center().x, bounds.center().y, PLATE_Z),
+        ))
+        .observe(on_plate_click)
+        .observe(on_completed_plate_drag)
+        .observe(on_completed_plate_drag_end)
+        .id();
+
+    add_plate_borders(commands, plate_entity, Some(size), meshes, materials);
+    commands.entity(plate_entity).with_child((
+        NodeLabel,
+        Text2d::new("N"),
+        TextColor(PLATE_COLOR),
+        bevy::sprite::Anchor::BOTTOM_RIGHT,
+        TextFont {
+            font_size: px(NODE_LABEL_FONT_SIZE).into(),
+            ..default()
+        },
+        Pickable::IGNORE,
+        Transform::from_translation(Vec3::new(size.x / 2.0 - 5.0, -size.y / 2.0 + 5.0, 1.0)),
+    ));
+    plate_entity
+}
+
+fn add_plate_borders(
+    commands: &mut Commands,
+    plate: Entity,
+    size: Option<Vec2>,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
+) {
+    let border_mesh = meshes.add(Rectangle::new(1.0, 1.0));
+    let border_material = materials.add(PLATE_COLOR);
+
     commands.entity(plate).with_children(|parent| {
-        for edge in [
+        let transforms = size.map(|size| {
+            [
+                (
+                    PlateBorder::Top,
+                    Vec3::new(0.0, size.y / 2.0, 0.0),
+                    Vec3::new(size.x + PLATE_BORDER_THICKNESS, PLATE_BORDER_THICKNESS, 1.0),
+                ),
+                (
+                    PlateBorder::Right,
+                    Vec3::new(size.x / 2.0, 0.0, 0.0),
+                    Vec3::new(PLATE_BORDER_THICKNESS, size.y, 1.0),
+                ),
+                (
+                    PlateBorder::Bottom,
+                    Vec3::new(0.0, -size.y / 2.0, 0.0),
+                    Vec3::new(size.x + PLATE_BORDER_THICKNESS, PLATE_BORDER_THICKNESS, 1.0),
+                ),
+                (
+                    PlateBorder::Left,
+                    Vec3::new(-size.x / 2.0, 0.0, 0.0),
+                    Vec3::new(PLATE_BORDER_THICKNESS, size.y, 1.0),
+                ),
+            ]
+        });
+        for (index, edge) in [
             PlateBorder::Top,
             PlateBorder::Right,
             PlateBorder::Bottom,
             PlateBorder::Left,
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let transform = transforms
+                .map(|transforms| {
+                    let (_, translation, scale) = transforms[index];
+                    Transform {
+                        translation,
+                        scale,
+                        ..default()
+                    }
+                })
+                .unwrap_or_default();
             parent.spawn((
                 edge,
                 Pickable {
@@ -91,7 +182,7 @@ pub fn on_plate_drag_start(
                 },
                 Mesh2d(border_mesh.clone()),
                 MeshMaterial2d(border_material.clone()),
-                Transform::default(),
+                transform,
             ));
         }
     });
@@ -130,7 +221,8 @@ fn on_completed_plate_drag_end(
     });
     for (entity, transform) in &nodes {
         if bounds.contains_point(transform.translation.truncate()) {
-            plate.mapping
+            plate
+                .mapping
                 .entry(entity)
                 .or_insert_with(|| "unobserved".to_string());
         }
@@ -199,13 +291,19 @@ pub fn on_plate_drag_end(
             id += 1;
         }
         for (node_entity, transform) in &nodes {
-            if plate.bounds.contains_point(transform.translation.truncate()) {
+            if plate
+                .bounds
+                .contains_point(transform.translation.truncate())
+            {
                 plate.mapping.insert(node_entity, "unobserved".to_string());
             }
         }
 
-        commands.entity(entity).insert(GraphNode(id)).remove::<PlateDraft>();
-        replace_node_label(&mut commands,entity,format!("N"), &labels, Some(&plate))
+        commands
+            .entity(entity)
+            .insert(GraphNode(id))
+            .remove::<PlateDraft>();
+        replace_node_label(&mut commands, entity, format!("N"), &labels, Some(&plate))
     } else {
         commands.entity(entity).despawn();
     }

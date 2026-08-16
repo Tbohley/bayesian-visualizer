@@ -8,7 +8,7 @@ use bevy::{
 use crate::bayesian_core::{NodeInstanceSamples, PosteriorSample};
 use crate::bevy_to_fugue::InferenceResultResource;
 use crate::constants::{ERR_COLOR, SAMPLE_COLOR, SIDEBAR_WIDTH};
-use crate::ui::ErrorToast;
+use crate::ui::{ClearToasts, ErrorToast};
 
 pub const DEFAULT_HISTOGRAM_BINS: usize = 20;
 pub const MAX_HISTOGRAM_BINS: usize = 200;
@@ -174,6 +174,7 @@ pub fn open_histogram_panel(
     inference_results: Option<Res<InferenceResultResource>>,
     old_panels: Query<Entity, With<InferenceHistogramPanel>>,
 ) {
+    commands.trigger(ClearToasts);
     despawn_histogram_panels(&mut commands, &old_panels);
 
     let Some(results) = inference_results else {

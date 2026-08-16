@@ -27,6 +27,15 @@ pub fn compile(
     node_positions: Query<(&GraphNode, &Transform), Without<Plate>>,
     plates: Query<(&GraphNode, &Plate)>,
 ) {
+    print_graph_preset(
+        &rand_nodes,
+        &compute_nodes,
+        &scalar_nodes,
+        &node_ids,
+        &node_positions,
+        &plates,
+    );
+
     // Any compile attempt supersedes posterior results from the previous graph.
     commands.remove_resource::<InferenceResultResource>();
     commands.trigger(CloseHistogramPanel);
@@ -43,6 +52,16 @@ pub fn compile(
 
     match graph {
         Ok(g) => {
+            if let Err(error) = g.validate_current_feature_support() {
+                commands.trigger(ErrorToast {
+                    color: ERR_COLOR,
+                    text: error.clone(),
+                });
+                println!("{error}");
+                commands.remove_resource::<GraphIRResource>();
+                commands.trigger(SetInferenceControlsEnabled(false));
+                return;
+            }
             if let Err(error) = g.validate_plate_semantics() {
                 commands.trigger(ErrorToast {
                     color: ERR_COLOR,
@@ -62,7 +81,7 @@ pub fn compile(
                             "Graph successfully compiled. No errors detected... yet.",
                         ),
                     });
-                    println!("Compiled plates: {:#?}", g.plates);
+                    //println!("Compiled plates: {:#?}", g.plates);
                     //save graph for other functions
                     match g.compile() {
                         Ok(compiled) => {

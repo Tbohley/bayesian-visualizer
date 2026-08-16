@@ -1,8 +1,10 @@
 pub mod edge;
+pub mod load_preset;
 pub mod plate;
 use std::collections::HashMap;
 
 pub use edge::*;
+pub use load_preset::*;
 pub use plate::*;
 
 use bevy::{prelude::*, reflect::TypeData};

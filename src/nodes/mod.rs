@@ -238,7 +238,7 @@ pub fn on_background_click(
         NodeType::Random => new_random(&mut commands, loc, node_num, meshes, materials),
         NodeType::Compute => new_compute(&mut commands, loc, node_num, meshes, materials),
         NodeType::Scalar => new_scalar(&mut commands, loc, node_num, meshes, materials)
-    }
+    };
     
 }
 

@@ -9,6 +9,9 @@ pub struct ErrorToast {
     pub color: Color
 }
 
+#[derive(Event)]
+pub struct ClearToasts;
+
 #[derive(Resource)]
 pub struct CursorAssets {
     pub shift_held: Handle<Image>,
@@ -174,6 +177,16 @@ pub fn throw_err(
             },
         )],
     ));
+}
+
+pub fn clear_toasts(
+    _event: On<ClearToasts>,
+    mut commands: Commands,
+    toasts: Query<Entity, With<ErrorToastBox>>,
+) {
+    for toast in &toasts {
+        commands.entity(toast).despawn();
+    }
 }
 
 pub fn tick_error_toasts(
