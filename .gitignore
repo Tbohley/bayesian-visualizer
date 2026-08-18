@@ -11,3 +11,4 @@ slop/visual_sync.rs
 src/.DS_Store
 /.DS_Store
 assets/cursors/.DS_Store
+src/CODEBASE_GUIDE.md

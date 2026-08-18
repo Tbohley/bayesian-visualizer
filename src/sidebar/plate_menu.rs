@@ -68,6 +68,7 @@ impl Plate{
 
         commands.entity(sidebar_entity).with_child((
             Text::new("Dataset:"),
+            text_font(),
             Node {
                 margin: px(4).bottom(),
                 ..default()
@@ -94,6 +95,7 @@ impl Plate{
         children![(
             Pickable::IGNORE,
             Text::new(self.data.name.clone()),
+            text_font(),
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
@@ -120,6 +122,7 @@ impl Plate{
             };
             commands.entity(sidebar_entity).with_child((
                 Text::new(label),
+                text_font(),
                 Node {
                     margin: px(4).bottom(),
                     ..default()
@@ -173,6 +176,7 @@ fn selector_button<'a>(
         children![(
             Pickable::IGNORE,
             Text::new(value),
+            text_font(),
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],

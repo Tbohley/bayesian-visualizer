@@ -1,11 +1,13 @@
 pub mod edge;
 pub mod load_preset;
 pub mod plate;
+pub mod reduced_view;
 use std::collections::HashMap;
 
 pub use edge::*;
 pub use load_preset::*;
 pub use plate::*;
+pub use reduced_view::*;
 
 use bevy::{prelude::*, reflect::TypeData};
 

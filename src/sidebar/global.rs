@@ -46,6 +46,7 @@ pub fn load_global_sidebar(
     commands.entity(global_sidebar_entity).with_child(
         (
             Text::new("Bayesian Visualizer"),
+            text_font(),
             Node {
                 margin: px(16).bottom(),
                 ..default()
@@ -71,6 +72,7 @@ pub fn load_global_sidebar(
         children![(
             Pickable::IGNORE,
             Text::new("Load preset"),
+            text_font(),
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
@@ -82,10 +84,40 @@ pub fn load_global_sidebar(
     }).id();
     commands.entity(global_sidebar_entity).add_child(load_preset_button);
 
+    let reduced_view_button = commands.spawn((
+        Name::new("reduced_view_button"),
+        Button,
+        Node {
+            width: px(SIDEBAR_WIDTH * 0.75),
+            height: px(30),
+            border: UiRect::all(px(5)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::MAX,
+            margin: px(4).bottom(),
+            ..default()
+        },
+        BorderColor::all(BUTTON_COLOR),
+        BackgroundColor(BUTTON_COLOR),
+        children![(
+            ReducedViewButtonLabel,
+            Pickable::IGNORE,
+            Text::new("Reduced view"),
+            text_font(),
+            TextColor(Color::WHITE),
+            TextShadow::default(),
+        )],
+    )).observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
+        event.propagate(false);
+        commands.trigger(ToggleReducedView);
+    }).id();
+    commands.entity(global_sidebar_entity).add_child(reduced_view_button);
+
     commands.entity(global_sidebar_entity).with_child(divider());
 
     commands.entity(global_sidebar_entity).with_child((
         Text::new("Node type:"),
+        text_font(),
         Node {
             margin: px(8.).bottom(),
             ..default()
@@ -112,6 +144,7 @@ pub fn load_global_sidebar(
             NodeTypeButtonLabel,
             Pickable::IGNORE,
             Text::new("Random"),
+            text_font(),
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
@@ -142,6 +175,7 @@ pub fn load_global_sidebar(
         children![(
             Pickable::IGNORE,
             Text::new("Compile"),
+            text_font(),
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
@@ -173,6 +207,7 @@ pub fn load_global_sidebar(
         children![(
             Pickable::IGNORE,
             Text::new("Basic sample"),
+            text_font(),
             TextColor(DISABLED_TEXT_COLOR),
         )],
     )).observe(compilation::global_sample).id();
@@ -198,6 +233,7 @@ pub fn load_global_sidebar(
         children![(
             Pickable::IGNORE,
             Text::new("Post sample"),
+            text_font(),
             TextColor(DISABLED_TEXT_COLOR),
         )],
     )).observe(compilation::posterior_sample).id();
@@ -210,6 +246,7 @@ pub fn load_global_sidebar(
     commands.entity(global_sidebar_entity).with_child(divider());
     commands.entity(global_sidebar_entity).with_child((
         Text::new("Inference:"),
+        text_font(),
         Node {
             margin: px(8.).bottom(),
             ..default()
@@ -222,6 +259,7 @@ pub fn load_global_sidebar(
         RandomSeedPlaceholder,
         Pickable::IGNORE,
         Text::new("random..."),
+        text_font(),
         TextColor(DISABLED_TEXT_COLOR),
     ));
     add_inference_field(
@@ -270,6 +308,7 @@ pub fn load_global_sidebar(
         children![(
             Pickable::IGNORE,
             Text::new("Run inference"),
+            text_font(),
             TextColor(DISABLED_TEXT_COLOR),
         )],
     )).observe(compilation::run_inference).id();
@@ -298,6 +337,7 @@ fn inference_textbox(
         BorderColor::from(DISABLED_CONTROL_COLOR),
         BackgroundColor(DISABLED_CONTROL_COLOR),
         EditableText::new(value),
+        text_font(),
         TextColor(DISABLED_TEXT_COLOR),
         TextLayout::no_wrap(),
         TextCursorStyle::default(),
@@ -328,6 +368,7 @@ fn add_inference_field(
     commands.entity(sidebar).add_child(field);
     commands.entity(field).with_child((
         Text::new(label),
+        text_font(),
         TextColor(NODE_NAME_COLOR),
     ));
     commands.entity(field).add_child(textbox);

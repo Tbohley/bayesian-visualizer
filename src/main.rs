@@ -70,6 +70,7 @@ fn setup (
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
+        .init_resource::<ReducedView>()
         .add_observer(on_open_distribution_menu)
         .add_observer(on_open_dataset_menu)
         .add_observer(on_open_plate_mapping_menu)
@@ -81,6 +82,8 @@ fn main() {
         .add_observer(on_open_operation_menu)
         .add_observer(on_open_param_link_menu)
         .add_observer(autofill_next_param)
+        .add_observer(set_node_name)
+        .add_observer(toggle_reduced_view)
         .add_observer(throw_err)
         .add_observer(clear_toasts)
         .add_observer(compile)
@@ -92,15 +95,14 @@ fn main() {
         .add_observer(close_histogram_panel)
         .add_systems(Startup, (setup, load_global_sidebar))
         .add_systems(Update, (
-            on_keypress, 
             on_enter_clicked,
+            refresh_reduced_view,
             apply_typed_histogram_bin_count,
             invalidate_compilation_on_graph_change,
             update_random_seed_placeholder,
             tick_error_toasts, 
             tick_sample_popups,
             click_error_toasts,
-            spin_selection_indicators,
             update_node_observation_colors,
             update_graph_cursor))
         .run();

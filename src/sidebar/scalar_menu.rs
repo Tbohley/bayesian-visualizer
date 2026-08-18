@@ -12,6 +12,7 @@ impl SidebarContent for ScalarNode{
         observed: bool,
         _observed_columns: &std::collections::HashMap<Entity, String>,
     ){
+        add_node_name_field(commands, sidebar_entity, self.name.as_deref());
         commands.entity(sidebar_entity).with_child(divider());
 
         let value_box = commands.spawn((
@@ -27,6 +28,7 @@ impl SidebarContent for ScalarNode{
         commands.entity(sidebar_entity).add_child(value_box);
         commands.entity(value_box).with_child((
             Text::new("value"),
+            text_font(),
             TextColor(NODE_NAME_COLOR),
         ));
 
@@ -42,6 +44,7 @@ impl SidebarContent for ScalarNode{
                 BorderColor::from(Color::from(SLATE_300)),
                 BackgroundColor(DARK_GREY.into()),
                 Text::new("from data"),
+                text_font(),
                 TextLayout::no_wrap(),
                 Name::new("value_textbox"),
             ));
@@ -58,9 +61,10 @@ impl SidebarContent for ScalarNode{
                     BorderColor::from(Color::from(SLATE_300)),
                     BackgroundColor(DARK_GREY.into()),
                     EditableText::new(self.val.to_string()),
+                    text_font(),
                     TextLayout::no_wrap(),
                     TextCursorStyle::default(),
-                    TabIndex(0),
+                    TabIndex(1),
                     Name::new(format!("value_textbox")),
             ));
         }
@@ -74,9 +78,32 @@ impl SidebarContent for ScalarNode{
 pub fn on_enter_clicked(
     input_focus: Res<InputFocus>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut scalar_textboxes: Query<(&mut EditableText, &Name), With<ScalarValueTextbox>>,
-    mut plate_textboxes: Query<(&mut EditableText, &Name), (With<PlateNTextbox>, Without<ScalarValueTextbox>)>,
+    mut scalar_textboxes: Query<
+        (&mut EditableText, &Name),
+        (
+            With<ScalarValueTextbox>,
+            Without<NodeNameTextbox>,
+            Without<PlateNTextbox>,
+        ),
+    >,
+    node_name_textboxes: Query<
+        &EditableText,
+        (
+            With<NodeNameTextbox>,
+            Without<ScalarValueTextbox>,
+            Without<PlateNTextbox>,
+        ),
+    >,
+    mut plate_textboxes: Query<
+        (&mut EditableText, &Name),
+        (
+            With<PlateNTextbox>,
+            Without<ScalarValueTextbox>,
+            Without<NodeNameTextbox>,
+        ),
+    >,
     selected_scalar: Option<Single<(Entity, &mut ScalarNode, &Selected)>>,
+    selected_random: Option<Single<Entity, (With<RandomNode>, With<Selected>)>>,
     selected_plate: Option<Single<(Entity, &mut Plate, &Selected)>>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
     mut commands: Commands,
@@ -88,6 +115,19 @@ pub fn on_enter_clicked(
         return;
     }; 
 
+    if let Ok(text_input) = node_name_textboxes.get(focused_entity) {
+        let entity = selected_random
+            .map(|selected| *selected)
+            .or_else(|| selected_scalar.as_ref().map(|selected| selected.0));
+        if let Some(entity) = entity {
+            commands.trigger(SetNodeName {
+                entity,
+                name: text_input.value().to_string(),
+            });
+        }
+        return;
+    }
+
     // Scalar-node value behavior
     if let Ok((mut text_input, _name)) = scalar_textboxes.get_mut(focused_entity) {
         let Some(single) = selected_scalar else {
@@ -98,7 +138,11 @@ pub fn on_enter_clicked(
         match num {
             Ok(f) => {
                 scalar_node.val = f;
-                replace_node_label(&mut commands,scalar_entity,format!("{f:.1}"), &labels, None);
+                let label = scalar_node
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("{f:.1}"));
+                replace_scalar_label(&mut commands, scalar_entity, label, &labels);
                 commands.trigger(ReloadSidebar);
             }
             Err(_e) => {

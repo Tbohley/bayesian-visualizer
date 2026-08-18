@@ -1,6 +1,6 @@
 use bevy::{asset::RenderAssetUsages, mesh::{Indices, PrimitiveTopology}, prelude::*};
-use crate::{constants::*, graph::UnfinishedLink};
-use crate::{ERR_BORDER_COLOR, nodes::SelectedIndicator};
+use crate::graph::UnfinishedLink;
+use crate::ERR_BORDER_COLOR;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage};
 
 #[derive(Event)]
@@ -95,15 +95,6 @@ pub fn update_graph_cursor(
 }
 
 
-pub fn spin_selection_indicators(
-    time: Res<Time>,
-    mut indicators: Query<(&SelectedIndicator, &mut Transform)>,
-) {
-    for (_indicator, mut transform) in indicators.iter_mut() {
-        transform.rotate_z(SELECTION_SPIN_SPEED * time.delta_secs());
-    }
-}
-
 pub fn selection_indicator(inner_radius: f32) -> Mesh {
     let outer_radius = inner_radius + 6.0;
     let segments_per_arc = 24;
@@ -143,6 +134,100 @@ pub fn selection_indicator(inner_radius: f32) -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
+pub fn capsule_selection_indicator(inner_radius: f32, straight_length: f32) -> Mesh {
+    let outer_radius = inner_radius + 6.0;
+    let reference_radius = (inner_radius + outer_radius) / 2.0;
+    let perimeter = 2.0 * straight_length + 2.0 * std::f32::consts::PI * reference_radius;
+    let sample_count = 120;
+    let gap_fraction = 4.0 / perimeter;
+
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+
+    for sample in 0..sample_count {
+        let t0 = sample as f32 / sample_count as f32;
+        let t1 = (sample + 1) as f32 / sample_count as f32;
+        let midpoint = (t0 + t1) / 2.0;
+        let in_gap = [0.0, 1.0 / 3.0, 2.0 / 3.0].iter().any(|center| {
+            let distance = (midpoint - center).abs();
+            distance.min(1.0 - distance) < gap_fraction / 2.0
+        });
+        if in_gap {
+            continue;
+        }
+
+        let base = positions.len() as u32;
+        positions.push(capsule_perimeter_point(
+            inner_radius,
+            straight_length,
+            reference_radius,
+            t0,
+        ));
+        positions.push(capsule_perimeter_point(
+            outer_radius,
+            straight_length,
+            reference_radius,
+            t0,
+        ));
+        positions.push(capsule_perimeter_point(
+            inner_radius,
+            straight_length,
+            reference_radius,
+            t1,
+        ));
+        positions.push(capsule_perimeter_point(
+            outer_radius,
+            straight_length,
+            reference_radius,
+            t1,
+        ));
+        indices.extend_from_slice(&[base, base + 1, base + 2]);
+        indices.extend_from_slice(&[base + 1, base + 3, base + 2]);
+    }
+
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_indices(Indices::U32(indices))
+}
+
+fn capsule_perimeter_point(
+    radius: f32,
+    straight_length: f32,
+    reference_radius: f32,
+    t: f32,
+) -> [f32; 3] {
+    let straight = straight_length;
+    let arc = std::f32::consts::PI * reference_radius;
+    let perimeter = 2.0 * straight + 2.0 * arc;
+    let distance = t * perimeter;
+    let half_straight = straight / 2.0;
+
+    let point = if distance < straight {
+        Vec2::new(-half_straight + distance, radius)
+    } else if distance < straight + arc {
+        let progress = (distance - straight) / arc;
+        let angle = std::f32::consts::FRAC_PI_2 - progress * std::f32::consts::PI;
+        Vec2::new(
+            half_straight + radius * angle.cos(),
+            radius * angle.sin(),
+        )
+    } else if distance < 2.0 * straight + arc {
+        let progress = (distance - straight - arc) / straight.max(f32::EPSILON);
+        Vec2::new(half_straight - progress * straight, -radius)
+    } else {
+        let progress = (distance - 2.0 * straight - arc) / arc;
+        let angle = -std::f32::consts::FRAC_PI_2 - progress * std::f32::consts::PI;
+        Vec2::new(
+            -half_straight + radius * angle.cos(),
+            radius * angle.sin(),
+        )
+    };
+    [point.x, point.y, 0.0]
+}
+
 
 pub fn throw_err(
     event: On<ErrorToast>,
@@ -173,7 +258,7 @@ pub fn throw_err(
             TextColor(Color::WHITE),
             TextFont {
                 font_size: FontSize::Px(14.),
-                ..default()
+                ..crate::constants::text_font()
             },
         )],
     ));

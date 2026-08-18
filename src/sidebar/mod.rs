@@ -9,7 +9,7 @@ use bevy::color::palettes::css::BLACK;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;
 use bevy::input_focus::tab_navigation::TabIndex;
-use bevy::text::TextCursorStyle;
+use bevy::text::{EditableText, TextCursorStyle};
 use bevy::prelude::*;
 use crate::constants::*;
 use crate::graph::*;
@@ -23,6 +23,9 @@ pub struct GlobalSidebar;
 
 #[derive(Component)]
 pub struct ScalarValueTextbox;
+
+#[derive(Component)]
+pub struct NodeNameTextbox;
 
 #[derive(Component)]
 pub struct PlateNTextbox;
@@ -145,6 +148,7 @@ pub fn context_item(text: &str) -> impl Bundle {
         children![(
             Pickable::IGNORE,
             Text::new(text),
+            text_font(),
             TextColor(Color::WHITE),
         )],
     )
@@ -161,81 +165,74 @@ pub fn divider() -> (bevy::prelude::Node, bevy::prelude::BackgroundColor, bevy::
     TextColor(bevy::prelude::Color::Srgba(BLACK)))
 }
 
+pub fn add_node_name_field(
+    commands: &mut Commands,
+    sidebar: Entity,
+    current_name: Option<&str>,
+) {
+    let field = commands.spawn((
+        Node {
+            width: percent(100.),
+            flex_direction: FlexDirection::Column,
+            row_gap: px(4.),
+            margin: px(8.).bottom(),
+            ..default()
+        },
+        Name::new("node_name_box"),
+    )).id();
+    commands.entity(sidebar).add_child(field);
+    commands.entity(field).with_child((
+        Text::new("name"),
+        text_font(),
+        TextColor(NODE_NAME_COLOR),
+    ));
+    commands.entity(field).with_child((
+        NodeNameTextbox,
+        Node {
+            width: px(160.),
+            min_height: px(25.),
+            border: px(2).all(),
+            padding: px(4).all(),
+            ..default()
+        },
+        BorderColor::from(Color::from(SLATE_300)),
+        BackgroundColor(DARK_GREY.into()),
+        EditableText {
+            max_characters: Some(MAX_NODE_NAME_CHARS),
+            visible_width: Some(MAX_NODE_NAME_CHARS as f32),
+            ..EditableText::new(current_name.unwrap_or_default())
+        },
+        text_font(),
+        TextColor(Color::WHITE),
+        TextLayout::no_wrap(),
+        TextCursorStyle::default(),
+        TabIndex(0),
+        Name::new("node_name_textbox"),
+    ));
+}
+
 //generate menu of incoming links for any node
 pub fn available_links(
     commands: &mut Commands,
-    node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
+    _node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
     finished_links: &Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar_entity: Entity,
     node: Entity,
-    observed_columns: &HashMap<Entity, String>,
+    _observed_columns: &HashMap<Entity, String>,
 ){
+    let incoming_count = finished_links
+        .iter()
+        .filter(|(_, link)| link.to == Some(node))
+        .count();
     commands.entity(sidebar_entity).with_child((
-        Text::new("Incoming links:"),
+        Text::new(format!("[{incoming_count}] Incoming links")),
+        text_font(),
         Node {
             margin: px(4).bottom(),
             ..default()
         },
         TextColor(NODE_NAME_COLOR),
     ));
-    let link_space = commands.spawn(
-        (Node{
-            margin: px(4).bottom(),
-            flex_direction: FlexDirection::Column,
-            border_radius: px(5.).into(),
-            ..default()
-        },
-        BackgroundColor(AVAILABLE_LINKS_COLOR))
-    ).id();
-    commands.entity(sidebar_entity).add_child(link_space);
-
-    let mut i = 1;
-    for (_entity, ends) in finished_links.iter(){
-        if ends.to == Some(node) {
-            let (maybe_random, maybe_scalar, maybe_transform) = node_data.get(ends.from).unwrap();
-
-            let label = match (maybe_random, maybe_scalar, maybe_transform) {
-                (Some(rv), None, None) => rv.label(),
-                (None, Some(sc), None) => format!(
-                    "scalar: {}",
-                    observed_columns
-                        .get(&ends.from)
-                        .cloned()
-                        .unwrap_or_else(|| sc.label())
-                ),
-                (None, None, Some(cn)) => "operation: ".to_string() + &cn.label(),
-                _ => "sidebar/mod.rs BUG: ".to_string(),
-            };
-
-            commands.entity(link_space).with_child((
-                Text::new(format!["{}: {}", i, label]),
-                Node {
-                    margin: px(4).bottom(),
-                    ..default()
-                },
-                TextFont{
-                    font_size: px(16).into(),
-                    ..default()
-                },
-                TextColor(NODE_NAME_COLOR),
-            ));
-            i+=1;
-        }
-    }
-    if i == 1 {
-        commands.entity(link_space).with_child((
-            Text::new("No incoming links!"),
-            Node {
-                margin: px(4).bottom(),
-                ..default()
-            },
-            TextFont{
-                font_size: px(16).into(),
-                ..default()
-            },
-            TextColor(NODE_NAME_COLOR),
-        ));
-    }
 }
 
 //sidebar loader, event triggered by most graph changes
@@ -283,6 +280,7 @@ pub fn reload_sidebar(
                 } else {
                     format!("Node ID: {}", node.0)
                 }),
+                text_font(),
                 Node {
                     margin: px(10).bottom(),
                     ..default()
@@ -330,6 +328,7 @@ pub fn reload_sidebar(
             children![(
                 Pickable::IGNORE,
                 Text::new("Delete"),
+                text_font(),
                 TextColor(Color::WHITE),
             )],
             )).observe(  //delete button functionality

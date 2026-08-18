@@ -46,6 +46,7 @@ pub enum PresetNode {
         id: u32,
         position: [f32; 2],
         value: f64,
+        name: Option<&'static str>,
     },
 }
 
@@ -111,14 +112,14 @@ pub fn bundled_presets() -> Vec<GraphPreset> {
             PresetNode::Compute { id: 7, position: [1.957016, 48.085926], operation: Operation::Multiply, parameters: vec![PresetParameter { name: "first", source: Some(5) }, PresetParameter { name: "second", source: Some(2) }] },
             PresetNode::Compute { id: 8, position: [109.83594, 43.75391], operation: Operation::Add, parameters: vec![PresetParameter { name: "first", source: Some(6) }, PresetParameter { name: "second", source: Some(7) }] },
             PresetNode::Compute { id: 9, position: [241.4375, 251.81248], operation: Operation::Logarithm, parameters: vec![PresetParameter { name: "input", source: Some(16) }] },
-            PresetNode::Scalar { id: 10, position: [-186.27344, 81.90624], value: 2.0 },
-            PresetNode::Scalar { id: 11, position: [-181.6836, 9.242197], value: 1.0 },
-            PresetNode::Scalar { id: 12, position: [-182.0586, 277.2695], value: 500.0 },
-            PresetNode::Scalar { id: 13, position: [-54.433563, 279.99606], value: 200.0 },
-            PresetNode::Scalar { id: 14, position: [56.71095, 256.05075], value: 800.0 },
-            PresetNode::Scalar { id: 15, position: [155.64842, 252.37497], value: 300.0 },
-            PresetNode::Scalar { id: 16, position: [226.14844, 315.80856], value: 80.0 },
-            PresetNode::Scalar { id: 17, position: [315.4297, 192.332], value: 1.0 }
+            PresetNode::Scalar { id: 10, position: [-186.27344, 81.90624], value: 2.0, name: None },
+            PresetNode::Scalar { id: 11, position: [-181.6836, 9.242197], value: 1.0, name: None },
+            PresetNode::Scalar { id: 12, position: [-182.0586, 277.2695], value: 500.0, name: None },
+            PresetNode::Scalar { id: 13, position: [-54.433563, 279.99606], value: 200.0, name: None },
+            PresetNode::Scalar { id: 14, position: [56.71095, 256.05075], value: 800.0, name: None },
+            PresetNode::Scalar { id: 15, position: [155.64842, 252.37497], value: 300.0, name: None },
+            PresetNode::Scalar { id: 16, position: [226.14844, 315.80856], value: 80.0, name: None },
+            PresetNode::Scalar { id: 17, position: [315.4297, 192.332], value: 1.0, name: None }
         ],
         plates: vec![
             PresetPlate { id: 1, bounds: PresetBounds { min: [-125.51563, -2.8125076], max: [323.51953, 107.65624] }, dataset_id: "SATandGPA.csv", mapping: vec![PresetMapping { node: 2, column: "GPA" }, PresetMapping { node: 3, column: "SAT" }] }
@@ -141,13 +142,13 @@ pub fn bundled_presets() -> Vec<GraphPreset> {
             PresetNode::Compute { id: 9, position: [-78.57812, 133.83202], operation: Operation::Multiply, parameters: vec![PresetParameter { name: "first", source: Some(8) }, PresetParameter { name: "second", source: Some(2) }] },
             PresetNode::Compute { id: 10, position: [-0.417984, -1.2109375], operation: Operation::Multiply, parameters: vec![PresetParameter { name: "first", source: Some(6) }, PresetParameter { name: "second", source: Some(3) }] },
             PresetNode::Compute { id: 11, position: [126.77736, 87.031235], operation: Operation::Add, parameters: vec![PresetParameter { name: "first", source: Some(19) }, PresetParameter { name: "second", source: Some(4) }] },
-            PresetNode::Scalar { id: 12, position: [-238.10156, 19.761707], value: 0.0 },
-            PresetNode::Scalar { id: 13, position: [-237.98047, -39.82811], value: 1.5 },
-            PresetNode::Scalar { id: 14, position: [-65.402336, 338.67575], value: 0.0 },
-            PresetNode::Scalar { id: 15, position: [-9.644539, 334.3984], value: 5.0 },
-            PresetNode::Scalar { id: 16, position: [190.13672, 321.22653], value: 5.0 },
-            PresetNode::Scalar { id: 17, position: [145.04297, 312.98434], value: 0.0 },
-            PresetNode::Scalar { id: 18, position: [-236.3086, 127.69531], value: 2.0 },
+            PresetNode::Scalar { id: 12, position: [-238.10156, 19.761707], value: 0.0, name: None },
+            PresetNode::Scalar { id: 13, position: [-237.98047, -39.82811], value: 1.5, name: None },
+            PresetNode::Scalar { id: 14, position: [-65.402336, 338.67575], value: 0.0, name: None },
+            PresetNode::Scalar { id: 15, position: [-9.644539, 334.3984], value: 5.0, name: None },
+            PresetNode::Scalar { id: 16, position: [190.13672, 321.22653], value: 5.0, name: None },
+            PresetNode::Scalar { id: 17, position: [145.04297, 312.98434], value: 0.0, name: None },
+            PresetNode::Scalar { id: 18, position: [-236.3086, 127.69531], value: 2.0, name: None },
             PresetNode::Compute { id: 19, position: [58.835907, 86.98436], operation: Operation::Add, parameters: vec![PresetParameter { name: "first", source: Some(10) }, PresetParameter { name: "second", source: Some(9) }] }
         ],
         plates: vec![
@@ -278,6 +279,7 @@ pub fn on_request_preset_confirmation(
         parent.spawn((
             Pickable::IGNORE,
             Text::new(prompt),
+            text_font(),
             TextColor(Color::WHITE),
             Node {
                 padding: px(5).all(),
@@ -319,6 +321,7 @@ fn menu_item(text: &str) -> impl Bundle {
         children![(
             Pickable::IGNORE,
             Text::new(text.to_string()),
+            text_font(),
             TextColor(Color::WHITE),
         )],
     )
@@ -333,6 +336,7 @@ pub fn on_load_preset(
     datasets: Res<Datasets>,
     graph_nodes: Query<Entity, With<GraphNode>>,
     links: Query<Entity, With<GraphLink>>,
+    reduced_links: Query<Entity, With<ReducedViewLink>>,
     drafts: Query<Entity, With<PlateDraft>>,
     local_sidebars: Query<Entity, With<LocalSidebar>>,
     sample_popups: Query<Entity, With<SamplePopup>>,
@@ -364,6 +368,7 @@ pub fn on_load_preset(
         &mut commands,
         &graph_nodes,
         &links,
+        &reduced_links,
         &drafts,
         &local_sidebars,
         &sample_popups,
@@ -397,6 +402,7 @@ fn clear_editable_graph(
     commands: &mut Commands,
     graph_nodes: &Query<Entity, With<GraphNode>>,
     links: &Query<Entity, With<GraphLink>>,
+    reduced_links: &Query<Entity, With<ReducedViewLink>>,
     drafts: &Query<Entity, With<PlateDraft>>,
     local_sidebars: &Query<Entity, With<LocalSidebar>>,
     sample_popups: &Query<Entity, With<SamplePopup>>,
@@ -406,6 +412,7 @@ fn clear_editable_graph(
     let mut entities = HashSet::new();
     entities.extend(graph_nodes.iter());
     entities.extend(links.iter());
+    entities.extend(reduced_links.iter());
     entities.extend(drafts.iter());
     entities.extend(local_sidebars.iter());
     entities.extend(sample_popups.iter());
@@ -486,6 +493,7 @@ fn spawn_preset(
 ) {
     let mut entities = HashMap::new();
     let mut positions = HashMap::new();
+    let mut endpoint_radii = HashMap::new();
 
     // Pass one: create every node, independent of dependency order.
     for node in &preset.nodes {
@@ -521,17 +529,27 @@ fn spawn_preset(
                 meshes,
                 materials,
             ),
-            PresetNode::Scalar { id, value, .. } => spawn_scalar(
+            PresetNode::Scalar {
+                id, value, name, ..
+            } => spawn_scalar(
                 commands,
                 position,
                 *id,
-                ScalarNode { val: *value },
+                ScalarNode {
+                    val: *value,
+                    name: name.map(str::to_string),
+                },
                 meshes,
                 materials,
             ),
         };
         entities.insert(node.id(), entity);
         positions.insert(entity, position);
+        endpoint_radii.insert(entity, match node {
+            PresetNode::Random { .. } => RANDOM_NODE_RAD,
+            PresetNode::Compute { .. } => COMPUTE_NODE_RAD,
+            PresetNode::Scalar { .. } => SCALAR_NODE_RAD,
+        });
     }
 
     // Pass two: resolve stable IDs into entity-valued parameters and links.
@@ -576,6 +594,8 @@ fn spawn_preset(
             to,
             positions[&from],
             positions[&to],
+            endpoint_radii[&from],
+            endpoint_radii[&to],
             meshes,
             materials,
         );
@@ -704,8 +724,8 @@ pub fn print_graph_preset(
         nodes.push((
             id,
             format!(
-                "        PresetNode::Scalar {{ id: {id}, position: [{:?}, {:?}], value: {:?} }}",
-                position.x, position.y, scalar.val
+                "        PresetNode::Scalar {{ id: {id}, position: [{:?}, {:?}], value: {:?}, name: {:?} }}",
+                position.x, position.y, scalar.val, scalar.name.as_deref()
             ),
         ));
     }

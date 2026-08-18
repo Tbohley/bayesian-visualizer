@@ -52,10 +52,10 @@ pub fn apply_observed_scalar_labels(
     observed_columns: &HashMap<Entity, String>,
 ) {
     for (entity, label) in link_labels {
-        let is_scalar = node_data
+        let unnamed_scalar = node_data
             .get(*entity)
-            .is_ok_and(|(_, scalar, _)| scalar.is_some());
-        if is_scalar {
+            .is_ok_and(|(_, scalar, _)| scalar.is_some_and(|scalar| scalar.name.is_none()));
+        if unnamed_scalar {
             if let Some(column) = observed_columns.get(entity) {
                 *label = column.clone();
             }
@@ -104,6 +104,7 @@ pub fn build_link_param_selector(
         children![
             (
                 Text::new(param_name),
+                text_font(),
                 TextColor(NODE_NAME_COLOR),
             )],
     )).id();
@@ -113,7 +114,7 @@ pub fn build_link_param_selector(
         Button,
         Node {
             width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
+            height: px(60),
             border: UiRect::all(px(5)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
@@ -125,6 +126,7 @@ pub fn build_link_param_selector(
         children![(
             Pickable::IGNORE,
             Text::new(param_label),
+            text_font(),
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
@@ -202,6 +204,7 @@ pub fn on_open_param_link_menu(
             children![(
                 Pickable::IGNORE,
                 Text::new("No available links"),
+                text_font(),
                 TextColor(Color::WHITE),
             )],
         ));
@@ -238,6 +241,7 @@ pub fn param_context_item(
         children![(
             Pickable::IGNORE,
             Text::new(text),
+            text_font(),
             TextColor(Color::WHITE),
         )],
     )
@@ -357,7 +361,10 @@ fn random_short_label(random_node: &RandomNode) -> String {
 }
 
 fn scalar_label(scalar_node: &ScalarNode) -> String {
-    format_number(scalar_node.val)
+    scalar_node
+        .name
+        .clone()
+        .unwrap_or_else(|| format_number(scalar_node.val))
 }
 
 pub fn format_number(value: f64) -> String {

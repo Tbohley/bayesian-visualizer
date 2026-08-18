@@ -1,5 +1,5 @@
 use super::*;
-use bevy::{input_focus::InputFocus, prelude::*, sprite::Anchor, text::EditableText};
+use bevy::{prelude::*, sprite::Anchor};
 
 pub fn new_scalar(
     commands: &mut Commands,
@@ -12,7 +12,10 @@ pub fn new_scalar(
         commands,
         loc,
         node_num,
-        ScalarNode { val: 1.0 },
+        ScalarNode {
+            val: 1.0,
+            name: None,
+        },
         &mut meshes,
         &mut materials,
     );
@@ -26,7 +29,10 @@ pub fn spawn_scalar(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
 ) -> Entity {
-    let label = format!("{:.1}", scalar_node.val);
+    let label = scalar_node
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("{:.1}", scalar_node.val));
     commands
         .spawn((
             GraphNode(node_num),
@@ -48,10 +54,10 @@ pub fn spawn_scalar(
                     n if *n > 1 => px(NODE_LABEL_FONT_SIZE_SMALL).into(),
                     _ => px(NODE_LABEL_FONT_SIZE).into(),
                 },
-                ..default()
+                ..text_font()
             },
             Pickable::IGNORE,
-            Transform::from_xyz(0.0, 0.0, 2.0),
+            Transform::from_xyz(0.0, SCALAR_NODE_RAD + 10.0, 2.0),
         ))
         .observe(on_node_drag)
         .observe(on_node_click)
@@ -81,7 +87,7 @@ pub fn replace_node_label(
             Anchor::BOTTOM_RIGHT,
             TextFont {
                 font_size: px(NODE_LABEL_FONT_SIZE).into(),
-                ..default()
+                ..text_font()
             },
             Pickable::IGNORE,
             Transform::from_translation(plate.get_corner_pos()),
@@ -96,10 +102,34 @@ pub fn replace_node_label(
                     n if *n > 1 => px(NODE_LABEL_FONT_SIZE_SMALL).into(),
                     _ => px(NODE_LABEL_FONT_SIZE).into(),
                 },
-                ..default()
+                ..text_font()
             },
             Pickable::IGNORE,
             Transform::from_xyz(0.0, 0.0, 2.0),
         ));
     }
+}
+
+pub fn replace_scalar_label(
+    commands: &mut Commands,
+    node_entity: Entity,
+    label_text: impl Into<String>,
+    labels: &Query<(Entity, &NodeLabel, &ChildOf)>,
+) {
+    for (label_entity, _, child_of) in labels {
+        if child_of.parent() == node_entity {
+            commands.entity(label_entity).despawn();
+        }
+    }
+    commands.entity(node_entity).with_child((
+        NodeLabel,
+        Text2d::new(label_text.into()),
+        TextColor(NODE_NAME_COLOR),
+        TextFont {
+            font_size: px(NODE_LABEL_FONT_SIZE_SMALL).into(),
+            ..text_font()
+        },
+        Pickable::IGNORE,
+        Transform::from_xyz(0.0, SCALAR_NODE_RAD + 10.0, 2.0),
+    ));
 }

@@ -15,19 +15,7 @@ impl SidebarContent for RandomNode{
         _observed: bool,
         observed_columns: &std::collections::HashMap<Entity, String>,
     ){
-        commands.entity(sidebar_entity).with_child(
-            (
-                Text::new(if let Some(label) = &self.name {
-                    format!("Label: {}", label)
-                } else {
-                    "Type to name".to_string()
-                }),
-                Node {
-                    margin: px(8).bottom(),
-                    ..default()
-                },
-                TextColor(NODE_NAME_COLOR),
-            ));
+        add_node_name_field(commands, sidebar_entity, self.name.as_deref());
         commands.entity(sidebar_entity).with_child(divider());
         
         available_links(&mut commands, &node_data, &finished_links, sidebar_entity, node, observed_columns);
@@ -35,6 +23,7 @@ impl SidebarContent for RandomNode{
 
         commands.entity(sidebar_entity).with_child((
                 Text::new("Distribution:"),
+                text_font(),
                 Node {
                     margin: px(4).bottom(),
                     ..default()
@@ -61,6 +50,7 @@ impl SidebarContent for RandomNode{
             children![(
                 Pickable::IGNORE,
                 Text::new(self.dist_type.clone()),
+                text_font(),
                 TextColor(Color::WHITE),
                 TextShadow::default(),
             )],
@@ -109,6 +99,7 @@ impl SidebarContent for RandomNode{
         children![(
             Pickable::IGNORE,
             Text::new("Sample"),
+            text_font(),
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
@@ -147,6 +138,7 @@ impl SidebarContent for RandomNode{
             children![
                 (
                     Text::new(param_name),
+                    text_font(),
                     TextColor(NODE_NAME_COLOR),
                 ),
                 (
@@ -160,6 +152,7 @@ impl SidebarContent for RandomNode{
                     BorderColor::from(Color::from(SLATE_300)),
                     BackgroundColor(DARK_GREY.into()),
                     EditableText::new(param_value.to_string()),
+                    text_font(),
                     TextLayout::no_wrap(),
                     TextCursorStyle::default(),
                     TabIndex(param_num.try_into().unwrap()),

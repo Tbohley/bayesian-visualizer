@@ -48,10 +48,14 @@ impl PlateBounds {
 
 pub fn on_plate_drag_start(
     event: On<Pointer<DragStart>>,
+    reduced_view: Res<super::ReducedView>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    if reduced_view.active {
+        return;
+    }
     let Some(position) = event.hit.position else {
         return;
     };
@@ -112,7 +116,7 @@ pub fn spawn_completed_plate(
         bevy::sprite::Anchor::BOTTOM_RIGHT,
         TextFont {
             font_size: px(NODE_LABEL_FONT_SIZE).into(),
-            ..default()
+            ..text_font()
         },
         Pickable::IGNORE,
         Transform::from_translation(Vec3::new(size.x / 2.0 - 5.0, -size.y / 2.0 + 5.0, 1.0)),
@@ -190,8 +194,12 @@ fn add_plate_borders(
 
 fn on_completed_plate_drag(
     event: On<Pointer<Drag>>,
+    reduced_view: Res<super::ReducedView>,
     mut plates: Query<(&mut Plate, &mut Transform), Without<PlateDraft>>,
 ) {
+    if reduced_view.active {
+        return;
+    }
     let Ok((mut plate, mut transform)) = plates.get_mut(event.event_target()) else {
         return;
     };

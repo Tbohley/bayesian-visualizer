@@ -7,7 +7,7 @@ use bevy::{
 };
 use crate::bayesian_core::{NodeInstanceSamples, PosteriorSample};
 use crate::bevy_to_fugue::InferenceResultResource;
-use crate::constants::{ERR_COLOR, SAMPLE_COLOR, SIDEBAR_WIDTH};
+use crate::constants::{ERR_COLOR, SAMPLE_COLOR, SIDEBAR_WIDTH, text_font};
 use crate::ui::{ClearToasts, ErrorToast};
 
 pub const DEFAULT_HISTOGRAM_BINS: usize = 20;
@@ -328,7 +328,7 @@ fn spawn_stats(
                 TextColor(Color::WHITE),
                 TextFont {
                     font_size: FontSize::Px(font_size),
-                    ..default()
+                    ..text_font()
                 },
             ))
             .id();
@@ -354,7 +354,7 @@ fn spawn_bin_stepper(commands: &mut Commands, bin_count: usize) -> Entity {
             TextColor(Color::WHITE),
             TextFont {
                 font_size: FontSize::Px(14.0),
-                ..default()
+                ..text_font()
             },
         ))
         .id();
@@ -373,6 +373,7 @@ fn spawn_bin_stepper(commands: &mut Commands, bin_count: usize) -> Entity {
             BorderColor::all(Color::srgb(0.55, 0.57, 0.64)),
             BackgroundColor(Color::srgb(0.16, 0.17, 0.21)),
             EditableText::new(bin_count.to_string()),
+            text_font(),
             TextColor(Color::WHITE),
             TextLayout::no_wrap(),
             TextCursorStyle::default(),
@@ -409,7 +410,7 @@ fn spawn_bin_button(commands: &mut Commands, label: &'static str) -> Entity {
                 TextColor(Color::WHITE),
                 TextFont {
                     font_size: FontSize::Px(15.0),
-                    ..default()
+                    ..text_font()
                 },
             )],
         ))
@@ -498,7 +499,7 @@ fn spawn_chart(commands: &mut Commands, histogram: &Histogram) -> Entity {
             TextColor(Color::WHITE),
             TextFont {
                 font_size: FontSize::Px(16.0),
-                ..default()
+                ..text_font()
             },
         ))
         .id();
@@ -536,7 +537,7 @@ fn spawn_chart(commands: &mut Commands, histogram: &Histogram) -> Entity {
             TextColor(Color::WHITE),
             TextFont {
                 font_size: FontSize::Px(12.0),
-                ..default()
+                ..text_font()
             },
             ZIndex(1),
         ))
@@ -595,7 +596,7 @@ fn spawn_chart(commands: &mut Commands, histogram: &Histogram) -> Entity {
                 TextColor(Color::WHITE),
                 TextFont {
                     font_size: FontSize::Px(12.0),
-                    ..default()
+                    ..text_font()
                 },
             ))
             .id();

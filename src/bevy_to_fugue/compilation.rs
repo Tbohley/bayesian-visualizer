@@ -376,7 +376,7 @@ pub fn sample_popup(
             TextColor(Color::WHITE),
             TextFont {
                 font_size: FontSize::Px(14.),
-                ..default()
+                ..text_font()
             },
         )],
     ))

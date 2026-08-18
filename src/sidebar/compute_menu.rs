@@ -19,6 +19,7 @@ impl SidebarContent for ComputeNode{
 
         commands.entity(sidebar_entity).with_child((
             Text::new("Operation:"),
+            text_font(),
             Node {
                 margin: px(4).bottom(),
                 ..default()
@@ -43,6 +44,7 @@ impl SidebarContent for ComputeNode{
             children![(
                 Pickable::IGNORE,
                 Text::new(format!("{:?}", self.operation)),
+                text_font(),
                 TextColor(Color::WHITE),
                 TextShadow::default(),
             )],

@@ -1,13 +1,10 @@
 use super::*;
 use crate::constants::*;
 use crate::graph::*;
-use crate::sidebar::*;
-use crate::ui::*;
-use bevy::input::keyboard::KeyboardInput;
+use crate::ui::capsule_selection_indicator;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use fugue::*;
-use rand::thread_rng;
 
 pub fn new_random(
     commands: &mut Commands,
@@ -39,10 +36,7 @@ pub fn spawn_random(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
 ) -> Entity {
-    let label = random_node
-        .name
-        .clone()
-        .unwrap_or_else(|| node_num.to_string());
+    let label = random_node_label(&random_node, node_num);
     commands
         .spawn((
             GraphNode(node_num),
@@ -50,7 +44,7 @@ pub fn spawn_random(
                 should_block_lower: true,
                 is_hoverable: true,
             },
-            Mesh2d(meshes.add(Circle::new(RANDOM_NODE_RAD))),
+            Mesh2d(meshes.add(random_node_mesh(RANDOM_NODE_RAD, &label))),
             MeshMaterial2d(materials.add(RANDOM_NODE_COLOR)),
             Transform::from_xyz(loc.x, loc.y, 1.0),
             random_node,
@@ -58,13 +52,17 @@ pub fn spawn_random(
         .with_child((
             NodeInterior,
             Pickable::IGNORE,
-            Mesh2d(meshes.add(Circle::new(RANDOM_NODE_RAD - NODE_BORDER_WEIGHT))),
+            Mesh2d(meshes.add(random_node_mesh(
+                RANDOM_NODE_RAD - NODE_BORDER_WEIGHT,
+                &label,
+            ))),
             MeshMaterial2d(materials.add(CANVAS_COLOR)),
             Transform::from_xyz(0.0, 0.0, 0.01),
         ))
         .with_child((
             NodeLabel,
             Text2d::new(label),
+            text_font(),
             TextColor(NODE_NAME_COLOR),
             Pickable::IGNORE,
             Transform::from_xyz(0.0, 0.0, 2.0),
@@ -74,48 +72,34 @@ pub fn spawn_random(
         .id()
 }
 
-//rename selected node to single-letter name from keyboard
-pub fn on_keypress(
-    mut kbd: MessageReader<KeyboardInput>,
-    mut commands: Commands,
-    selected: Option<Single<(Entity, &mut RandomNode), With<Selected>>>,
-    labels: Query<(Entity, &NodeLabel, &ChildOf)>,
-) {
-    let Some(single) = selected else {
-        return;
-    };
-    let (entity, mut random_node) = single.into_inner();
+pub fn random_node_label(random_node: &RandomNode, node_num: u32) -> String {
+    random_node
+        .name
+        .clone()
+        .unwrap_or_else(|| node_num.to_string())
+}
 
-    //for all keyboard inputs while node is selected
-    for event in kbd.read() {
-        if !event.state.is_pressed() {
-            continue;
-        }
-        let Some(text) = &event.text else {
-            continue;
-        };
-        //only alphabetic, numbers reserved for unnamed nodes
-        if text.chars().count() != 1 || !text.chars().all(|c| c.is_alphabetic()) {
-            continue;
-        }
-        random_node.name = Some(text.to_string());
-
-        for (label_entity, _, child_of) in labels.iter() {
-            if child_of.parent() == entity {
-                commands.entity(label_entity).despawn();
-            }
-        }
-
-        commands.entity(entity).with_child((
-            NodeLabel,
-            Text2d::new(text.to_string()),
-            TextColor(NODE_NAME_COLOR),
-            Pickable::IGNORE,
-            Transform::from_xyz(0.0, 0.0, 2.0),
-        ));
-        //reload sidebar
-        commands.trigger(ReloadSidebar);
+pub fn random_node_mesh(radius: f32, label: &str) -> Mesh {
+    let extra_length = label
+        .chars()
+        .count()
+        .saturating_sub(1) as f32
+        * RANDOM_NODE_NAME_ADVANCE;
+    if extra_length == 0.0 {
+        Mesh::from(Circle::new(radius))
+    } else {
+        Mesh::from(Capsule2d::new(radius, extra_length))
+            .rotated_by(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
     }
+}
+
+pub fn random_selection_mesh(label: &str) -> Mesh {
+    let extra_length = label
+        .chars()
+        .count()
+        .saturating_sub(1) as f32
+        * RANDOM_NODE_NAME_ADVANCE;
+    capsule_selection_indicator(RANDOM_NODE_RAD, extra_length)
 }
 
 //store parameters for distributions plus a valid default value

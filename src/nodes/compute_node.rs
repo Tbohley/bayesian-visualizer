@@ -133,7 +133,7 @@ pub fn spawn_compute(
                     n if *n > 1 => px(NODE_LABEL_FONT_SIZE_SMALL).into(),
                     _ => px(NODE_LABEL_FONT_SIZE).into(),
                 },
-                ..default()
+                ..text_font()
             },
             TextColor(NODE_NAME_COLOR),
             Pickable::IGNORE,
