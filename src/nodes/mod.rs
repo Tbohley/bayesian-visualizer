@@ -1,7 +1,6 @@
 pub mod random_node;
 pub mod compute_node;
 pub mod scalar_node;
-use fugue::Distribution;
 pub use random_node::*;
 pub use compute_node::*;
 pub use scalar_node::*;
@@ -160,9 +159,6 @@ pub fn scalar_display_label(
     }).unwrap_or_else(|| format!("{:.1}", scalar.val))
 }
 
-pub trait DistributionDebug<T>: Distribution<T> + std::fmt::Debug {}
-impl<T, D: Distribution<T> + std::fmt::Debug> DistributionDebug<T> for D {}
-
 pub trait NodeDisplay{
     fn label(&self) -> String;
 }
@@ -172,7 +168,6 @@ pub trait NodeDisplay{
 pub struct RandomNode{
     pub name: Option<String>,
     pub dist_type: String,
-    pub dist: Box<dyn DistributionDebug<f64>>,
     pub params: Vec<ParamValue>
 }
 

@@ -51,6 +51,18 @@ pub struct NumberOfSamplesTextbox;
 pub struct NumberOfWarmupTextbox;
 
 #[derive(Component)]
+pub struct InferenceRunButtonLabel;
+
+#[derive(Component)]
+pub struct InferenceProgressContainer;
+
+#[derive(Component)]
+pub struct InferenceProgressFill;
+
+#[derive(Component)]
+pub struct InferenceProgressLabel;
+
+#[derive(Component)]
 pub struct RandomSeedPlaceholder;
 
 #[derive(Event)]

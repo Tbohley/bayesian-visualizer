@@ -343,7 +343,6 @@ mod tests {
             operation: Operation::Exponential,
             params: vec![ParamIR {
                 from_node,
-                param_name: None,
             }],
         }
     }

@@ -4,7 +4,6 @@ use crate::graph::*;
 use crate::ui::capsule_selection_indicator;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use fugue::*;
 
 pub fn new_random(
     commands: &mut Commands,
@@ -20,7 +19,6 @@ pub fn new_random(
         RandomNode {
             name: None,
             dist_type: String::from("Normal"),
-            dist: Box::new(Normal::new(0.0, 1.0).unwrap().clone()),
             params: vec![ParamValue("mean", None), ParamValue("std_dev", None)],
         },
         &mut meshes,

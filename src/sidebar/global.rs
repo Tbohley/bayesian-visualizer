@@ -4,12 +4,16 @@ use bevy::{
     text::EditableText,
     ui::InteractionDisabled,
 };
+use std::sync::atomic::Ordering;
 use super::*;
 use crate::bayesian_core::GraphIR;
 use crate::nodes::*;
 use crate::constants::*;
 use crate::bevy_to_fugue::*;
-use crate::data_vis::CloseHistogramPanel;
+use crate::data_vis::{
+    CloseHistogramPanel, HistogramSelection, HistogramSelectionControls,
+    HistogramSelectionStatus, deselect_histogram_selection,
+};
 
 const DISABLED_CONTROL_COLOR: Color = Color::srgb(0.35, 0.35, 0.35);
 const DISABLED_TEXT_COLOR: Color = Color::srgb(0.65, 0.65, 0.65);
@@ -306,6 +310,7 @@ pub fn load_global_sidebar(
         BorderColor::all(DISABLED_CONTROL_COLOR),
         BackgroundColor(DISABLED_CONTROL_COLOR),
         children![(
+            InferenceRunButtonLabel,
             Pickable::IGNORE,
             Text::new("Run inference"),
             text_font(),
@@ -313,6 +318,113 @@ pub fn load_global_sidebar(
         )],
     )).observe(compilation::run_inference).id();
     commands.entity(global_sidebar_entity).add_child(inference_button);
+
+    let progress_fill = commands
+        .spawn((
+            InferenceProgressFill,
+            Pickable::IGNORE,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0.0),
+                top: px(0.0),
+                width: percent(0.0),
+                height: percent(100.0),
+                ..default()
+            },
+            BackgroundColor(SAMPLE_COLOR),
+        ))
+        .id();
+    let progress_label = commands
+        .spawn((
+            InferenceProgressLabel,
+            Pickable::IGNORE,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0.0),
+                top: px(0.0),
+                width: percent(100.0),
+                height: percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Text::new(""),
+            TextFont {
+                font_size: FontSize::Px(12.0),
+                ..text_font()
+            },
+            TextColor(Color::WHITE),
+        ))
+        .id();
+    let progress = commands
+        .spawn((
+            InferenceProgressContainer,
+            Node {
+                display: Display::None,
+                position_type: PositionType::Relative,
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(20.0),
+                border: px(1.0).all(),
+                margin: px(4.0).bottom(),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BorderColor::all(Color::srgb(0.55, 0.57, 0.62)),
+            BackgroundColor(Color::srgb(0.20, 0.21, 0.24)),
+        ))
+        .add_children(&[progress_fill, progress_label])
+        .id();
+    commands.entity(global_sidebar_entity).add_child(progress);
+
+    let selection_controls = commands
+        .spawn((
+            HistogramSelectionControls,
+            Node {
+                display: Display::None,
+                width: percent(100.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(6.0),
+                margin: px(12.0).top(),
+                ..default()
+            },
+        ))
+        .id();
+    let selection_status = commands
+        .spawn((
+            HistogramSelectionStatus,
+            Pickable::IGNORE,
+            Text::new(""),
+            text_font(),
+            TextColor(NODE_NAME_COLOR),
+        ))
+        .id();
+    let deselect_button = commands
+        .spawn((
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BackgroundColor(BUTTON_COLOR),
+            children![(
+                Pickable::IGNORE,
+                Text::new("Deselect"),
+                text_font(),
+                TextColor(Color::WHITE),
+            )],
+        ))
+        .observe(deselect_histogram_selection)
+        .id();
+    commands
+        .entity(selection_controls)
+        .add_children(&[selection_status, deselect_button]);
+    commands
+        .entity(global_sidebar_entity)
+        .add_child(selection_controls);
     //TODO: context menu for selecting which type of node to create
 }
 
@@ -486,6 +598,7 @@ pub fn update_random_seed_placeholder(
 pub fn invalidate_compilation_on_graph_change(
     mut commands: Commands,
     graph_resource: Option<Res<GraphIRResource>>,
+    inference_job: Option<Res<InferenceJob>>,
     changed_graph: Query<
         (),
         (
@@ -523,8 +636,14 @@ pub fn invalidate_compilation_on_graph_change(
     let graph_changed = !changed_graph.is_empty() || membership_changed || graph_node_removed;
 
     if graph_changed {
+        if let Some(job) = inference_job {
+            job.control.discard_result.store(true, Ordering::Relaxed);
+            job.control.cancel_requested.store(true, Ordering::Relaxed);
+        }
         commands.remove_resource::<GraphIRResource>();
         commands.remove_resource::<InferenceResultResource>();
+        commands.remove_resource::<InferenceStatusResource>();
+        commands.remove_resource::<HistogramSelection>();
         commands.trigger(SetInferenceControlsEnabled(false));
         commands.trigger(SetPosteriorSampleEnabled(false));
         commands.trigger(CloseHistogramPanel);

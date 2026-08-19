@@ -5,14 +5,15 @@ mod model_compilation;
 mod plate_validation;
 mod inference;
 
-pub use inference::{InferenceResult, NodeInstanceSamples, PosteriorSample};
+pub use inference::{
+    ControlledInferenceResult, InferenceResult, NodeInstanceSamples, PosteriorSample,
+};
 pub use model_compilation::CompiledGraph;
 
 #[derive(Clone)]
 /// Intermediate representation of the complete probabilistic graph and its plates.
 pub struct GraphIR {
     pub nodes: HashMap<u32, NodeIR>,  // keyed by GraphNode id
-    pub edges: Vec<EdgeIR>,
     pub plates: HashMap<u32, PlateIR>,
 }
 
@@ -21,7 +22,6 @@ impl GraphIR{
     pub fn new() -> Self {
         Self {
             nodes: HashMap::<u32, NodeIR>::new(),
-            edges: Vec::<EdgeIR>::new(),
             plates: HashMap::<u32, PlateIR>::new(),
         }
     }
@@ -49,15 +49,7 @@ pub enum NodeIR {
 #[derive(Clone, Debug)]
 /// Reference from a node parameter to the node that supplies its value.
 pub struct ParamIR {
-    pub from_node: u32,            // param fed by node with this id
-    pub param_name: Option<String>
-}
-
-#[derive(Clone)]
-/// Directed graph edge between two node IDs.
-pub struct EdgeIR {
-    pub from: u32,
-    pub to: u32,
+    pub from_node: u32, // param fed by node with this id
 }
 
 #[derive(Clone, Debug)]

@@ -9,7 +9,7 @@ pub use load_preset::*;
 pub use plate::*;
 pub use reduced_view::*;
 
-use bevy::{prelude::*, reflect::TypeData};
+use bevy::prelude::*;
 
 //on links between nodes
 #[derive(Component)]    

@@ -2,8 +2,8 @@ use super::graph_checks::{GraphModel, ModelResult, ModelValues};
 use super::plate_validation::{NormalizedPlates, NormalizedScope};
 use super::{GraphIR, NodeIR, ParamIR};
 use fugue::{
-    Address, Beta, Distribution, Exponential, FugueResult, Gamma, LogNormal, Model, ModelExt,
-    Normal, Uniform, pure,
+    pure, Address, Beta, Distribution, Exponential, FugueResult, Gamma, LogNormal, Model, ModelExt,
+    Normal, Uniform,
 };
 use std::collections::HashMap;
 
@@ -85,6 +85,10 @@ impl CompiledGraph {
 
     pub fn graph(&self) -> &GraphIR {
         &self.graph
+    }
+
+    pub fn node_plate_path(&self, node_id: u32) -> Option<&[u32]> {
+        self.normalized.node_paths.get(&node_id).map(Vec::as_slice)
     }
 
     pub fn model(&self) -> Result<GraphModel, String> {
@@ -193,15 +197,7 @@ fn compile_scope(
         for index in 0..plate.n {
             let mut child_indices = indices.to_vec();
             child_indices.push(index);
-            model = compile_scope(
-                graph,
-                normalized,
-                child,
-                order,
-                &child_indices,
-                mode,
-                model,
-            )?;
+            model = compile_scope(graph, normalized, child, order, &child_indices, mode, model)?;
         }
     }
 
@@ -619,16 +615,7 @@ mod tests {
                 id: 3,
                 label: None,
                 dist_type: "Normal".to_string(),
-                params: vec![
-                    ParamIR {
-                        from_node: 1,
-                        param_name: None,
-                    },
-                    ParamIR {
-                        from_node: 2,
-                        param_name: None,
-                    },
-                ],
+                params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
             },
         );
         graph.nodes.insert(

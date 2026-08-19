@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::Ordering;
 
 use bevy::prelude::*;
-use fugue::Normal;
-
 use super::*;
-use crate::bevy_to_fugue::{GraphIRResource, InferenceResultResource, SamplePopup};
+use crate::bevy_to_fugue::{
+    GraphIRResource, InferenceJob, InferenceResultResource, InferenceStatusResource, SamplePopup,
+};
 use crate::constants::*;
-use crate::data_vis::{CloseHistogramPanel, InferenceHistogramPanel};
+use crate::data_vis::{CloseHistogramPanel, HistogramSelection, InferenceHistogramPanel};
 use crate::nodes::*;
 use crate::sidebar::{
     CloseContextMenus, ContextMenu, Datasets, LocalSidebar, ReloadSidebar,
@@ -342,7 +343,12 @@ pub fn on_load_preset(
     sample_popups: Query<Entity, With<SamplePopup>>,
     histogram_panels: Query<Entity, With<InferenceHistogramPanel>>,
     error_toasts: Query<Entity, With<ErrorToastBox>>,
+    inference_job: Option<Res<InferenceJob>>,
 ) {
+    if let Some(job) = inference_job {
+        job.control.discard_result.store(true, Ordering::Relaxed);
+        job.control.cancel_requested.store(true, Ordering::Relaxed);
+    }
     let preset = match &event.0 {
         PresetTarget::Preset(id) => {
             let Some(preset) = bundled_presets().into_iter().find(|preset| preset.id == id) else {
@@ -423,6 +429,8 @@ fn clear_editable_graph(
     }
     commands.remove_resource::<GraphIRResource>();
     commands.remove_resource::<InferenceResultResource>();
+    commands.remove_resource::<InferenceStatusResource>();
+    commands.remove_resource::<HistogramSelection>();
     commands.trigger(SetInferenceControlsEnabled(false));
     commands.trigger(SetPosteriorSampleEnabled(false));
     commands.trigger(CloseHistogramPanel);
@@ -512,7 +520,6 @@ fn spawn_preset(
                 RandomNode {
                     name: name.map(str::to_string),
                     dist_type: (*distribution).to_string(),
-                    dist: Box::new(Normal::new(0.0, 1.0).expect("valid placeholder distribution")),
                     params: Vec::new(),
                 },
                 meshes,

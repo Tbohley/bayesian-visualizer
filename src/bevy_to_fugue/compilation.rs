@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::sync::{Arc, atomic::Ordering};
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, futures::check_ready};
 use super::*;
 use crate::bayesian_core::graph_checks::ModelResult;
 use crate::nodes::*;
@@ -7,11 +9,17 @@ use crate::bayesian_core::*;
 use crate::sidebar::link_params::format_number;
 use crate::sidebar::SetInferenceControlsEnabled;
 use crate::sidebar::SetPosteriorSampleEnabled;
-use crate::sidebar::{NumberOfSamplesTextbox, NumberOfWarmupTextbox, RandomSeedTextbox};
+use crate::sidebar::{
+    InferenceProgressContainer, InferenceProgressFill, InferenceProgressLabel,
+    InferenceRunButtonLabel, NumberOfSamplesTextbox, NumberOfWarmupTextbox, RandomSeedTextbox,
+};
 use crate::ui::ErrorToast;
 use crate::constants::*;
 use crate::graph::*;
-use crate::data_vis::CloseHistogramPanel;
+use crate::data_vis::{
+    CloseHistogramPanel, HistogramSelection, HistogramView, OpenHistogramPanel,
+    DEFAULT_HISTOGRAM_BINS,
+};
 use bevy::text::EditableText;
 use rand::Rng;
 
@@ -19,7 +27,7 @@ use rand::Rng;
 pub fn compile(
     _event: On<TriggerCompilation>,
     mut commands: Commands,
-    finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
+    inference_job: Option<Res<InferenceJob>>,
     rand_nodes: Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
     compute_nodes: Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
     scalar_nodes: Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
@@ -27,6 +35,10 @@ pub fn compile(
     node_positions: Query<(&GraphNode, &Transform), Without<Plate>>,
     plates: Query<(&GraphNode, &Plate)>,
 ) {
+    if let Some(job) = inference_job {
+        job.control.discard_result.store(true, Ordering::Relaxed);
+        job.control.cancel_requested.store(true, Ordering::Relaxed);
+    }
     print_graph_preset(
         &rand_nodes,
         &compute_nodes,
@@ -38,10 +50,11 @@ pub fn compile(
 
     // Any compile attempt supersedes posterior results from the previous graph.
     commands.remove_resource::<InferenceResultResource>();
+    commands.remove_resource::<InferenceStatusResource>();
+    commands.remove_resource::<HistogramSelection>();
     commands.trigger(CloseHistogramPanel);
     commands.trigger(SetPosteriorSampleEnabled(false));
     let graph = compile_ir(
-        &finished_links,
         &rand_nodes,
         &compute_nodes,
         &scalar_nodes,
@@ -253,11 +266,22 @@ fn display_sample(
 pub fn run_inference(
     _event: On<Pointer<Click>>,
     mut commands: Commands,
+    inference_job: Option<Res<InferenceJob>>,
     graph_resource: Option<Res<GraphIRResource>>,
     seed_text: Single<&EditableText, With<RandomSeedTextbox>>,
     sample_text: Single<&EditableText, With<NumberOfSamplesTextbox>>,
     warmup_text: Single<&EditableText, With<NumberOfWarmupTextbox>>,
 ) {
+    if let Some(job) = inference_job {
+        if !job.control.cancel_requested.swap(true, Ordering::Relaxed) {
+            commands.trigger(ErrorToast {
+                text: "Stopping inference after the current MCMC step...".to_string(),
+                color: SAMPLE_COLOR,
+            });
+        }
+        return;
+    }
+
     // Never leave a visualization of superseded posterior draws on screen.
     commands.trigger(CloseHistogramPanel);
     let Some(compiled) = graph_resource else {
@@ -308,31 +332,264 @@ pub fn run_inference(
     println!(
         "Running inference: seed={seed}, samples={n_samples}, warmup={n_warmup}"
     );
-    match compiled.0.run_inference(seed, n_samples, n_warmup) {
-        Ok(results) => {
-            println!(
-                "Inference complete: retained {} samples after {} warmup rounds (seed {}).",
-                results.n_samples, results.n_warmup, results.seed
-            );
+    commands.remove_resource::<InferenceResultResource>();
+    commands.remove_resource::<HistogramSelection>();
+    commands.insert_resource(InferenceStatusResource {
+        state: InferenceResultState::Running,
+        requested_samples: n_samples,
+    });
+    commands.trigger(SetPosteriorSampleEnabled(false));
+
+    let graph = compiled.0.graph().clone();
+    let control = Arc::new(InferenceControl::new());
+    let worker_control = Arc::clone(&control);
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        let compiled = graph.compile()?;
+        let cancel_control = Arc::clone(&worker_control);
+        let warmup_control = Arc::clone(&worker_control);
+        let sample_control = Arc::clone(&worker_control);
+
+        compiled.run_inference_controlled(
+            seed,
+            n_samples,
+            n_warmup,
+            move || cancel_control.cancel_requested.load(Ordering::Relaxed),
+            move |completed| {
+                warmup_control
+                    .warmup_completed
+                    .store(completed, Ordering::Relaxed);
+            },
+            move |draw_index, values| {
+                sample_control
+                    .samples_completed
+                    .store(draw_index + 1, Ordering::Relaxed);
+                sample_control
+                    .pending_draws
+                    .lock()
+                    .expect("inference draw queue should not be poisoned")
+                    .push(values.clone());
+            },
+        )
+    });
+
+    commands.insert_resource(InferenceJob {
+        task,
+        control,
+        seed,
+        requested_samples: n_samples,
+        requested_warmup: n_warmup,
+    });
+}
+
+fn append_live_draws(result: &mut InferenceResult, draws: Vec<ModelValues>) {
+    for values in draws {
+        for (node_id, value) in values {
+            result.samples_by_node.entry(node_id).or_default().push(value);
+        }
+        result.n_samples += 1;
+    }
+}
+
+fn reopen_selected_histogram(
+    commands: &mut Commands,
+    selected: &Query<&GraphNode, With<Selected>>,
+    view: Option<&HistogramView>,
+) {
+    let Ok(node) = selected.single() else {
+        return;
+    };
+    let bin_count = view
+        .filter(|view| view.node_id == node.0)
+        .map_or(DEFAULT_HISTOGRAM_BINS, |view| view.bin_count);
+    commands.trigger(OpenHistogramPanel {
+        node_id: node.0,
+        bin_count,
+    });
+}
+
+/// Drains live posterior draws and completes the background task without ever
+/// waiting on it from Bevy's main thread.
+pub fn poll_inference_job(
+    mut commands: Commands,
+    mut job: Option<ResMut<InferenceJob>>,
+    mut live_results: Option<ResMut<InferenceResultResource>>,
+    selected: Query<&GraphNode, With<Selected>>,
+    view: Option<Single<&HistogramView>>,
+) {
+    let Some(job) = job.as_mut() else {
+        return;
+    };
+    let discard = job.control.discard_result.load(Ordering::Relaxed);
+    let pending = {
+        let mut pending = job
+            .control
+            .pending_draws
+            .lock()
+            .expect("inference draw queue should not be poisoned");
+        std::mem::take(&mut *pending)
+    };
+    let received_draws = pending.len();
+
+    if !discard && received_draws > 0 {
+        if let Some(results) = live_results.as_mut() {
+            append_live_draws(&mut results.0, pending);
+        } else {
+            let mut results = InferenceResult {
+                seed: job.seed,
+                n_samples: 0,
+                n_warmup: job.requested_warmup,
+                samples_by_node: HashMap::new(),
+                traces: Vec::new(),
+            };
+            append_live_draws(&mut results, pending);
             commands.insert_resource(InferenceResultResource(results));
+        }
+        commands.remove_resource::<HistogramSelection>();
+        reopen_selected_histogram(&mut commands, &selected, view.as_ref().map(|view| **view));
+    }
+
+    let Some(outcome) = check_ready(&mut job.task) else {
+        return;
+    };
+    let discard = job.control.discard_result.load(Ordering::Relaxed);
+    commands.remove_resource::<InferenceJob>();
+
+    if discard {
+        commands.remove_resource::<InferenceResultResource>();
+        commands.remove_resource::<InferenceStatusResource>();
+        commands.remove_resource::<HistogramSelection>();
+        commands.trigger(CloseHistogramPanel);
+        commands.trigger(SetPosteriorSampleEnabled(false));
+        return;
+    }
+
+    match outcome {
+        Ok(outcome) if outcome.result.n_samples > 0 => {
+            let retained = outcome.result.n_samples;
+            let completed_warmup = outcome.result.n_warmup;
+            let completed_seed = outcome.result.seed;
+            let state = if outcome.cancelled {
+                InferenceResultState::Cancelled
+            } else {
+                InferenceResultState::Complete
+            };
+            commands.insert_resource(InferenceResultResource(outcome.result));
+            commands.insert_resource(InferenceStatusResource {
+                state,
+                requested_samples: job.requested_samples,
+            });
             commands.trigger(SetPosteriorSampleEnabled(true));
+            reopen_selected_histogram(&mut commands, &selected, view.as_ref().map(|view| **view));
+            let message = if state == InferenceResultState::Cancelled {
+                format!(
+                    "Inference cancelled after {completed_warmup} warmup steps. Keeping {retained} of {} requested posterior draws.",
+                    job.requested_samples,
+                )
+            } else {
+                format!(
+                    "Inference complete: {retained} samples after {completed_warmup} warmup steps (seed {completed_seed}). Click a node for its summary."
+                )
+            };
             commands.trigger(ErrorToast {
-                text: format!(
-                    "Inference complete: {n_samples} samples (seed {seed}). Click a node for its summary."
-                ),
+                text: message,
+                color: SAMPLE_COLOR,
+            });
+        }
+        Ok(outcome) => {
+            commands.remove_resource::<InferenceResultResource>();
+            commands.remove_resource::<InferenceStatusResource>();
+            commands.remove_resource::<HistogramSelection>();
+            commands.trigger(CloseHistogramPanel);
+            commands.trigger(SetPosteriorSampleEnabled(false));
+            let message = if outcome.cancelled {
+                "Inference cancelled before any posterior draws were retained."
+            } else {
+                "Inference finished without retaining posterior draws."
+            };
+            commands.trigger(ErrorToast {
+                text: message.to_string(),
                 color: SAMPLE_COLOR,
             });
         }
         Err(error) => {
-            println!("Inference error: {error}");
-            commands.remove_resource::<InferenceResultResource>();
+            let partial_count = live_results.as_ref().map_or(received_draws, |results| {
+                results.0.n_samples
+            });
+            commands.insert_resource(InferenceStatusResource {
+                state: InferenceResultState::Failed,
+                requested_samples: job.requested_samples,
+            });
             commands.trigger(SetPosteriorSampleEnabled(false));
+            if partial_count == 0 {
+                commands.remove_resource::<InferenceResultResource>();
+                commands.trigger(CloseHistogramPanel);
+            } else {
+                reopen_selected_histogram(
+                    &mut commands,
+                    &selected,
+                    view.as_ref().map(|view| **view),
+                );
+            }
             commands.trigger(ErrorToast {
-                text: format!("Inference error: {error}"),
+                text: format!("Inference error after {partial_count} retained draws: {error}"),
                 color: ERR_COLOR,
             });
         }
     }
+}
+
+pub fn update_inference_progress(
+    job: Option<Res<InferenceJob>>,
+    mut containers: Query<&mut Node, With<InferenceProgressContainer>>,
+    mut fills: Query<&mut Node, (With<InferenceProgressFill>, Without<InferenceProgressContainer>)>,
+    mut progress_labels: Query<&mut Text, With<InferenceProgressLabel>>,
+    mut button_labels: Query<
+        &mut Text,
+        (With<InferenceRunButtonLabel>, Without<InferenceProgressLabel>),
+    >,
+) {
+    let Ok(mut container) = containers.single_mut() else {
+        return;
+    };
+    let Ok(mut fill) = fills.single_mut() else {
+        return;
+    };
+    let Ok(mut progress_label) = progress_labels.single_mut() else {
+        return;
+    };
+    let Ok(mut button_label) = button_labels.single_mut() else {
+        return;
+    };
+
+    let Some(job) = job else {
+        container.display = Display::None;
+        fill.width = percent(0.0);
+        progress_label.0.clear();
+        button_label.0 = "Run inference".to_string();
+        return;
+    };
+
+    container.display = Display::Flex;
+    let stopping = job.control.cancel_requested.load(Ordering::Relaxed);
+    button_label.0 = if stopping { "Stopping..." } else { "Stop" }.to_string();
+    let warmup = job.control.warmup_completed.load(Ordering::Relaxed);
+    let samples = job.control.samples_completed.load(Ordering::Relaxed);
+    let (label, completed, total) = if warmup < job.requested_warmup {
+        ("Warmup", warmup, job.requested_warmup)
+    } else {
+        ("Sampling", samples, job.requested_samples)
+    };
+    let fraction = if total == 0 {
+        1.0
+    } else {
+        completed as f32 / total as f32
+    };
+    fill.width = percent(fraction.clamp(0.0, 1.0) * 100.0);
+    progress_label.0 = if stopping {
+        format!("Stopping... {completed}/{total}")
+    } else {
+        format!("{label}: {completed}/{total}")
+    };
 }
 
 fn parse_positive_count(text: &EditableText, label: &str) -> Result<usize, String> {
@@ -418,8 +675,6 @@ pub fn tick_sample_popups(
 }
 
 pub fn compile_ir(
-    //commands: Commands,
-    finished_links: &Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     rand_nodes: &Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
     compute_nodes: &Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
     scalar_nodes: &Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
@@ -440,7 +695,7 @@ pub fn compile_ir(
             .1
             .0;
     
-        Ok(ParamIR { from_node: node_id, param_name: Some(param.0.to_string()) })
+        Ok(ParamIR { from_node: node_id })
     };
 
     for (entity, rand) in rand_nodes.into_iter(){
@@ -477,13 +732,6 @@ pub fn compile_ir(
             value: scalar.val,
         });
     }
-
-    for (_entity, link) in finished_links.into_iter(){
-        graph.edges.push(EdgeIR{
-            from: node_ids.get(link.from).unwrap().1.0,
-            to: node_ids.get(link.to.unwrap()).unwrap().1.0
-        })
-    };
 
     let plate_bounds = plates
         .iter()

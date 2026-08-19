@@ -9,8 +9,10 @@ mod data_vis;
 mod bayesian_core;
 mod bevy_to_fugue;
 use bevy_to_fugue::compilation::compile;
+use bevy_to_fugue::compilation::poll_inference_job;
 use bevy_to_fugue::compilation::sample_popup;
 use bevy_to_fugue::compilation::tick_sample_popups;
+use bevy_to_fugue::compilation::update_inference_progress;
 pub use constants::*;
 use sidebar::compute_menu::on_open_operation_menu;
 use sidebar::global::load_global_sidebar;
@@ -31,6 +33,7 @@ use crate::data_vis::{
     apply_typed_histogram_bin_count,
     close_histogram_panel,
     open_histogram_panel,
+    update_histogram_selection_controls,
 };
 
 fn setup (
@@ -98,6 +101,9 @@ fn main() {
             on_enter_clicked,
             refresh_reduced_view,
             apply_typed_histogram_bin_count,
+            update_histogram_selection_controls,
+            poll_inference_job,
+            update_inference_progress,
             invalidate_compilation_on_graph_change,
             update_random_seed_placeholder,
             tick_error_toasts, 

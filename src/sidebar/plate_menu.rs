@@ -1,7 +1,5 @@
 use std::{collections::{HashMap, HashSet}, error::Error, path::Path};
 
-use bevy::text::EditableText;
-
 use super::*;
 
 impl Dataset {
