@@ -7,7 +7,7 @@ use crate::bevy_to_fugue::{
     GraphIRResource, InferenceJob, InferenceResultResource, InferenceStatusResource, SamplePopup,
 };
 use crate::constants::*;
-use crate::data_vis::{CloseHistogramPanel, HistogramSelection, InferenceHistogramPanel};
+use crate::data_vis::{CloseHistogramPanel, InferenceHistogramPanel, SampleSelections};
 use crate::nodes::*;
 use crate::sidebar::{
     CloseContextMenus, ContextMenu, Datasets, LocalSidebar, ReloadSidebar,
@@ -430,7 +430,7 @@ fn clear_editable_graph(
     commands.remove_resource::<GraphIRResource>();
     commands.remove_resource::<InferenceResultResource>();
     commands.remove_resource::<InferenceStatusResource>();
-    commands.remove_resource::<HistogramSelection>();
+    commands.remove_resource::<SampleSelections>();
     commands.trigger(SetInferenceControlsEnabled(false));
     commands.trigger(SetPosteriorSampleEnabled(false));
     commands.trigger(CloseHistogramPanel);

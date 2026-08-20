@@ -17,8 +17,8 @@ use crate::ui::ErrorToast;
 use crate::constants::*;
 use crate::graph::*;
 use crate::data_vis::{
-    CloseHistogramPanel, HistogramSelection, HistogramView, OpenHistogramPanel,
-    DEFAULT_HISTOGRAM_BINS,
+    CloseHistogramPanel, DEFAULT_HISTOGRAM_BINS, HistogramView, JointDistributionView,
+    OpenHistogramPanel, OpenJointDistributionView, SampleSelections,
 };
 use bevy::text::EditableText;
 use rand::Rng;
@@ -51,7 +51,7 @@ pub fn compile(
     // Any compile attempt supersedes posterior results from the previous graph.
     commands.remove_resource::<InferenceResultResource>();
     commands.remove_resource::<InferenceStatusResource>();
-    commands.remove_resource::<HistogramSelection>();
+    commands.remove_resource::<SampleSelections>();
     commands.trigger(CloseHistogramPanel);
     commands.trigger(SetPosteriorSampleEnabled(false));
     let graph = compile_ir(
@@ -333,7 +333,7 @@ pub fn run_inference(
         "Running inference: seed={seed}, samples={n_samples}, warmup={n_warmup}"
     );
     commands.remove_resource::<InferenceResultResource>();
-    commands.remove_resource::<HistogramSelection>();
+    commands.remove_resource::<SampleSelections>();
     commands.insert_resource(InferenceStatusResource {
         state: InferenceResultState::Running,
         requested_samples: n_samples,
@@ -347,6 +347,7 @@ pub fn run_inference(
         let compiled = graph.compile()?;
         let cancel_control = Arc::clone(&worker_control);
         let warmup_control = Arc::clone(&worker_control);
+        let diagnostic_control = Arc::clone(&worker_control);
         let sample_control = Arc::clone(&worker_control);
 
         compiled.run_inference_controlled(
@@ -358,6 +359,14 @@ pub fn run_inference(
                 warmup_control
                     .warmup_completed
                     .store(completed, Ordering::Relaxed);
+            },
+            move |has_negative_infinity| {
+                diagnostic_control
+                    .warmup_negative_infinity
+                    .store(has_negative_infinity, Ordering::Relaxed);
+                diagnostic_control
+                    .warmup_diagnostic_ready
+                    .store(true, Ordering::Release);
             },
             move |draw_index, values| {
                 sample_control
@@ -404,7 +413,20 @@ fn reopen_selected_histogram(
     commands.trigger(OpenHistogramPanel {
         node_id: node.0,
         bin_count,
+        clear_toasts: false,
     });
+}
+
+fn reopen_joint_distribution(
+    commands: &mut Commands,
+    joint_view: Option<JointDistributionView>,
+) {
+    if let Some(joint) = joint_view {
+        commands.trigger(OpenJointDistributionView {
+            x_node_id: joint.x_node_id,
+            y_node_id: joint.y_node_id,
+        });
+    }
 }
 
 /// Drains live posterior draws and completes the background task without ever
@@ -415,11 +437,33 @@ pub fn poll_inference_job(
     mut live_results: Option<ResMut<InferenceResultResource>>,
     selected: Query<&GraphNode, With<Selected>>,
     view: Option<Single<&HistogramView>>,
+    joint_view: Option<Single<&JointDistributionView>>,
 ) {
     let Some(job) = job.as_mut() else {
         return;
     };
+    let joint_view = joint_view.as_ref().map(|joint| JointDistributionView {
+        x_node_id: joint.x_node_id,
+        y_node_id: joint.y_node_id,
+    });
     let discard = job.control.discard_result.load(Ordering::Relaxed);
+    if !discard
+        && job
+            .control
+            .warmup_diagnostic_ready
+            .load(Ordering::Acquire)
+        && job.control.warmup_negative_infinity.load(Ordering::Relaxed)
+        && !job
+            .control
+            .warmup_warning_emitted
+            .swap(true, Ordering::Relaxed)
+    {
+        commands.trigger(ErrorToast {
+            text: "Warning: warmup ended with at least one -infinity log probability. The posterior may be unreliable; check observed data and distribution parameters."
+                .to_string(),
+            color: Color::srgb(0.55, 0.30, 0.03),
+        });
+    }
     let pending = {
         let mut pending = job
             .control
@@ -444,8 +488,8 @@ pub fn poll_inference_job(
             append_live_draws(&mut results, pending);
             commands.insert_resource(InferenceResultResource(results));
         }
-        commands.remove_resource::<HistogramSelection>();
         reopen_selected_histogram(&mut commands, &selected, view.as_ref().map(|view| **view));
+        reopen_joint_distribution(&mut commands, joint_view);
     }
 
     let Some(outcome) = check_ready(&mut job.task) else {
@@ -457,7 +501,7 @@ pub fn poll_inference_job(
     if discard {
         commands.remove_resource::<InferenceResultResource>();
         commands.remove_resource::<InferenceStatusResource>();
-        commands.remove_resource::<HistogramSelection>();
+        commands.remove_resource::<SampleSelections>();
         commands.trigger(CloseHistogramPanel);
         commands.trigger(SetPosteriorSampleEnabled(false));
         return;
@@ -480,6 +524,7 @@ pub fn poll_inference_job(
             });
             commands.trigger(SetPosteriorSampleEnabled(true));
             reopen_selected_histogram(&mut commands, &selected, view.as_ref().map(|view| **view));
+            reopen_joint_distribution(&mut commands, joint_view);
             let message = if state == InferenceResultState::Cancelled {
                 format!(
                     "Inference cancelled after {completed_warmup} warmup steps. Keeping {retained} of {} requested posterior draws.",
@@ -498,7 +543,7 @@ pub fn poll_inference_job(
         Ok(outcome) => {
             commands.remove_resource::<InferenceResultResource>();
             commands.remove_resource::<InferenceStatusResource>();
-            commands.remove_resource::<HistogramSelection>();
+            commands.remove_resource::<SampleSelections>();
             commands.trigger(CloseHistogramPanel);
             commands.trigger(SetPosteriorSampleEnabled(false));
             let message = if outcome.cancelled {
@@ -529,6 +574,7 @@ pub fn poll_inference_job(
                     &selected,
                     view.as_ref().map(|view| **view),
                 );
+                reopen_joint_distribution(&mut commands, joint_view);
             }
             commands.trigger(ErrorToast {
                 text: format!("Inference error after {partial_count} retained draws: {error}"),

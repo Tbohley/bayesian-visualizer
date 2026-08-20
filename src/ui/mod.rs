@@ -1,5 +1,6 @@
 use bevy::{asset::RenderAssetUsages, mesh::{Indices, PrimitiveTopology}, prelude::*};
 use crate::graph::UnfinishedLink;
+use crate::data_vis::HistogramView;
 use crate::ERR_BORDER_COLOR;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage};
 
@@ -63,10 +64,13 @@ pub fn update_graph_cursor(
     input: Res<ButtonInput<KeyCode>>,
     window: Single<Entity, With<Window>>,
     unfinished_link: Query<Entity, With<UnfinishedLink>>,
+    histogram_views: Query<(), With<HistogramView>>,
 ) {
     let next_cursor = if !unfinished_link.is_empty() {
         GraphCursorState::FinishLink
-    } else if input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+    } else if histogram_views.is_empty()
+        && input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
+    {
         GraphCursorState::ShiftHeld
     } else {
         GraphCursorState::Default

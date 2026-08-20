@@ -35,6 +35,9 @@ pub struct InferenceControl {
     pub discard_result: AtomicBool,
     pub warmup_completed: AtomicUsize,
     pub samples_completed: AtomicUsize,
+    pub warmup_diagnostic_ready: AtomicBool,
+    pub warmup_negative_infinity: AtomicBool,
+    pub warmup_warning_emitted: AtomicBool,
     pub pending_draws: Mutex<Vec<ModelValues>>,
 }
 
@@ -45,6 +48,9 @@ impl InferenceControl {
             discard_result: AtomicBool::new(false),
             warmup_completed: AtomicUsize::new(0),
             samples_completed: AtomicUsize::new(0),
+            warmup_diagnostic_ready: AtomicBool::new(false),
+            warmup_negative_infinity: AtomicBool::new(false),
+            warmup_warning_emitted: AtomicBool::new(false),
             pending_draws: Mutex::new(Vec::new()),
         }
     }

@@ -2,10 +2,16 @@ use crate::bayesian_core::{NodeInstanceSamples, PosteriorSample};
 use crate::bevy_to_fugue::{
     GraphIRResource, InferenceResultResource, InferenceResultState, InferenceStatusResource,
 };
-use crate::constants::{text_font, ERR_COLOR, SAMPLE_COLOR, SIDEBAR_WIDTH};
-use crate::ui::{ClearToasts, ErrorToast};
+use crate::constants::{ERR_COLOR, SAMPLE_COLOR, SIDEBAR_WIDTH, text_font};
+use crate::nodes::{
+    ComputeNode, GraphNode, NodeLabel, RandomNode, ScalarNode, random_node_label,
+    random_selection_mesh,
+};
+use crate::sidebar::LocalSidebar;
+use crate::ui::{ClearToasts, ErrorToast, selection_indicator};
+use crate::{COMPUTE_NODE_RAD, SCALAR_NODE_RAD};
 use bevy::{
-    input_focus::{tab_navigation::TabIndex, InputFocus},
+    input_focus::{InputFocus, tab_navigation::TabIndex},
     prelude::*,
     text::{EditableText, TextCursorStyle},
 };
@@ -20,30 +26,110 @@ const SELECTED_SAMPLE_COLOR: Color = Color::srgb(0.35, 0.55, 0.95);
 pub struct OpenHistogramPanel {
     pub node_id: u32,
     pub bin_count: usize,
+    pub clear_toasts: bool,
 }
 
 #[derive(Event)]
 pub struct CloseHistogramPanel;
 
+#[derive(Event)]
+pub struct OpenJointDistributionView {
+    pub x_node_id: u32,
+    pub y_node_id: u32,
+}
+
 #[derive(Component)]
 pub struct InferenceHistogramPanel;
 
-/// The one active cross-histogram brush, retaining draws by source instance.
-#[derive(Resource, Clone, Debug)]
-pub struct HistogramSelection {
-    pub source_node_id: u32,
-    pub source_plate_ids: Vec<u32>,
-    pub source_instance_paths: Vec<Vec<usize>>,
-    pub lower: f64,
-    pub upper: f64,
+/// Viewport-independent posterior sample selections. Every brush or lasso
+/// appends an entry; selections are only removed through the clear button.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct SampleSelections {
+    pub entries: Vec<SampleSelection>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SampleSelection {
+    pub source: SelectionSource,
+    pub context_plate_ids: Vec<u32>,
+    pub context_instance_paths: Vec<Vec<usize>>,
     pub draws_by_instance: HashMap<Vec<usize>, HashSet<usize>>,
 }
 
-impl HistogramSelection {
+#[derive(Clone, Debug)]
+pub enum SelectionSource {
+    Histogram {
+        node_id: u32,
+        lower: f64,
+        upper: f64,
+    },
+    Joint {
+        x_node_id: u32,
+        y_node_id: u32,
+        polygon: Vec<Vec2>,
+    },
+}
+
+impl SampleSelections {
+    fn point_count(&self) -> usize {
+        self.entries.iter().map(SampleSelection::point_count).sum()
+    }
+}
+
+impl SampleSelection {
     fn point_count(&self) -> usize {
         self.draws_by_instance.values().map(HashSet::len).sum()
     }
 }
+
+impl SelectionSource {
+    fn histogram_range_for(&self, node_id: u32) -> Option<(f64, f64)> {
+        match self {
+            Self::Histogram {
+                node_id: source,
+                lower,
+                upper,
+            } if *source == node_id => Some((*lower, *upper)),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Component, Clone, Copy)]
+pub struct JointDistributionView {
+    pub x_node_id: u32,
+    pub y_node_id: u32,
+}
+
+#[derive(Component)]
+pub struct JointSelectedIndicator;
+
+#[derive(Component)]
+struct JointPlot {
+    x_node_id: u32,
+    y_node_id: u32,
+    x_domain: HistogramDomain,
+    y_domain: HistogramDomain,
+    points: Vec<JointSample>,
+    context_plate_ids: Vec<u32>,
+    context_instance_paths: Vec<Vec<usize>>,
+}
+
+#[derive(Clone, Debug)]
+struct JointSample {
+    context_instance: usize,
+    draw_index: usize,
+    x: f64,
+    y: f64,
+}
+
+#[derive(Component)]
+struct JointLasso {
+    points: Vec<Vec2>,
+}
+
+#[derive(Component)]
+struct JointLassoMark;
 
 /// The currently open posterior histogram and its rendering parameters.
 #[derive(Component)]
@@ -89,6 +175,9 @@ pub struct HistogramTooltip;
 
 #[derive(Component)]
 pub struct HistogramBrushOverlay;
+
+#[derive(Component)]
+struct ActiveHistogramBrushOverlay;
 
 #[derive(Component)]
 struct HistogramBrushStart {
@@ -295,27 +384,50 @@ fn displayed_instance_samples(
     }
 }
 
+#[cfg(test)]
 fn linked_samples(
     instances: &[NodeInstanceSamples],
-    selection: &HistogramSelection,
+    selection: &SampleSelection,
     target_plate_ids: &[u32],
 ) -> Vec<WeightedSample> {
-    let shared_depth = selection
-        .source_plate_ids
+    let weights = selection_weights(
+        instances,
+        &selection.context_plate_ids,
+        &selection.context_instance_paths,
+        &selection.draws_by_instance,
+        target_plate_ids,
+    );
+    instances
         .iter()
-        .zip(target_plate_ids)
-        .take_while(|(source, target)| source == target)
-        .count();
+        .flat_map(|instance| {
+            instance.samples.iter().filter_map(|sample| {
+                Some(WeightedSample {
+                    value: sample.value,
+                    weight: *weights.get(&(instance.indices.clone(), sample.draw_index))?,
+                })
+            })
+        })
+        .collect()
+}
+
+fn selection_weights(
+    instances: &[NodeInstanceSamples],
+    context_plate_ids: &[u32],
+    context_instance_paths: &[Vec<usize>],
+    draws_by_instance: &HashMap<Vec<usize>, HashSet<usize>>,
+    target_plate_ids: &[u32],
+) -> HashMap<(Vec<usize>, usize), f64> {
+    let shared = shared_plate_positions(context_plate_ids, target_plate_ids);
     let mut instances_by_prefix = HashMap::<Vec<usize>, usize>::new();
-    for indices in &selection.source_instance_paths {
+    for indices in context_instance_paths {
         *instances_by_prefix
-            .entry(indices[..shared_depth].to_vec())
+            .entry(project_context_path(indices, &shared, true))
             .or_default() += 1;
     }
 
     let mut weights_by_prefix = HashMap::<Vec<usize>, HashMap<usize, f64>>::new();
-    for (indices, draws) in &selection.draws_by_instance {
-        let prefix = indices[..shared_depth].to_vec();
+    for (indices, draws) in draws_by_instance {
+        let prefix = project_context_path(indices, &shared, true);
         let weight = 1.0 / instances_by_prefix[&prefix] as f64;
         let weights = weights_by_prefix.entry(prefix).or_default();
         for draw in draws {
@@ -323,17 +435,97 @@ fn linked_samples(
         }
     }
 
+    let mut result = HashMap::new();
+    for instance in instances {
+        let key = project_context_path(&instance.indices, &shared, false);
+        let Some(weights) = weights_by_prefix.get(&key) else {
+            continue;
+        };
+        for sample in &instance.samples {
+            if let Some(weight) = weights.get(&sample.draw_index) {
+                result.insert((instance.indices.clone(), sample.draw_index), *weight);
+            }
+        }
+    }
+    result
+}
+
+fn linked_samples_for_selections(
+    instances: &[NodeInstanceSamples],
+    selections: &SampleSelections,
+    target_plate_ids: &[u32],
+) -> Vec<WeightedSample> {
+    type SelectionGroup = (Vec<u32>, Vec<Vec<usize>>);
+    let mut groups = HashMap::<SelectionGroup, HashMap<Vec<usize>, HashSet<usize>>>::new();
+    for selection in &selections.entries {
+        let draws = groups
+            .entry((
+                selection.context_plate_ids.clone(),
+                selection.context_instance_paths.clone(),
+            ))
+            .or_default();
+        for (path, selected_draws) in &selection.draws_by_instance {
+            draws
+                .entry(path.clone())
+                .or_default()
+                .extend(selected_draws);
+        }
+    }
+
+    let mut weights = HashMap::<(Vec<usize>, usize), f64>::new();
+    for ((plate_ids, instance_paths), draws) in groups {
+        for (key, weight) in selection_weights(
+            instances,
+            &plate_ids,
+            &instance_paths,
+            &draws,
+            target_plate_ids,
+        ) {
+            weights
+                .entry(key)
+                .and_modify(|current| *current = current.max(weight))
+                .or_insert(weight);
+        }
+    }
     instances
         .iter()
         .flat_map(|instance| {
-            let weights = weights_by_prefix.get(&instance.indices[..shared_depth]);
-            instance.samples.iter().filter_map(move |sample| {
-                let weight = weights?.get(&sample.draw_index)?;
+            instance.samples.iter().filter_map(|sample| {
                 Some(WeightedSample {
                     value: sample.value,
-                    weight: *weight,
+                    weight: *weights.get(&(instance.indices.clone(), sample.draw_index))?,
                 })
             })
+        })
+        .collect()
+}
+
+fn shared_plate_positions(source: &[u32], target: &[u32]) -> Vec<(usize, usize)> {
+    source
+        .iter()
+        .enumerate()
+        .filter_map(|(source_index, plate)| {
+            target
+                .iter()
+                .position(|target| target == plate)
+                .map(|target_index| (source_index, target_index))
+        })
+        .collect()
+}
+
+fn project_context_path(
+    path: &[usize],
+    shared: &[(usize, usize)],
+    use_source_positions: bool,
+) -> Vec<usize> {
+    shared
+        .iter()
+        .map(|(source, target)| {
+            path[if use_source_positions {
+                *source
+            } else {
+                *target
+            }]
         })
         .collect()
 }
@@ -371,16 +563,119 @@ fn selected_instances(
     selected
 }
 
+fn build_joint_samples(
+    x_instances: &[NodeInstanceSamples],
+    x_plate_ids: &[u32],
+    y_instances: &[NodeInstanceSamples],
+    y_plate_ids: &[u32],
+) -> (Vec<JointSample>, Vec<u32>, Vec<Vec<usize>>) {
+    let shared = shared_plate_positions(x_plate_ids, y_plate_ids);
+    let mut context_plate_ids = x_plate_ids.to_vec();
+    context_plate_ids.extend(
+        y_plate_ids
+            .iter()
+            .filter(|plate| !x_plate_ids.contains(plate))
+            .copied(),
+    );
+    let mut context_paths = Vec::<Vec<usize>>::new();
+    let mut context_lookup = HashMap::<Vec<usize>, usize>::new();
+    let mut points = Vec::new();
+
+    for x_instance in x_instances {
+        for y_instance in y_instances {
+            if shared
+                .iter()
+                .any(|(x, y)| x_instance.indices[*x] != y_instance.indices[*y])
+            {
+                continue;
+            }
+            let mut context = x_instance.indices.clone();
+            context.extend(
+                y_plate_ids
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, plate)| !x_plate_ids.contains(plate))
+                    .map(|(index, _)| y_instance.indices[index]),
+            );
+            let context_instance = *context_lookup.entry(context.clone()).or_insert_with(|| {
+                context_paths.push(context);
+                context_paths.len() - 1
+            });
+            let y_by_draw = y_instance
+                .samples
+                .iter()
+                .map(|sample| (sample.draw_index, sample.value))
+                .collect::<HashMap<_, _>>();
+            points.extend(x_instance.samples.iter().filter_map(|x| {
+                Some(JointSample {
+                    context_instance,
+                    draw_index: x.draw_index,
+                    x: x.value,
+                    y: *y_by_draw.get(&x.draw_index)?,
+                })
+            }));
+        }
+    }
+    (points, context_plate_ids, context_paths)
+}
+
+fn point_in_polygon(point: Vec2, polygon: &[Vec2]) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut previous = polygon.len() - 1;
+    for current in 0..polygon.len() {
+        let a = polygon[current];
+        let b = polygon[previous];
+        if ((a.y > point.y) != (b.y > point.y))
+            && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x
+        {
+            inside = !inside;
+        }
+        previous = current;
+    }
+    inside
+}
+
+fn sample_is_selected(
+    context_plate_ids: &[u32],
+    context_path: &[usize],
+    draw_index: usize,
+    selections: Option<&SampleSelections>,
+) -> bool {
+    selections.is_some_and(|selections| {
+        selections.entries.iter().any(|selection| {
+            let shared = shared_plate_positions(&selection.context_plate_ids, context_plate_ids);
+            let target_key = project_context_path(context_path, &shared, false);
+            selection.draws_by_instance.iter().any(|(path, draws)| {
+                draws.contains(&draw_index)
+                    && project_context_path(path, &shared, true) == target_key
+            })
+        })
+    })
+}
+
 pub fn open_histogram_panel(
     event: On<OpenHistogramPanel>,
     mut commands: Commands,
     inference_results: Option<Res<InferenceResultResource>>,
     graph: Option<Res<GraphIRResource>>,
     inference_status: Option<Res<InferenceStatusResource>>,
-    selection: Option<Res<HistogramSelection>>,
+    selections: Option<Res<SampleSelections>>,
     old_panels: Query<Entity, With<InferenceHistogramPanel>>,
+    graph_nodes: Query<(
+        Entity,
+        &GraphNode,
+        Option<&RandomNode>,
+        Option<&ScalarNode>,
+        Option<&ComputeNode>,
+    )>,
+    node_labels: Query<(&ChildOf, &Text2d), With<NodeLabel>>,
 ) {
-    commands.trigger(ClearToasts);
+    if event.clear_toasts {
+        commands.trigger(ClearToasts);
+    }
     despawn_histogram_panels(&mut commands, &old_panels);
 
     let Some(results) = inference_results else {
@@ -414,17 +709,15 @@ pub fn open_histogram_panel(
             return;
         }
     };
+    let node_label = graph_node_label(event.node_id, &graph_nodes, &node_labels);
 
-    let is_selection_source = selection
-        .as_ref()
-        .is_some_and(|selection| selection.source_node_id == event.node_id);
     let (full_samples, scope) = displayed_instance_samples(&instances);
     let (plot_samples, instance_paths) = histogram_samples(&instances);
     let full_weighted_samples = unweighted_samples(&full_samples.samples);
-    let highlighted_samples = selection
+    let highlighted_samples = selections
         .as_ref()
-        .filter(|_| !is_selection_source)
-        .map(|selection| linked_samples(&instances, selection, &plate_ids));
+        .filter(|selections| !selections.entries.is_empty())
+        .map(|selections| linked_samples_for_selections(&instances, selections, &plate_ids));
     let stats_samples = highlighted_samples
         .as_deref()
         .unwrap_or(&full_weighted_samples);
@@ -454,18 +747,18 @@ pub fn open_histogram_panel(
     };
     let heading = match inference_status.as_deref() {
         Some(status) if status.state == InferenceResultState::Running => format!(
-            "Live posterior samples — {} / {} draws",
-            results.0.n_samples, status.requested_samples
+            "Live posterior samples - {node_label} - {} / {} draws",
+            results.0.n_samples, status.requested_samples,
         ),
         Some(status) if status.state == InferenceResultState::Cancelled => format!(
-            "Partial posterior — cancelled at {} / {} draws",
-            results.0.n_samples, status.requested_samples
+            "Partial posterior - {node_label} - cancelled at {} / {} draws",
+            results.0.n_samples, status.requested_samples,
         ),
         Some(status) if status.state == InferenceResultState::Failed => format!(
-            "Partial posterior — failed at {} / {} draws",
-            results.0.n_samples, status.requested_samples
+            "Partial posterior - {node_label} - failed at {} / {} draws",
+            results.0.n_samples, status.requested_samples,
         ),
-        _ => "Posterior samples".to_string(),
+        _ => format!("Posterior samples - {node_label}"),
     };
 
     let panel = commands
@@ -496,13 +789,7 @@ pub fn open_histogram_panel(
         })
         .id();
 
-    let stats = spawn_stats(
-        &mut commands,
-        event.node_id,
-        stats_samples,
-        &scope,
-        bin_count,
-    );
+    let stats = spawn_stats(&mut commands, &node_label, stats_samples, &scope, bin_count);
     let chart = spawn_chart(
         &mut commands,
         &histogram,
@@ -511,7 +798,7 @@ pub fn open_histogram_panel(
         &instance_paths,
         &plate_ids,
         event.node_id,
-        selection.as_deref(),
+        selections.as_deref(),
         &heading,
     );
     commands.entity(panel).add_children(&[stats, chart]);
@@ -521,8 +808,437 @@ pub fn close_histogram_panel(
     _event: On<CloseHistogramPanel>,
     mut commands: Commands,
     panels: Query<Entity, With<InferenceHistogramPanel>>,
+    joint_views: Query<Entity, With<JointDistributionView>>,
+    joint_indicators: Query<Entity, With<JointSelectedIndicator>>,
 ) {
     despawn_histogram_panels(&mut commands, &panels);
+    for view in &joint_views {
+        commands.entity(view).despawn();
+    }
+    for indicator in &joint_indicators {
+        commands.entity(indicator).despawn();
+    }
+}
+
+fn graph_node_label(
+    node_id: u32,
+    graph_nodes: &Query<(
+        Entity,
+        &GraphNode,
+        Option<&RandomNode>,
+        Option<&ScalarNode>,
+        Option<&ComputeNode>,
+    )>,
+    labels: &Query<(&ChildOf, &Text2d), With<NodeLabel>>,
+) -> String {
+    let Some(entity) = graph_nodes
+        .iter()
+        .find_map(|(entity, node, _, _, _)| (node.0 == node_id).then_some(entity))
+    else {
+        return format!("node#{node_id}");
+    };
+    labels
+        .iter()
+        .find_map(|(child_of, label)| (child_of.parent() == entity).then(|| label.0.clone()))
+        .unwrap_or_else(|| format!("node#{node_id}"))
+}
+
+pub fn open_joint_distribution_view(
+    event: On<OpenJointDistributionView>,
+    mut commands: Commands,
+    results: Option<Res<InferenceResultResource>>,
+    graph: Option<Res<GraphIRResource>>,
+    selections: Option<Res<SampleSelections>>,
+    old_sidebars: Query<Entity, With<LocalSidebar>>,
+    old_joint_indicators: Query<Entity, With<JointSelectedIndicator>>,
+    graph_nodes: Query<(
+        Entity,
+        &GraphNode,
+        Option<&RandomNode>,
+        Option<&ScalarNode>,
+        Option<&ComputeNode>,
+    )>,
+    node_labels: Query<(&ChildOf, &Text2d), With<NodeLabel>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let (Some(results), Some(graph)) = (results, graph) else {
+        return;
+    };
+    let Some(x_plate_ids) = graph
+        .0
+        .node_plate_path(event.x_node_id)
+        .map(<[u32]>::to_vec)
+    else {
+        return;
+    };
+    let Some(y_plate_ids) = graph
+        .0
+        .node_plate_path(event.y_node_id)
+        .map(<[u32]>::to_vec)
+    else {
+        return;
+    };
+    let Ok(x_instances) = results.0.samples_for_node(event.x_node_id) else {
+        return;
+    };
+    let Ok(y_instances) = results.0.samples_for_node(event.y_node_id) else {
+        return;
+    };
+    let (points, context_plate_ids, context_instance_paths) =
+        build_joint_samples(&x_instances, &x_plate_ids, &y_instances, &y_plate_ids);
+    if points.is_empty() {
+        commands.trigger(ErrorToast {
+            text: "These variables have no posterior draws in common.".to_string(),
+            color: ERR_COLOR,
+        });
+        return;
+    }
+    let x_values = points
+        .iter()
+        .enumerate()
+        .map(|(draw_index, point)| PosteriorSample {
+            draw_index,
+            value: point.x,
+        })
+        .collect::<Vec<_>>();
+    let y_values = points
+        .iter()
+        .enumerate()
+        .map(|(draw_index, point)| PosteriorSample {
+            draw_index,
+            value: point.y,
+        })
+        .collect::<Vec<_>>();
+    let bins = 14;
+    let x_histogram = match build_histogram(&x_values, bins) {
+        Ok(histogram) => histogram,
+        Err(_) => return,
+    };
+    let y_histogram = match build_histogram(&y_values, bins) {
+        Ok(histogram) => histogram,
+        Err(_) => return,
+    };
+    let x_label_text = graph_node_label(event.x_node_id, &graph_nodes, &node_labels);
+    let y_label_text = graph_node_label(event.y_node_id, &graph_nodes, &node_labels);
+
+    for sidebar in &old_sidebars {
+        commands.entity(sidebar).despawn();
+    }
+    for indicator in &old_joint_indicators {
+        commands.entity(indicator).despawn();
+    }
+    if let Some((entity, _, random, scalar, _)) = graph_nodes
+        .iter()
+        .find(|(_, node, _, _, _)| node.0 == event.y_node_id)
+    {
+        let mesh = if let Some(random) = random {
+            random_selection_mesh(&random_node_label(random, event.y_node_id))
+        } else if scalar.is_some() {
+            selection_indicator(SCALAR_NODE_RAD)
+        } else {
+            selection_indicator(COMPUTE_NODE_RAD)
+        };
+        commands.entity(entity).with_child((
+            JointSelectedIndicator,
+            Pickable::IGNORE,
+            Mesh2d(meshes.add(mesh)),
+            MeshMaterial2d(materials.add(SELECTED_SAMPLE_COLOR)),
+            Transform::from_xyz(0.0, 0.0, 1.1),
+        ));
+    }
+    let sidebar = commands
+        .spawn((
+            LocalSidebar,
+            JointDistributionView {
+                x_node_id: event.x_node_id,
+                y_node_id: event.y_node_id,
+            },
+            Node {
+                position_type: PositionType::Absolute,
+                right: px(0.0),
+                top: px(0.0),
+                width: px(SIDEBAR_WIDTH),
+                height: percent(100.0),
+                flex_direction: FlexDirection::Column,
+                padding: px(12.0).all(),
+                row_gap: px(7.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.12, 0.13, 0.16)),
+            ZIndex(90),
+        ))
+        .observe(|mut event: On<Pointer<Press>>| event.propagate(false))
+        .id();
+    let heading = commands
+        .spawn((
+            Pickable::IGNORE,
+            Text::new(format!("Joint posterior: {x_label_text} & {y_label_text}")),
+            TextColor(Color::WHITE),
+            TextFont {
+                font_size: FontSize::Px(16.0),
+                ..text_font()
+            },
+        ))
+        .id();
+    let hint = commands
+        .spawn((
+            Pickable::IGNORE,
+            Text::new("Drag a closed shape over the heatmap to add a sample selection."),
+            TextColor(Color::srgb(0.72, 0.74, 0.80)),
+            TextFont {
+                font_size: FontSize::Px(11.0),
+                ..text_font()
+            },
+        ))
+        .id();
+    let x_label = commands
+        .spawn((
+            Pickable::IGNORE,
+            Text::new(format!("{x_label_text} (x)")),
+            TextColor(Color::WHITE),
+            TextFont {
+                font_size: FontSize::Px(12.0),
+                ..text_font()
+            },
+        ))
+        .id();
+    let top_hist = spawn_marginal_histogram(&mut commands, &x_histogram, false);
+    let body = commands
+        .spawn(Node {
+            width: percent(100.0),
+            height: px(222.0),
+            flex_direction: FlexDirection::Row,
+            column_gap: px(5.0),
+            ..default()
+        })
+        .id();
+    let heatmap = spawn_joint_heatmap(
+        &mut commands,
+        event.x_node_id,
+        event.y_node_id,
+        &points,
+        &context_plate_ids,
+        &context_instance_paths,
+        x_histogram.domain,
+        y_histogram.domain,
+        bins,
+        selections.as_deref(),
+    );
+    let right = commands
+        .spawn(Node {
+            width: px(43.0),
+            height: percent(100.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: px(3.0),
+            ..default()
+        })
+        .id();
+    let right_hist = spawn_marginal_histogram(&mut commands, &y_histogram, true);
+    let y_label = commands
+        .spawn((
+            Pickable::IGNORE,
+            Text::new(format!("{y_label_text}\n(y)")),
+            TextColor(Color::WHITE),
+            TextFont {
+                font_size: FontSize::Px(11.0),
+                ..text_font()
+            },
+        ))
+        .id();
+    commands.entity(right).add_children(&[right_hist, y_label]);
+    commands.entity(body).add_children(&[heatmap, right]);
+    commands
+        .entity(sidebar)
+        .add_children(&[heading, hint, x_label, top_hist, body]);
+}
+
+fn spawn_marginal_histogram(
+    commands: &mut Commands,
+    histogram: &Histogram,
+    horizontal: bool,
+) -> Entity {
+    let root = commands
+        .spawn(Node {
+            width: if horizontal {
+                percent(100.0)
+            } else {
+                px(222.0)
+            },
+            height: if horizontal { px(190.0) } else { px(55.0) },
+            flex_direction: if horizontal {
+                FlexDirection::ColumnReverse
+            } else {
+                FlexDirection::Row
+            },
+            align_items: if horizontal {
+                AlignItems::Stretch
+            } else {
+                AlignItems::End
+            },
+            ..default()
+        })
+        .id();
+    for bin in &histogram.bins {
+        let fraction = if histogram.max_count == 0.0 {
+            0.0
+        } else {
+            (bin.count / histogram.max_count) as f32 * 100.0
+        };
+        let slot = commands
+            .spawn(Node {
+                width: if horizontal { percent(100.0) } else { auto() },
+                height: if horizontal { auto() } else { percent(100.0) },
+                flex_grow: 1.0,
+                flex_basis: px(0.0),
+                min_width: px(0.0),
+                min_height: px(0.0),
+                align_items: if horizontal {
+                    AlignItems::Center
+                } else {
+                    AlignItems::End
+                },
+                ..default()
+            })
+            .id();
+        let bar = commands
+            .spawn((
+                Pickable::IGNORE,
+                Node {
+                    width: if horizontal {
+                        percent(fraction)
+                    } else {
+                        percent(100.0)
+                    },
+                    height: if horizontal {
+                        percent(100.0)
+                    } else {
+                        percent(fraction)
+                    },
+                    min_width: if horizontal && bin.count > 0.0 {
+                        px(1.0)
+                    } else {
+                        px(0.0)
+                    },
+                    min_height: if !horizontal && bin.count > 0.0 {
+                        px(1.0)
+                    } else {
+                        px(0.0)
+                    },
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.36, 0.55, 0.88)),
+            ))
+            .id();
+        commands.entity(slot).add_child(bar);
+        commands.entity(root).add_child(slot);
+    }
+    root
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_joint_heatmap(
+    commands: &mut Commands,
+    x_node_id: u32,
+    y_node_id: u32,
+    points: &[JointSample],
+    context_plate_ids: &[u32],
+    context_instance_paths: &[Vec<usize>],
+    x_domain: HistogramDomain,
+    y_domain: HistogramDomain,
+    bins: usize,
+    selections: Option<&SampleSelections>,
+) -> Entity {
+    let mut counts = vec![0usize; bins * bins];
+    let mut selected_counts = vec![0usize; bins * bins];
+    for point in points {
+        let x = (x_domain.fraction_for_value(point.x) * bins as f32).floor() as usize;
+        let y = (y_domain.fraction_for_value(point.y) * bins as f32).floor() as usize;
+        let index = y.min(bins - 1) * bins + x.min(bins - 1);
+        counts[index] += 1;
+        if sample_is_selected(
+            context_plate_ids,
+            &context_instance_paths[point.context_instance],
+            point.draw_index,
+            selections,
+        ) {
+            selected_counts[index] += 1;
+        }
+    }
+    let max_count = counts.iter().copied().max().unwrap_or(1).max(1) as f32;
+    let plot = commands
+        .spawn((
+            JointPlot {
+                x_node_id,
+                y_node_id,
+                x_domain,
+                y_domain,
+                points: points.to_vec(),
+                context_plate_ids: context_plate_ids.to_vec(),
+                context_instance_paths: context_instance_paths.to_vec(),
+            },
+            Node {
+                width: px(222.0),
+                height: px(222.0),
+                flex_wrap: FlexWrap::Wrap,
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.90, 0.91, 0.93)),
+        ))
+        .observe(begin_joint_lasso)
+        .observe(update_joint_lasso)
+        .observe(finish_joint_lasso)
+        .id();
+    for screen_y in 0..bins {
+        let data_y = bins - 1 - screen_y;
+        for x in 0..bins {
+            let index = data_y * bins + x;
+            let density = counts[index] as f32 / max_count;
+            let color = if selected_counts[index] > 0 {
+                Color::srgb(0.25, 0.55, 1.0)
+            } else {
+                Color::srgb(
+                    0.90 - density * 0.82,
+                    0.91 - density * 0.78,
+                    0.93 - density * 0.60,
+                )
+            };
+            let cell = commands
+                .spawn((
+                    Pickable::IGNORE,
+                    Node {
+                        width: percent(100.0 / bins as f32),
+                        height: percent(100.0 / bins as f32),
+                        border: px(0.35).all(),
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgba(0.2, 0.22, 0.28, 0.35)),
+                    BackgroundColor(color),
+                ))
+                .id();
+            commands.entity(plot).add_child(cell);
+        }
+    }
+    if let Some(selections) = selections {
+        for polygon in selections
+            .entries
+            .iter()
+            .filter_map(|selection| match &selection.source {
+                SelectionSource::Joint {
+                    x_node_id: x,
+                    y_node_id: y,
+                    polygon,
+                } if *x == x_node_id && *y == y_node_id => Some(polygon),
+                _ => None,
+            })
+        {
+            for point in polygon {
+                spawn_lasso_mark(commands, plot, *point);
+            }
+        }
+    }
+    plot
 }
 
 fn despawn_histogram_panels(
@@ -536,7 +1252,7 @@ fn despawn_histogram_panels(
 
 fn spawn_stats(
     commands: &mut Commands,
-    node_id: u32,
+    node_label: &str,
     samples: &[WeightedSample],
     scope: &HistogramScope,
     bin_count: usize,
@@ -552,9 +1268,9 @@ fn spawn_stats(
         .id();
 
     let instance_note = match scope {
-        HistogramScope::Instance(indices) => format_instance_label(node_id, indices),
+        HistogramScope::Instance(indices) => format_instance_label(node_label, indices),
         HistogramScope::Pooled { instance_count } => {
-            format!("node#{node_id} ({instance_count} pooled instances)")
+            format!("{node_label} ({instance_count} pooled instances)")
         }
     };
     let lines = [
@@ -738,16 +1454,23 @@ pub fn deselect_histogram_selection(
     mut event: On<Pointer<Click>>,
     mut commands: Commands,
     view: Option<Single<&HistogramView>>,
+    joint_view: Option<Single<&JointDistributionView>>,
 ) {
     event.propagate(false);
-    commands.remove_resource::<HistogramSelection>();
+    commands.remove_resource::<SampleSelections>();
     if let Some(view) = view {
         reopen_histogram(&mut commands, &view, view.bin_count);
+    }
+    if let Some(joint) = joint_view {
+        commands.trigger(OpenJointDistributionView {
+            x_node_id: joint.x_node_id,
+            y_node_id: joint.y_node_id,
+        });
     }
 }
 
 pub fn update_histogram_selection_controls(
-    selection: Option<Res<HistogramSelection>>,
+    selections: Option<Res<SampleSelections>>,
     view: Option<Single<&HistogramView>>,
     mut controls: Query<&mut Node, With<HistogramSelectionControls>>,
     mut statuses: Query<&mut Text, With<HistogramSelectionStatus>>,
@@ -755,20 +1478,27 @@ pub fn update_histogram_selection_controls(
     let Ok(mut controls) = controls.single_mut() else {
         return;
     };
-    let Some(selection) = selection else {
+    let Some(selections) = selections.filter(|selections| !selections.entries.is_empty()) else {
         controls.display = Display::None;
         return;
     };
     controls.display = Display::Flex;
 
     let (count, suffix) = match view {
-        Some(view) if view.node_id != selection.source_node_id => {
-            (view.displayed_sample_count, "displayed")
-        }
-        _ => (selection.point_count() as f64, "selected"),
+        Some(view) => (view.displayed_sample_count, "displayed"),
+        None => (selections.point_count() as f64, "selected"),
     };
     if let Ok(mut status) = statuses.single_mut() {
-        status.0 = format!("{} samples {suffix}", format_count(count));
+        status.0 = format!(
+            "{} samples {suffix} in {} selection{}",
+            format_count(count),
+            selections.entries.len(),
+            if selections.entries.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        );
     }
 }
 
@@ -802,6 +1532,7 @@ fn reopen_histogram(commands: &mut Commands, view: &HistogramView, bin_count: us
     commands.trigger(OpenHistogramPanel {
         node_id: view.node_id,
         bin_count,
+        clear_toasts: true,
     });
 }
 
@@ -847,7 +1578,7 @@ fn spawn_chart(
     instance_paths: &[Vec<usize>],
     plate_ids: &[u32],
     node_id: u32,
-    selection: Option<&HistogramSelection>,
+    selections: Option<&SampleSelections>,
     heading_text: &str,
 ) -> Entity {
     let chart = commands
@@ -895,9 +1626,10 @@ fn spawn_chart(
         ))
         .id();
 
-    let overlay = commands
+    let active_overlay = commands
         .spawn((
             HistogramBrushOverlay,
+            ActiveHistogramBrushOverlay,
             Pickable::IGNORE,
             Node {
                 display: Display::None,
@@ -910,15 +1642,6 @@ fn spawn_chart(
             ZIndex(3),
         ))
         .id();
-
-    if let Some(selection) = selection.filter(|selection| selection.source_node_id == node_id) {
-        set_brush_overlay(
-            commands,
-            overlay,
-            histogram.domain.fraction_for_value(selection.lower),
-            histogram.domain.fraction_for_value(selection.upper),
-        );
-    }
 
     let plot = commands
         .spawn((
@@ -947,12 +1670,36 @@ fn spawn_chart(
         .observe(update_histogram_tooltip)
         .observe(hide_histogram_tooltip)
         .observe(begin_histogram_brush)
-        .observe(deselect_outside_histogram_brush)
         .observe(update_histogram_brush)
         .observe(finish_histogram_brush)
         .id();
 
-    commands.entity(plot).add_children(&[overlay, tooltip]);
+    commands
+        .entity(plot)
+        .add_children(&[active_overlay, tooltip]);
+    if let Some(selections) = selections {
+        for (lower, upper) in selections
+            .entries
+            .iter()
+            .filter_map(|selection| selection.source.histogram_range_for(node_id))
+        {
+            let overlay = commands
+                .spawn((
+                    HistogramBrushOverlay,
+                    Pickable::IGNORE,
+                    BackgroundColor(Color::srgba(0.55, 0.75, 1.0, 0.22)),
+                    ZIndex(3),
+                ))
+                .id();
+            set_brush_overlay(
+                commands,
+                overlay,
+                histogram.domain.fraction_for_value(lower),
+                histogram.domain.fraction_for_value(upper),
+            );
+            commands.entity(plot).add_child(overlay);
+        }
+    }
 
     let max_count_label = commands
         .spawn((
@@ -1115,6 +1862,161 @@ fn set_brush_overlay(commands: &mut Commands, overlay: Entity, a: f32, b: f32) {
     });
 }
 
+fn begin_joint_lasso(
+    mut event: On<Pointer<Press>>,
+    ui_scale: Res<UiScale>,
+    mut commands: Commands,
+    plots: Query<
+        (
+            &ComputedNode,
+            &ComputedUiRenderTargetInfo,
+            &UiGlobalTransform,
+        ),
+        With<JointPlot>,
+    >,
+    marks: Query<Entity, With<JointLassoMark>>,
+) {
+    event.propagate(false);
+    if event.button != PointerButton::Primary {
+        return;
+    }
+    let Ok((computed, target, transform)) = plots.get(event.entity) else {
+        return;
+    };
+    let Some(point) = plot_pointer_fractions(
+        event.pointer_location.position,
+        computed,
+        target,
+        transform,
+        &ui_scale,
+    ) else {
+        return;
+    };
+    for mark in &marks {
+        commands.entity(mark).despawn();
+    }
+    commands.entity(event.entity).insert(JointLasso {
+        points: vec![point],
+    });
+    spawn_lasso_mark(&mut commands, event.entity, point);
+}
+
+fn update_joint_lasso(
+    mut event: On<Pointer<Drag>>,
+    ui_scale: Res<UiScale>,
+    mut commands: Commands,
+    mut plots: Query<
+        (
+            &mut JointLasso,
+            &ComputedNode,
+            &ComputedUiRenderTargetInfo,
+            &UiGlobalTransform,
+        ),
+        With<JointPlot>,
+    >,
+) {
+    event.propagate(false);
+    let Ok((mut lasso, computed, target, transform)) = plots.get_mut(event.entity) else {
+        return;
+    };
+    let Some(point) = plot_pointer_fractions(
+        event.pointer_location.position,
+        computed,
+        target,
+        transform,
+        &ui_scale,
+    ) else {
+        return;
+    };
+    if lasso
+        .points
+        .last()
+        .is_some_and(|last| last.distance(point) < 0.012)
+    {
+        return;
+    }
+    lasso.points.push(point);
+    spawn_lasso_mark(&mut commands, event.entity, point);
+}
+
+fn spawn_lasso_mark(commands: &mut Commands, plot: Entity, point: Vec2) {
+    let mark = commands
+        .spawn((
+            JointLassoMark,
+            Pickable::IGNORE,
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(point.x * 100.0),
+                top: percent(point.y * 100.0),
+                width: px(4.0),
+                height: px(4.0),
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BackgroundColor(Color::WHITE),
+            ZIndex(5),
+        ))
+        .id();
+    commands.entity(plot).add_child(mark);
+}
+
+fn finish_joint_lasso(
+    mut event: On<Pointer<DragEnd>>,
+    mut commands: Commands,
+    mut selections: Option<ResMut<SampleSelections>>,
+    plots: Query<(&JointPlot, &JointLasso)>,
+    histogram_view: Option<Single<&HistogramView>>,
+) {
+    event.propagate(false);
+    let Ok((plot, lasso)) = plots.get(event.entity) else {
+        return;
+    };
+    commands.entity(event.entity).remove::<JointLasso>();
+    if lasso.points.len() < 3 {
+        return;
+    }
+    let mut draws_by_instance = HashMap::<Vec<usize>, HashSet<usize>>::new();
+    for point in &plot.points {
+        let normalized = Vec2::new(
+            plot.x_domain.fraction_for_value(point.x),
+            1.0 - plot.y_domain.fraction_for_value(point.y),
+        );
+        if point_in_polygon(normalized, &lasso.points) {
+            draws_by_instance
+                .entry(plot.context_instance_paths[point.context_instance].clone())
+                .or_default()
+                .insert(point.draw_index);
+        }
+    }
+    if draws_by_instance.is_empty() {
+        return;
+    }
+    let selection = SampleSelection {
+        source: SelectionSource::Joint {
+            x_node_id: plot.x_node_id,
+            y_node_id: plot.y_node_id,
+            polygon: lasso.points.clone(),
+        },
+        context_plate_ids: plot.context_plate_ids.clone(),
+        context_instance_paths: plot.context_instance_paths.clone(),
+        draws_by_instance,
+    };
+    if let Some(selections) = selections.as_mut() {
+        selections.entries.push(selection);
+    } else {
+        commands.insert_resource(SampleSelections {
+            entries: vec![selection],
+        });
+    }
+    if let Some(view) = histogram_view {
+        reopen_histogram(&mut commands, &view, view.bin_count);
+    }
+    commands.trigger(OpenJointDistributionView {
+        x_node_id: plot.x_node_id,
+        y_node_id: plot.y_node_id,
+    });
+}
+
 fn update_histogram_tooltip(
     event: On<Pointer<Move>>,
     ui_scale: Res<UiScale>,
@@ -1221,52 +2123,6 @@ fn begin_histogram_brush(
     });
 }
 
-fn deselect_outside_histogram_brush(
-    mut event: On<Pointer<Click>>,
-    ui_scale: Res<UiScale>,
-    mut commands: Commands,
-    selection: Option<Res<HistogramSelection>>,
-    plots: Query<(
-        &HistogramPlot,
-        &HistogramBrushStart,
-        &ComputedNode,
-        &ComputedUiRenderTargetInfo,
-        &UiGlobalTransform,
-    )>,
-    view: Single<&HistogramView>,
-) {
-    event.propagate(false);
-    if event.button != PointerButton::Primary {
-        return;
-    }
-    let Ok((plot, brush, computed_node, target, transform)) = plots.get(event.entity) else {
-        return;
-    };
-    if brush.dragged {
-        return;
-    }
-    let Some(selection) =
-        selection.filter(|selection| selection.source_node_id == plot.source_node_id)
-    else {
-        return;
-    };
-    let Some(fraction) = plot_pointer_fraction(
-        event.pointer_location.position,
-        computed_node,
-        target,
-        transform,
-        &ui_scale,
-    ) else {
-        return;
-    };
-    let width = computed_node.content_box().width();
-    let value = plot.domain.value_at_plot_x(fraction * width, width);
-    if value < selection.lower || value > selection.upper {
-        commands.remove_resource::<HistogramSelection>();
-        reopen_histogram(&mut commands, &view, view.bin_count);
-    }
-}
-
 fn update_histogram_brush(
     mut event: On<Pointer<Drag>>,
     ui_scale: Res<UiScale>,
@@ -1279,7 +2135,7 @@ fn update_histogram_brush(
         ),
         With<HistogramPlot>,
     >,
-    mut overlays: Query<&mut Node, With<HistogramBrushOverlay>>,
+    mut overlays: Query<&mut Node, With<ActiveHistogramBrushOverlay>>,
 ) {
     event.propagate(false);
     let Ok((mut brush, computed_node, target, transform)) = plots.get_mut(event.entity) else {
@@ -1309,7 +2165,7 @@ fn finish_histogram_brush(
     mut event: On<Pointer<DragEnd>>,
     ui_scale: Res<UiScale>,
     mut commands: Commands,
-    selection: Option<Res<HistogramSelection>>,
+    mut selections: Option<ResMut<SampleSelections>>,
     plots: Query<(
         &HistogramPlot,
         &HistogramBrushStart,
@@ -1318,7 +2174,8 @@ fn finish_histogram_brush(
         &UiGlobalTransform,
     )>,
     view: Single<&HistogramView>,
-    mut overlays: Query<&mut Node, With<HistogramBrushOverlay>>,
+    joint_view: Option<Single<&JointDistributionView>>,
+    mut overlays: Query<&mut Node, With<ActiveHistogramBrushOverlay>>,
 ) {
     event.propagate(false);
     let Ok((plot, brush, computed_node, target, transform)) = plots.get(event.entity) else {
@@ -1337,9 +2194,7 @@ fn finish_histogram_brush(
         return;
     };
     if (fraction - brush.fraction).abs() * computed_node.content_box().width() < 3.0 {
-        if selection.is_some() {
-            reopen_histogram(&mut commands, &view, view.bin_count);
-        } else if let Ok(mut overlay) = overlays.single_mut() {
+        if let Ok(mut overlay) = overlays.single_mut() {
             overlay.display = Display::None;
         }
         return;
@@ -1358,19 +2213,34 @@ fn finish_histogram_brush(
         return;
     }
 
-    commands.insert_resource(HistogramSelection {
-        source_node_id: plot.source_node_id,
-        source_plate_ids: plot.plate_ids.clone(),
-        source_instance_paths: plot.instance_paths.clone(),
-        lower,
-        upper,
+    let selection = SampleSelection {
+        source: SelectionSource::Histogram {
+            node_id: plot.source_node_id,
+            lower,
+            upper,
+        },
+        context_plate_ids: plot.plate_ids.clone(),
+        context_instance_paths: plot.instance_paths.clone(),
         draws_by_instance,
-    });
+    };
+    if let Some(selections) = selections.as_mut() {
+        selections.entries.push(selection);
+    } else {
+        commands.insert_resource(SampleSelections {
+            entries: vec![selection],
+        });
+    }
     reopen_histogram(&mut commands, &view, view.bin_count);
+    if let Some(joint) = joint_view {
+        commands.trigger(OpenJointDistributionView {
+            x_node_id: joint.x_node_id,
+            y_node_id: joint.y_node_id,
+        });
+    }
 }
 
-fn format_instance_label(node_id: u32, indices: &[usize]) -> String {
-    let mut label = format!("node#{node_id}");
+fn format_instance_label(node_label: &str, indices: &[usize]) -> String {
+    let mut label = node_label.to_string();
     for index in indices {
         label.push_str(&format!("[{index}]"));
     }
@@ -1491,12 +2361,14 @@ mod tests {
                 samples: vec![sample(0, 20.0), sample(1, 21.0)],
             },
         ];
-        let selection = HistogramSelection {
-            source_node_id: 1,
-            source_plate_ids: vec![10],
-            source_instance_paths: vec![vec![0], vec![1]],
-            lower: 0.0,
-            upper: 1.0,
+        let selection = SampleSelection {
+            source: SelectionSource::Histogram {
+                node_id: 1,
+                lower: 0.0,
+                upper: 1.0,
+            },
+            context_plate_ids: vec![10],
+            context_instance_paths: vec![vec![0], vec![1]],
             draws_by_instance: HashMap::from([(vec![0], HashSet::from([0, 1]))]),
         };
 
@@ -1523,12 +2395,14 @@ mod tests {
             samples: vec![sample(0, 100.0), sample(1, 4.0), sample(2, 7.0)],
         }];
         let full_histogram = build_histogram(&instances[0].samples, 2).unwrap();
-        let selection = HistogramSelection {
-            source_node_id: 1,
-            source_plate_ids: Vec::new(),
-            source_instance_paths: vec![Vec::new()],
-            lower: 4.0,
-            upper: 7.0,
+        let selection = SampleSelection {
+            source: SelectionSource::Histogram {
+                node_id: 1,
+                lower: 4.0,
+                upper: 7.0,
+            },
+            context_plate_ids: Vec::new(),
+            context_instance_paths: vec![Vec::new()],
             draws_by_instance: HashMap::from([(Vec::new(), HashSet::from([1, 2]))]),
         };
         let filtered = linked_samples(&instances, &selection, &[]);
@@ -1557,5 +2431,108 @@ mod tests {
         );
         assert_eq!(highlighted_histogram.bins[0].count, 2.0);
         assert_eq!(highlighted_histogram.bins[1].count, 0.0);
+    }
+
+    #[test]
+    fn additive_selections_union_overlapping_draws() {
+        let instances = vec![NodeInstanceSamples {
+            indices: Vec::new(),
+            samples: vec![sample(0, 1.0), sample(1, 2.0), sample(2, 3.0)],
+        }];
+        let make_selection = |draws: HashSet<usize>| SampleSelection {
+            source: SelectionSource::Histogram {
+                node_id: 1,
+                lower: 0.0,
+                upper: 1.0,
+            },
+            context_plate_ids: Vec::new(),
+            context_instance_paths: vec![Vec::new()],
+            draws_by_instance: HashMap::from([(Vec::new(), draws)]),
+        };
+        let selections = SampleSelections {
+            entries: vec![
+                make_selection(HashSet::from([0, 1])),
+                make_selection(HashSet::from([1, 2])),
+            ],
+        };
+
+        let linked = linked_samples_for_selections(&instances, &selections, &[]);
+
+        assert_eq!(effective_count(&linked), 3.0);
+        assert_eq!(
+            linked.iter().map(|sample| sample.value).collect::<Vec<_>>(),
+            vec![1.0, 2.0, 3.0]
+        );
+    }
+
+    #[test]
+    fn additive_plate_selections_combine_distinct_instance_weight() {
+        let target = vec![NodeInstanceSamples {
+            indices: Vec::new(),
+            samples: vec![sample(0, 9.0)],
+        }];
+        let make_selection = |path: Vec<usize>| SampleSelection {
+            source: SelectionSource::Histogram {
+                node_id: 1,
+                lower: 0.0,
+                upper: 1.0,
+            },
+            context_plate_ids: vec![10],
+            context_instance_paths: vec![vec![0], vec![1]],
+            draws_by_instance: HashMap::from([(path, HashSet::from([0]))]),
+        };
+        let selections = SampleSelections {
+            entries: vec![make_selection(vec![0]), make_selection(vec![1])],
+        };
+
+        let linked = linked_samples_for_selections(&target, &selections, &[]);
+
+        assert_eq!(effective_count(&linked), 1.0);
+    }
+
+    #[test]
+    fn joint_samples_pair_matching_draws_and_plate_rows() {
+        let x = vec![
+            NodeInstanceSamples {
+                indices: vec![0],
+                samples: vec![sample(0, 1.0), sample(1, 2.0)],
+            },
+            NodeInstanceSamples {
+                indices: vec![1],
+                samples: vec![sample(0, 10.0)],
+            },
+        ];
+        let y = vec![
+            NodeInstanceSamples {
+                indices: vec![0],
+                samples: vec![sample(0, 3.0), sample(1, 4.0)],
+            },
+            NodeInstanceSamples {
+                indices: vec![1],
+                samples: vec![sample(0, 30.0)],
+            },
+        ];
+
+        let (points, plate_ids, paths) = build_joint_samples(&x, &[7], &y, &[7]);
+
+        assert_eq!(plate_ids, vec![7]);
+        assert_eq!(paths, vec![vec![0], vec![1]]);
+        assert_eq!(points.len(), 3);
+        assert!(
+            points
+                .iter()
+                .any(|point| point.x == 10.0 && point.y == 30.0)
+        );
+    }
+
+    #[test]
+    fn polygon_selection_handles_arbitrary_non_rectangular_shapes() {
+        let triangle = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.0, 1.0),
+        ];
+        assert!(point_in_polygon(Vec2::new(0.2, 0.2), &triangle));
+        assert!(!point_in_polygon(Vec2::new(0.8, 0.8), &triangle));
     }
 }

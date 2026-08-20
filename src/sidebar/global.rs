@@ -11,8 +11,8 @@ use crate::nodes::*;
 use crate::constants::*;
 use crate::bevy_to_fugue::*;
 use crate::data_vis::{
-    CloseHistogramPanel, HistogramSelection, HistogramSelectionControls,
-    HistogramSelectionStatus, deselect_histogram_selection,
+    CloseHistogramPanel, HistogramSelectionControls, HistogramSelectionStatus, SampleSelections,
+    deselect_histogram_selection,
 };
 
 const DISABLED_CONTROL_COLOR: Color = Color::srgb(0.35, 0.35, 0.35);
@@ -272,6 +272,14 @@ pub fn load_global_sidebar(
         "random seed",
         seed_box,
     );
+    let rounds_box = inference_textbox(&mut commands, "number_of_rounds", "1000", 2);
+    commands.entity(rounds_box).insert(NumberOfWarmupTextbox);
+    add_inference_field(
+        &mut commands,
+        global_sidebar_entity,
+        "# warmup rounds",
+        rounds_box,
+    );
 
     let samples_box = inference_textbox(&mut commands, "number_of_samples", "1000", 1);
     commands.entity(samples_box).insert(NumberOfSamplesTextbox);
@@ -280,15 +288,6 @@ pub fn load_global_sidebar(
         global_sidebar_entity,
         "# of samples",
         samples_box,
-    );
-
-    let rounds_box = inference_textbox(&mut commands, "number_of_rounds", "1000", 2);
-    commands.entity(rounds_box).insert(NumberOfWarmupTextbox);
-    add_inference_field(
-        &mut commands,
-        global_sidebar_entity,
-        "# of rounds",
-        rounds_box,
     );
 
     let inference_button = commands.spawn((
@@ -412,7 +411,7 @@ pub fn load_global_sidebar(
             BackgroundColor(BUTTON_COLOR),
             children![(
                 Pickable::IGNORE,
-                Text::new("Deselect"),
+                Text::new("Clear selections"),
                 text_font(),
                 TextColor(Color::WHITE),
             )],
@@ -643,7 +642,7 @@ pub fn invalidate_compilation_on_graph_change(
         commands.remove_resource::<GraphIRResource>();
         commands.remove_resource::<InferenceResultResource>();
         commands.remove_resource::<InferenceStatusResource>();
-        commands.remove_resource::<HistogramSelection>();
+        commands.remove_resource::<SampleSelections>();
         commands.trigger(SetInferenceControlsEnabled(false));
         commands.trigger(SetPosteriorSampleEnabled(false));
         commands.trigger(CloseHistogramPanel);

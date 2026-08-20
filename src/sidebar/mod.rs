@@ -259,10 +259,14 @@ pub fn reload_sidebar(
     >,
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar: Query<(Entity, &LocalSidebar)>,
+    joint_indicators: Query<Entity, With<crate::data_vis::JointSelectedIndicator>>,
     mut plates: Query<&mut Plate>,
 ){
     for (sidebar_entity, _comp) in sidebar.iter(){
         commands.entity(sidebar_entity).despawn();
+    }
+    for indicator in &joint_indicators {
+        commands.entity(indicator).despawn();
     }
     if let Some(single) = selected{
         let (entity, _selected_comp, node) = single.into_inner();

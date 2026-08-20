@@ -10,7 +10,10 @@ use crate::graph::*;
 use crate::sidebar::*;
 use crate::ui::*;
 use crate::bevy_to_fugue::InferenceResultResource;
-use crate::data_vis::{CloseHistogramPanel, OpenHistogramPanel, DEFAULT_HISTOGRAM_BINS};
+use crate::data_vis::{
+    CloseHistogramPanel, HistogramView, OpenHistogramPanel, OpenJointDistributionView,
+    DEFAULT_HISTOGRAM_BINS,
+};
 
 //on all node entities
 #[derive(Component)]
@@ -347,7 +350,14 @@ pub fn on_node_click(
     random_nodes: Query<&RandomNode>,
     compute_nodes: Query<&ComputeNode>,
     scalar_nodes: Query<&ScalarNode>,
+    histogram_view: Option<Single<&HistogramView>>,
 ){
+    let shift_held = input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let joint_pair = histogram_view.as_ref().and_then(|view| {
+        let y_node_id = node_ids.get(event.event_target()).ok()?.0;
+        (inference_results.is_some() && y_node_id != view.node_id)
+            .then_some((view.node_id, y_node_id))
+    });
     //if there is an unfinished GraphLink, complete it.
     if !reduced_view.active && let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {
 
@@ -393,8 +403,14 @@ pub fn on_node_click(
                 arrow_transform,
             ));
         }
-    //otherwise, create an invisible UnfinishedLink
-    }else if !reduced_view.active && input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]){
+    // Joint posterior inspection is available in either graph view.
+    }else if shift_held && let Some((x_node_id, y_node_id)) = joint_pair {
+        commands.trigger(OpenJointDistributionView {
+            x_node_id,
+            y_node_id,
+        });
+    // Graph-link editing remains unavailable in reduced view.
+    }else if !reduced_view.active && shift_held {
         commands.spawn((
             GraphLink{
                 from: event.event_target(),
@@ -451,6 +467,7 @@ pub fn on_node_click(
                     commands.trigger(OpenHistogramPanel {
                         node_id: node.0,
                         bin_count: DEFAULT_HISTOGRAM_BINS,
+                        clear_toasts: true,
                     });
                 } else {
                     commands.trigger(CloseHistogramPanel);

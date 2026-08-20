@@ -1,7 +1,8 @@
 use super::graph_checks::{ModelResult, ModelValues};
 use super::model_compilation::CompiledGraph;
 use fugue::{
-    adaptive_single_site_mh, DiminishingAdaptation, PriorHandler, SafeReplayHandler, Trace,
+    adaptive_single_site_mh, DiminishingAdaptation, PriorHandler, SafeReplayHandler,
+    ScoreGivenTrace, Trace,
 };
 use rand::{rngs::StdRng, SeedableRng};
 use std::collections::{BTreeMap, HashMap};
@@ -22,6 +23,16 @@ pub struct InferenceResult {
 pub struct ControlledInferenceResult {
     pub result: InferenceResult,
     pub cancelled: bool,
+}
+
+fn has_negative_infinite_log_probability(trace: &Trace) -> bool {
+    [trace.log_prior, trace.log_likelihood, trace.log_factors]
+        .into_iter()
+        .any(|logp| logp == f64::NEG_INFINITY)
+        || trace
+            .choices
+            .values()
+            .any(|choice| choice.logp == f64::NEG_INFINITY)
 }
 
 /// One scalar posterior value and the retained draw that produced it.
@@ -59,6 +70,7 @@ impl CompiledGraph {
                 n_warmup,
                 || false,
                 |_| {},
+                |_| {},
                 |_, _| {},
             )?
             .result)
@@ -76,6 +88,7 @@ impl CompiledGraph {
         n_warmup: usize,
         should_cancel: impl Fn() -> bool,
         mut on_warmup: impl FnMut(usize),
+        mut on_warmup_complete: impl FnMut(bool),
         mut on_sample: impl FnMut(usize, &ModelValues),
     ) -> Result<ControlledInferenceResult, String> {
         if n_samples == 0 {
@@ -122,6 +135,21 @@ impl CompiledGraph {
             completed_warmup = warmup_index + 1;
             on_warmup(completed_warmup);
         }
+
+        // The transition kernel returns its chain trace, not the scored trace
+        // used internally. Rescore the final warmup state once so its recorded
+        // log probabilities match the current values before diagnosing it.
+        let (_, scored_warmup_trace) = fugue::runtime::handler::run(
+            ScoreGivenTrace {
+                base: current_trace,
+                trace: Trace::default(),
+            },
+            model_fn(),
+        );
+        current_trace = scored_warmup_trace;
+        let warmup_had_negative_infinite_log_probability =
+            has_negative_infinite_log_probability(&current_trace);
+        on_warmup_complete(warmup_had_negative_infinite_log_probability);
 
         let mut samples_by_node = HashMap::<u32, Vec<ModelResult>>::new();
         let mut traces = Vec::with_capacity(n_samples);
@@ -334,6 +362,7 @@ mod tests {
                         cancel.set(true);
                     }
                 },
+                |_| {},
                 |_, _| published.set(published.get() + 1),
             )
             .unwrap();
@@ -356,6 +385,7 @@ mod tests {
                 2,
                 || cancel.get(),
                 |_| {},
+                |_| {},
                 |draw_index, _| {
                     published.set(published.get() + 1);
                     if draw_index == 2 {
@@ -371,6 +401,23 @@ mod tests {
         assert_eq!(outcome.result.traces.len(), 3);
         assert_eq!(outcome.result.samples_by_node[&3].len(), 3);
         assert_eq!(published.get(), 3);
+    }
+
+    #[test]
+    fn detects_negative_infinite_warmup_log_probabilities() {
+        let finite = Trace {
+            log_prior: -2.0,
+            log_likelihood: -3.0,
+            log_factors: 0.0,
+            ..Default::default()
+        };
+        assert!(!has_negative_infinite_log_probability(&finite));
+
+        let invalid = Trace {
+            log_likelihood: f64::NEG_INFINITY,
+            ..finite
+        };
+        assert!(has_negative_infinite_log_probability(&invalid));
     }
 
     #[test]
