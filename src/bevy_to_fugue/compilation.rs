@@ -360,10 +360,14 @@ pub fn run_inference(
                     .warmup_completed
                     .store(completed, Ordering::Relaxed);
             },
-            move |has_negative_infinity| {
+            move |variables| {
                 diagnostic_control
                     .warmup_negative_infinity
-                    .store(has_negative_infinity, Ordering::Relaxed);
+                    .store(!variables.is_empty(), Ordering::Relaxed);
+                *diagnostic_control
+                    .warmup_negative_infinity_variables
+                    .lock()
+                    .expect("warmup diagnostic should not be poisoned") = variables;
                 diagnostic_control
                     .warmup_diagnostic_ready
                     .store(true, Ordering::Release);
@@ -458,9 +462,16 @@ pub fn poll_inference_job(
             .warmup_warning_emitted
             .swap(true, Ordering::Relaxed)
     {
+        let variables = job
+            .control
+            .warmup_negative_infinity_variables
+            .lock()
+            .expect("warmup diagnostic should not be poisoned")
+            .join(", ");
         commands.trigger(ErrorToast {
-            text: "Warning: warmup ended with at least one -infinity log probability. The posterior may be unreliable; check observed data and distribution parameters."
-                .to_string(),
+            text: format!(
+                "Warning: warmup ended with a -infinity log probability for {variables}. The posterior may be unreliable; check that variable's observed data and distribution parameters."
+            ),
             color: Color::srgb(0.55, 0.30, 0.03),
         });
     }

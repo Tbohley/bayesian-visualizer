@@ -65,7 +65,8 @@ fn setup (
 
     commands.insert_resource(Datasets {
         datasets: vec![Dataset::from_csv("assets/data/SATandGPA.csv").expect("prefilled data should be valid"),
-        Dataset::from_csv("assets/data/poly_reg.csv").expect("prefilled data should be valid")
+        Dataset::from_csv("assets/data/poly_reg.csv").expect("prefilled data should be valid"),
+        Dataset::from_csv("assets/data/sim_sleep_react.csv").expect("prefilled data should be valid")
         ]
     });
 
@@ -101,6 +102,7 @@ fn main() {
         .add_systems(Startup, (setup, load_global_sidebar))
         .add_systems(Update, (
             on_enter_clicked,
+            refresh_links_for_resized_random_nodes,
             refresh_reduced_view,
             apply_typed_histogram_bin_count,
             update_histogram_selection_controls,

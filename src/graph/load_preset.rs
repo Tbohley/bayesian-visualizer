@@ -96,67 +96,7 @@ pub struct PresetMapping {
     pub column: &'static str,
 }
 
-/// Add study presets to this vector. Pressing Compile prints the current graph
-/// in the exact `GraphPreset { ... }` form accepted here.
-pub fn bundled_presets() -> Vec<GraphPreset> {
-    vec![GraphPreset {
-        id: "lin_reg",
-        title: "Linear Regression",
-        description: "Simple linear regression between SAT scores and GPA",
-        study_condition: None,
-        nodes: vec![
-            PresetNode::Random { id: 2, position: [-75.14453, 49.648426], name: Some("x"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(10) }, PresetParameter { name: "std_dev", source: Some(11) }] },
-            PresetNode::Random { id: 3, position: [244.4922, 50.23828], name: Some("y"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(8) }, PresetParameter { name: "std_dev", source: Some(4) }] },
-            PresetNode::Random { id: 4, position: [252.98438, 173.88278], name: Some("s"), distribution: "LogNormal", parameters: vec![PresetParameter { name: "mean", source: Some(9) }, PresetParameter { name: "std_dev", source: Some(17) }] },
-            PresetNode::Random { id: 5, position: [-106.093765, 187.28903], name: Some("a"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(12) }, PresetParameter { name: "std_dev", source: Some(13) }] },
-            PresetNode::Random { id: 6, position: [99.6016, 204.73828], name: Some("b"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(14) }, PresetParameter { name: "std_dev", source: Some(15) }] },
-            PresetNode::Compute { id: 7, position: [1.957016, 48.085926], operation: Operation::Multiply, parameters: vec![PresetParameter { name: "first", source: Some(5) }, PresetParameter { name: "second", source: Some(2) }] },
-            PresetNode::Compute { id: 8, position: [109.83594, 43.75391], operation: Operation::Add, parameters: vec![PresetParameter { name: "first", source: Some(6) }, PresetParameter { name: "second", source: Some(7) }] },
-            PresetNode::Compute { id: 9, position: [241.4375, 251.81248], operation: Operation::Logarithm, parameters: vec![PresetParameter { name: "input", source: Some(16) }] },
-            PresetNode::Scalar { id: 10, position: [-186.27344, 81.90624], value: 2.0, name: None },
-            PresetNode::Scalar { id: 11, position: [-181.6836, 9.242197], value: 1.0, name: None },
-            PresetNode::Scalar { id: 12, position: [-182.0586, 277.2695], value: 500.0, name: None },
-            PresetNode::Scalar { id: 13, position: [-54.433563, 279.99606], value: 200.0, name: None },
-            PresetNode::Scalar { id: 14, position: [56.71095, 256.05075], value: 800.0, name: None },
-            PresetNode::Scalar { id: 15, position: [155.64842, 252.37497], value: 300.0, name: None },
-            PresetNode::Scalar { id: 16, position: [226.14844, 315.80856], value: 80.0, name: None },
-            PresetNode::Scalar { id: 17, position: [315.4297, 192.332], value: 1.0, name: None }
-        ],
-        plates: vec![
-            PresetPlate { id: 1, bounds: PresetBounds { min: [-125.51563, -2.8125076], max: [323.51953, 107.65624] }, dataset_id: "SATandGPA.csv", mapping: vec![PresetMapping { node: 2, column: "GPA" }, PresetMapping { node: 3, column: "SAT" }] }
-        ],
-    },
-    
-    GraphPreset {
-        id: "poly_reg",
-        title: "Quadratic Regression",
-        description: "Replace me",
-        study_condition: None,
-        nodes: vec![
-            PresetNode::Random { id: 2, position: [-87.89453, 265.24216], name: Some("a"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(14) }, PresetParameter { name: "std_dev", source: Some(15) }] },
-            PresetNode::Random { id: 3, position: [-12.3828125, 269.91794], name: Some("b"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(14) }, PresetParameter { name: "std_dev", source: Some(15) }] },
-            PresetNode::Random { id: 4, position: [118.75778, 273.32813], name: Some("c"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(14) }, PresetParameter { name: "std_dev", source: Some(15) }] },
-            PresetNode::Random { id: 5, position: [199.23828, 257.17575], name: Some("s"), distribution: "LogNormal", parameters: vec![PresetParameter { name: "mean", source: Some(17) }, PresetParameter { name: "std_dev", source: Some(16) }] },
-            PresetNode::Random { id: 6, position: [-131.46484, -0.30860138], name: Some("x"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(12) }, PresetParameter { name: "std_dev", source: Some(13) }] },
-            PresetNode::Random { id: 7, position: [212.51172, 87.63281], name: Some("y"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(11) }, PresetParameter { name: "std_dev", source: Some(5) }] },
-            PresetNode::Compute { id: 8, position: [-138.64063, 129.58594], operation: Operation::Power, parameters: vec![PresetParameter { name: "base", source: Some(6) }, PresetParameter { name: "exponent", source: Some(18) }] },
-            PresetNode::Compute { id: 9, position: [-78.57812, 133.83202], operation: Operation::Multiply, parameters: vec![PresetParameter { name: "first", source: Some(8) }, PresetParameter { name: "second", source: Some(2) }] },
-            PresetNode::Compute { id: 10, position: [-0.417984, -1.2109375], operation: Operation::Multiply, parameters: vec![PresetParameter { name: "first", source: Some(6) }, PresetParameter { name: "second", source: Some(3) }] },
-            PresetNode::Compute { id: 11, position: [126.77736, 87.031235], operation: Operation::Add, parameters: vec![PresetParameter { name: "first", source: Some(19) }, PresetParameter { name: "second", source: Some(4) }] },
-            PresetNode::Scalar { id: 12, position: [-238.10156, 19.761707], value: 0.0, name: None },
-            PresetNode::Scalar { id: 13, position: [-237.98047, -39.82811], value: 1.5, name: None },
-            PresetNode::Scalar { id: 14, position: [-65.402336, 338.67575], value: 0.0, name: None },
-            PresetNode::Scalar { id: 15, position: [-9.644539, 334.3984], value: 5.0, name: None },
-            PresetNode::Scalar { id: 16, position: [190.13672, 321.22653], value: 5.0, name: None },
-            PresetNode::Scalar { id: 17, position: [145.04297, 312.98434], value: 0.0, name: None },
-            PresetNode::Scalar { id: 18, position: [-236.3086, 127.69531], value: 2.0, name: None },
-            PresetNode::Compute { id: 19, position: [58.835907, 86.98436], operation: Operation::Add, parameters: vec![PresetParameter { name: "first", source: Some(10) }, PresetParameter { name: "second", source: Some(9) }] }
-        ],
-        plates: vec![
-            PresetPlate { id: 1, bounds: PresetBounds { min: [-182.67578, -38.87111], max: [271.9453, 191.82811] }, dataset_id: "poly_reg.csv", mapping: vec![PresetMapping { node: 6, column: "sample_x" }, PresetMapping { node: 7, column: "sample_y" }] }
-        ],
-    }]
-}
+
 
 #[derive(Event)]
 pub struct OpenPresetMenu {
@@ -501,7 +441,7 @@ fn spawn_preset(
 ) {
     let mut entities = HashMap::new();
     let mut positions = HashMap::new();
-    let mut endpoint_radii = HashMap::new();
+    let mut endpoint_shapes = HashMap::new();
 
     // Pass one: create every node, independent of dependency order.
     for node in &preset.nodes {
@@ -552,10 +492,16 @@ fn spawn_preset(
         };
         entities.insert(node.id(), entity);
         positions.insert(entity, position);
-        endpoint_radii.insert(entity, match node {
-            PresetNode::Random { .. } => RANDOM_NODE_RAD,
-            PresetNode::Compute { .. } => COMPUTE_NODE_RAD,
-            PresetNode::Scalar { .. } => SCALAR_NODE_RAD,
+        endpoint_shapes.insert(entity, match node {
+            PresetNode::Random { id, name, .. } => {
+                let label = name.map(str::to_string).unwrap_or_else(|| id.to_string());
+                EndpointShape::horizontal_capsule(
+                    RANDOM_NODE_RAD,
+                    random_node_straight_length(&label),
+                )
+            }
+            PresetNode::Compute { .. } => EndpointShape::circle(COMPUTE_NODE_RAD),
+            PresetNode::Scalar { .. } => EndpointShape::circle(SCALAR_NODE_RAD),
         });
     }
 
@@ -601,8 +547,8 @@ fn spawn_preset(
             to,
             positions[&from],
             positions[&to],
-            endpoint_radii[&from],
-            endpoint_radii[&to],
+            endpoint_shapes[&from],
+            endpoint_shapes[&to],
             meshes,
             materials,
         );

@@ -2,16 +2,16 @@ use crate::bayesian_core::{NodeInstanceSamples, PosteriorSample};
 use crate::bevy_to_fugue::{
     GraphIRResource, InferenceResultResource, InferenceResultState, InferenceStatusResource,
 };
-use crate::constants::{ERR_COLOR, SAMPLE_COLOR, SIDEBAR_WIDTH, text_font};
+use crate::constants::{text_font, ERR_COLOR, SAMPLE_COLOR, SIDEBAR_WIDTH};
 use crate::nodes::{
-    ComputeNode, GraphNode, NodeLabel, RandomNode, ScalarNode, random_node_label,
-    random_selection_mesh,
+    random_node_label, random_selection_mesh, ComputeNode, GraphNode, NodeLabel, RandomNode,
+    ScalarNode,
 };
 use crate::sidebar::LocalSidebar;
-use crate::ui::{ClearToasts, ErrorToast, selection_indicator};
+use crate::ui::{selection_indicator, ClearToasts, ErrorToast};
 use crate::{COMPUTE_NODE_RAD, SCALAR_NODE_RAD};
 use bevy::{
-    input_focus::{InputFocus, tab_navigation::TabIndex},
+    input_focus::{tab_navigation::TabIndex, InputFocus},
     prelude::*,
     text::{EditableText, TextCursorStyle},
 };
@@ -21,6 +21,7 @@ pub const DEFAULT_HISTOGRAM_BINS: usize = 20;
 pub const MAX_HISTOGRAM_BINS: usize = 200;
 pub const HISTOGRAM_PANEL_HEIGHT: f32 = 260.0;
 const SELECTED_SAMPLE_COLOR: Color = Color::srgb(0.35, 0.55, 0.95);
+const SELECTED_HISTOGRAM_COLOR: Color = Color::srgb(0.2, 0.7, 0.35);
 
 #[derive(Event)]
 pub struct OpenHistogramPanel {
@@ -121,6 +122,14 @@ struct JointSample {
     draw_index: usize,
     x: f64,
     y: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SelectedCellBoundary {
+    left: bool,
+    right: bool,
+    top: bool,
+    bottom: bool,
 }
 
 #[derive(Component)]
@@ -789,7 +798,21 @@ pub fn open_histogram_panel(
         })
         .id();
 
-    let stats = spawn_stats(&mut commands, &node_label, stats_samples, &scope, bin_count);
+    let probability_line = histogram_selection_probability_line(
+        &node_label,
+        event.node_id,
+        &full_samples.samples,
+        highlighted_samples.as_deref(),
+        selections.as_deref(),
+    );
+    let stats = spawn_stats(
+        &mut commands,
+        &node_label,
+        stats_samples,
+        &scope,
+        probability_line,
+        bin_count,
+    );
     let chart = spawn_chart(
         &mut commands,
         &histogram,
@@ -1030,27 +1053,70 @@ pub fn open_joint_distribution_view(
             width: px(43.0),
             height: percent(100.0),
             flex_direction: FlexDirection::Column,
-            row_gap: px(3.0),
             ..default()
         })
         .id();
     let right_hist = spawn_marginal_histogram(&mut commands, &y_histogram, true);
+    commands.entity(right).add_child(right_hist);
+    commands.entity(body).add_children(&[heatmap, right]);
+
+    let y_label_row = commands
+        .spawn(Node {
+            width: px(270.0),
+            justify_content: JustifyContent::FlexEnd,
+            ..default()
+        })
+        .id();
     let y_label = commands
         .spawn((
             Pickable::IGNORE,
-            Text::new(format!("{y_label_text}\n(y)")),
+            Node {
+                width: px(43.0),
+                ..default()
+            },
+            Text::new(format!("{y_label_text} (y)")),
             TextColor(Color::WHITE),
             TextFont {
                 font_size: FontSize::Px(11.0),
                 ..text_font()
             },
+            TextLayout::justify(Justify::Center),
         ))
         .id();
-    commands.entity(right).add_children(&[right_hist, y_label]);
-    commands.entity(body).add_children(&[heatmap, right]);
-    commands
-        .entity(sidebar)
-        .add_children(&[heading, hint, x_label, top_hist, body]);
+    commands.entity(y_label_row).add_child(y_label);
+    let mut sidebar_children = vec![heading, hint, x_label, top_hist, body, y_label_row];
+    if let Some(selections) = selections
+        .as_deref()
+        .filter(|selections| !selections.entries.is_empty())
+    {
+        let selected = points
+            .iter()
+            .filter(|point| {
+                sample_is_selected(
+                    &context_plate_ids,
+                    &context_instance_paths[point.context_instance],
+                    point.draw_index,
+                    Some(selections),
+                )
+            })
+            .count();
+        let probability = selected as f64 / points.len() as f64;
+        let probability_text = commands
+            .spawn((
+                Pickable::IGNORE,
+                Text::new(format!(
+                    "P(({x_label_text}, {y_label_text}) in selection) = {probability:.4}"
+                )),
+                TextColor(Color::WHITE),
+                TextFont {
+                    font_size: FontSize::Px(12.0),
+                    ..text_font()
+                },
+            ))
+            .id();
+        sidebar_children.push(probability_text);
+    }
+    commands.entity(sidebar).add_children(&sidebar_children);
 }
 
 fn spawn_marginal_histogram(
@@ -1058,6 +1124,11 @@ fn spawn_marginal_histogram(
     histogram: &Histogram,
     horizontal: bool,
 ) -> Entity {
+    let bin_extent = if histogram.bins.is_empty() {
+        0.0
+    } else {
+        100.0 / histogram.bins.len() as f32
+    };
     let root = commands
         .spawn(Node {
             width: if horizontal {
@@ -1065,7 +1136,11 @@ fn spawn_marginal_histogram(
             } else {
                 px(222.0)
             },
-            height: if horizontal { px(190.0) } else { px(55.0) },
+            height: if horizontal {
+                percent(100.0)
+            } else {
+                px(55.0)
+            },
             flex_direction: if horizontal {
                 FlexDirection::ColumnReverse
             } else {
@@ -1087,10 +1162,16 @@ fn spawn_marginal_histogram(
         };
         let slot = commands
             .spawn(Node {
-                width: if horizontal { percent(100.0) } else { auto() },
-                height: if horizontal { auto() } else { percent(100.0) },
-                flex_grow: 1.0,
-                flex_basis: px(0.0),
+                width: if horizontal {
+                    percent(100.0)
+                } else {
+                    percent(bin_extent)
+                },
+                height: if horizontal {
+                    percent(bin_extent)
+                } else {
+                    percent(100.0)
+                },
                 min_width: px(0.0),
                 min_height: px(0.0),
                 align_items: if horizontal {
@@ -1195,25 +1276,39 @@ fn spawn_joint_heatmap(
         for x in 0..bins {
             let index = data_y * bins + x;
             let density = counts[index] as f32 / max_count;
-            let color = if selected_counts[index] > 0 {
-                Color::srgb(0.25, 0.55, 1.0)
-            } else {
-                Color::srgb(
-                    0.90 - density * 0.82,
-                    0.91 - density * 0.78,
-                    0.93 - density * 0.60,
-                )
-            };
+            let color = Color::srgb(
+                0.90 - density * 0.82,
+                0.91 - density * 0.78,
+                0.93 - density * 0.60,
+            );
+            let selected = selected_counts[index] > 0;
+            let boundary =
+                selected.then(|| selected_cell_boundary(&selected_counts, bins, x, data_y));
+            let border = boundary.map_or_else(
+                || px(0.35).all(),
+                |boundary| {
+                    UiRect::new(
+                        px(if boundary.left { 1.8 } else { 0.0 }),
+                        px(if boundary.right { 1.8 } else { 0.0 }),
+                        px(if boundary.top { 1.8 } else { 0.0 }),
+                        px(if boundary.bottom { 1.8 } else { 0.0 }),
+                    )
+                },
+            );
             let cell = commands
                 .spawn((
                     Pickable::IGNORE,
                     Node {
                         width: percent(100.0 / bins as f32),
                         height: percent(100.0 / bins as f32),
-                        border: px(0.35).all(),
+                        border,
                         ..default()
                     },
-                    BorderColor::all(Color::srgba(0.2, 0.22, 0.28, 0.35)),
+                    BorderColor::all(if selected {
+                        Color::BLACK
+                    } else {
+                        Color::srgba(0.2, 0.22, 0.28, 0.35)
+                    }),
                     BackgroundColor(color),
                 ))
                 .id();
@@ -1241,6 +1336,21 @@ fn spawn_joint_heatmap(
     plot
 }
 
+fn selected_cell_boundary(
+    selected_counts: &[usize],
+    bins: usize,
+    x: usize,
+    data_y: usize,
+) -> SelectedCellBoundary {
+    let is_selected = |x: usize, y: usize| selected_counts[y * bins + x] > 0;
+    SelectedCellBoundary {
+        left: x == 0 || !is_selected(x - 1, data_y),
+        right: x + 1 == bins || !is_selected(x + 1, data_y),
+        top: data_y + 1 == bins || !is_selected(x, data_y + 1),
+        bottom: data_y == 0 || !is_selected(x, data_y - 1),
+    }
+}
+
 fn despawn_histogram_panels(
     commands: &mut Commands,
     panels: &Query<Entity, With<InferenceHistogramPanel>>,
@@ -1255,6 +1365,7 @@ fn spawn_stats(
     node_label: &str,
     samples: &[WeightedSample],
     scope: &HistogramScope,
+    probability_line: Option<String>,
     bin_count: usize,
 ) -> Entity {
     let stats = commands
@@ -1273,8 +1384,11 @@ fn spawn_stats(
             format!("{node_label} ({instance_count} pooled instances)")
         }
     };
-    let lines = [
-        (instance_note, 18.0),
+    let mut lines = vec![(instance_note, 18.0)];
+    if let Some(probability_line) = probability_line {
+        lines.push((probability_line, 12.0));
+    }
+    lines.extend([
         (
             format!("Samples: {}", format_count(effective_count(samples))),
             14.0,
@@ -1296,7 +1410,7 @@ fn spawn_stats(
             ),
             14.0,
         ),
-    ];
+    ]);
 
     for (line, font_size) in lines {
         let text = commands
@@ -1362,6 +1476,66 @@ fn weighted_quantile(samples: &[WeightedSample], probability: f64) -> f64 {
         }
     }
     samples.last().map_or(f64::NAN, |sample| sample.value)
+}
+
+fn histogram_selection_probability_line(
+    node_label: &str,
+    node_id: u32,
+    full_samples: &[PosteriorSample],
+    selected_samples: Option<&[WeightedSample]>,
+    selections: Option<&SampleSelections>,
+) -> Option<String> {
+    let selections = selections.filter(|selections| !selections.entries.is_empty())?;
+    let selected_samples = selected_samples?;
+    let total = full_samples.len() as f64;
+    if total == 0.0 {
+        return None;
+    }
+    let probability = (effective_count(selected_samples) / total).clamp(0.0, 1.0);
+    let detailed_bounds = match selections.entries.as_slice() {
+        [selection] => selection.source.histogram_range_for(node_id),
+        _ => None,
+    };
+    let Some((lower, upper)) = detailed_bounds else {
+        return Some(format!("P({node_label} in selection) = {probability:.4}"));
+    };
+    let data_min = full_samples
+        .iter()
+        .map(|sample| sample.value)
+        .min_by(f64::total_cmp)?;
+    let data_max = full_samples
+        .iter()
+        .map(|sample| sample.value)
+        .max_by(f64::total_cmp)?;
+    Some(format_interval_probability(
+        node_label,
+        lower,
+        upper,
+        data_min,
+        data_max,
+        probability,
+    ))
+}
+
+fn format_interval_probability(
+    label: &str,
+    lower: f64,
+    upper: f64,
+    data_min: f64,
+    data_max: f64,
+    probability: f64,
+) -> String {
+    let tolerance = ((data_max - data_min).abs() * 1e-9).max(f64::EPSILON * 16.0);
+    let reaches_lower = lower <= data_min + tolerance;
+    let reaches_upper = upper >= data_max - tolerance;
+    match (reaches_lower, reaches_upper) {
+        (false, false) => {
+            format!("P({label} > {lower:.4} & {label} < {upper:.4}) = {probability:.4}")
+        }
+        (true, false) => format!("P({label} < {upper:.4}) = {probability:.4}"),
+        (false, true) => format!("P({label} > {lower:.4}) = {probability:.4}"),
+        (true, true) => format!("P({label} in selection) = {probability:.4}"),
+    }
 }
 
 fn format_count(count: f64) -> String {
@@ -1660,12 +1834,11 @@ fn spawn_chart(
                 flex_grow: 1.0,
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::End,
-                column_gap: px(0.0),
+                column_gap: px(1.0),
                 padding: UiRect::new(px(8.0), px(8.0), px(8.0), px(0.0)),
-                overflow: Overflow::clip_x(),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.16, 0.17, 0.21)),
+            BackgroundColor(Color::WHITE),
         ))
         .observe(update_histogram_tooltip)
         .observe(hide_histogram_tooltip)
@@ -1711,7 +1884,7 @@ fn spawn_chart(
                 ..default()
             },
             Text::new(format_count(histogram.max_count)),
-            TextColor(Color::WHITE),
+            TextColor(Color::BLACK),
             TextFont {
                 font_size: FontSize::Px(12.0),
                 ..text_font()
@@ -1778,7 +1951,7 @@ fn spawn_chart(
                         },
                         ..default()
                     },
-                    BackgroundColor(SELECTED_SAMPLE_COLOR),
+                    BackgroundColor(SELECTED_HISTOGRAM_COLOR),
                     ZIndex(2),
                 ))
                 .id();
@@ -2022,15 +2195,19 @@ fn update_histogram_tooltip(
     ui_scale: Res<UiScale>,
     plots: Query<(
         &HistogramPlot,
+        Option<&HistogramBrushStart>,
         &ComputedNode,
         &ComputedUiRenderTargetInfo,
         &UiGlobalTransform,
     )>,
     mut tooltips: Query<(&mut Node, &mut Text), With<HistogramTooltip>>,
 ) {
-    let Ok((plot, computed_node, target, transform)) = plots.get(event.entity) else {
+    let Ok((plot, brush, computed_node, target, transform)) = plots.get(event.entity) else {
         return;
     };
+    if brush.is_some() {
+        return;
+    }
     let Some(fractions) = plot_pointer_fractions(
         event.pointer_location.position,
         computed_node,
@@ -2128,6 +2305,7 @@ fn update_histogram_brush(
     ui_scale: Res<UiScale>,
     mut plots: Query<
         (
+            &HistogramPlot,
             &mut HistogramBrushStart,
             &ComputedNode,
             &ComputedUiRenderTargetInfo,
@@ -2135,14 +2313,27 @@ fn update_histogram_brush(
         ),
         With<HistogramPlot>,
     >,
-    mut overlays: Query<&mut Node, With<ActiveHistogramBrushOverlay>>,
+    mut overlays: Query<
+        &mut Node,
+        (
+            With<ActiveHistogramBrushOverlay>,
+            Without<HistogramTooltip>,
+        ),
+    >,
+    mut tooltips: Query<
+        (&mut Node, &mut Text),
+        (
+            With<HistogramTooltip>,
+            Without<ActiveHistogramBrushOverlay>,
+        ),
+    >,
 ) {
     event.propagate(false);
-    let Ok((mut brush, computed_node, target, transform)) = plots.get_mut(event.entity) else {
+    let Ok((plot, mut brush, computed_node, target, transform)) = plots.get_mut(event.entity) else {
         return;
     };
     brush.dragged = true;
-    let Some(fraction) = plot_pointer_fraction(
+    let Some(fractions) = plot_pointer_fractions(
         event.pointer_location.position,
         computed_node,
         target,
@@ -2151,6 +2342,7 @@ fn update_histogram_brush(
     ) else {
         return;
     };
+    let fraction = fractions.x;
     let Ok(mut overlay) = overlays.single_mut() else {
         return;
     };
@@ -2159,6 +2351,29 @@ fn update_histogram_brush(
     overlay.display = Display::Flex;
     overlay.left = percent(left * 100.0);
     overlay.width = percent((right - left) * 100.0);
+
+    let width = computed_node.content_box().width();
+    let lower = plot.domain.value_at_plot_x(left * width, width);
+    let upper = plot.domain.value_at_plot_x(right * width, width);
+    let sample_count = plot
+        .samples
+        .iter()
+        .filter(|sample| sample.value >= lower && sample.value <= upper)
+        .count();
+    let selected_fraction = if plot.samples.is_empty() {
+        0.0
+    } else {
+        sample_count as f64 / plot.samples.len() as f64
+    };
+    if let Ok((mut tooltip, mut text)) = tooltips.single_mut() {
+        tooltip.display = Display::Flex;
+        tooltip.left = percent((fractions.x * 100.0 + 1.5).clamp(0.0, 76.0));
+        tooltip.top = percent((fractions.y * 100.0 + 3.0).clamp(0.0, 82.0));
+        text.0 = format!(
+            "{sample_count} {} in selection, frac = {selected_fraction:.4}",
+            if sample_count == 1 { "sample" } else { "samples" }
+        );
+    }
 }
 
 fn finish_histogram_brush(
@@ -2175,7 +2390,20 @@ fn finish_histogram_brush(
     )>,
     view: Single<&HistogramView>,
     joint_view: Option<Single<&JointDistributionView>>,
-    mut overlays: Query<&mut Node, With<ActiveHistogramBrushOverlay>>,
+    mut overlays: Query<
+        &mut Node,
+        (
+            With<ActiveHistogramBrushOverlay>,
+            Without<HistogramTooltip>,
+        ),
+    >,
+    mut tooltips: Query<
+        &mut Node,
+        (
+            With<HistogramTooltip>,
+            Without<ActiveHistogramBrushOverlay>,
+        ),
+    >,
 ) {
     event.propagate(false);
     let Ok((plot, brush, computed_node, target, transform)) = plots.get(event.entity) else {
@@ -2184,6 +2412,9 @@ fn finish_histogram_brush(
     commands
         .entity(event.entity)
         .remove::<HistogramBrushStart>();
+    if let Ok(mut tooltip) = tooltips.single_mut() {
+        tooltip.display = Display::None;
+    }
     let Some(fraction) = plot_pointer_fraction(
         event.pointer_location.position,
         computed_node,
@@ -2518,10 +2749,79 @@ mod tests {
         assert_eq!(plate_ids, vec![7]);
         assert_eq!(paths, vec![vec![0], vec![1]]);
         assert_eq!(points.len(), 3);
-        assert!(
-            points
-                .iter()
-                .any(|point| point.x == 10.0 && point.y == 30.0)
+        assert!(points
+            .iter()
+            .any(|point| point.x == 10.0 && point.y == 30.0));
+    }
+
+    #[test]
+    fn selected_cell_boundaries_merge_adjacent_cells() {
+        let mut selected = vec![0; 9];
+        selected[4] = 1;
+        selected[5] = 1;
+
+        assert_eq!(
+            selected_cell_boundary(&selected, 3, 1, 1),
+            SelectedCellBoundary {
+                left: true,
+                right: false,
+                top: true,
+                bottom: true,
+            }
+        );
+        assert_eq!(
+            selected_cell_boundary(&selected, 3, 2, 1),
+            SelectedCellBoundary {
+                left: false,
+                right: true,
+                top: true,
+                bottom: true,
+            }
+        );
+    }
+
+    #[test]
+    fn histogram_selection_uses_exact_partial_bin_bounds() {
+        let samples = vec![
+            HistogramSample {
+                instance: 0,
+                draw_index: 0,
+                value: 0.1,
+            },
+            HistogramSample {
+                instance: 0,
+                draw_index: 1,
+                value: 0.25,
+            },
+            HistogramSample {
+                instance: 0,
+                draw_index: 2,
+                value: 0.75,
+            },
+            HistogramSample {
+                instance: 0,
+                draw_index: 3,
+                value: 0.9,
+            },
+        ];
+        let selected = selected_instances(&samples, &[Vec::new()], 0.24, 0.76);
+
+        assert_eq!(selected[&Vec::new()], HashSet::from([1, 2]));
+    }
+
+    #[test]
+    fn probability_text_uses_two_sided_and_one_sided_bounds() {
+        assert_eq!(
+            format_interval_probability("beta", -0.25, 0.75, -1.0, 1.0, 0.625),
+            "P(beta > -0.2500 & beta < 0.7500) = 0.6250"
+        );
+        assert_eq!(
+            format_interval_probability("beta", -1.0, 0.75, -1.0, 1.0, 0.875),
+            "P(beta < 0.7500) = 0.8750"
+        );
+        assert_eq!(
+            format_interval_probability("beta", -0.25, 1.0, -1.0, 1.0, 0.75),
+            "P(beta > -0.2500) = 0.7500"
         );
     }
 

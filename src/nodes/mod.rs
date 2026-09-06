@@ -378,24 +378,26 @@ pub fn on_node_click(
         println!("Completed a GraphLink");
 
         //add arrow
-        let from_radius = endpoint_radius(
+        let from_shape = endpoint_shape(
             ends.from,
             &random_nodes,
             &compute_nodes,
             &scalar_nodes,
+            &node_ids,
         );
-        let to_radius = endpoint_radius(
+        let to_shape = endpoint_shape(
             target,
             &random_nodes,
             &compute_nodes,
             &scalar_nodes,
+            &node_ids,
         );
         if let Some((arrow_transform, arrow_mesh)) = link_transform_helper(
             &ends,
             &transforms,
             &mut meshes,
-            from_radius,
-            to_radius,
+            from_shape,
+            to_shape,
         ) {
             commands.entity(unfinished_ent).insert((
                 arrow_mesh,

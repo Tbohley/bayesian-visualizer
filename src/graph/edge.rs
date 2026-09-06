@@ -1,6 +1,9 @@
 use crate::constants::*;
 use crate::graph::*;
-use crate::nodes::{ComputeNode, RandomNode, ScalarNode};
+use crate::nodes::{
+    ComputeNode, GraphNode, RandomNode, ScalarNode, random_node_label,
+    random_node_straight_length,
+};
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::Indices;
 use bevy::mesh::PrimitiveTopology;
@@ -16,6 +19,7 @@ pub fn on_node_drag(
     random_nodes: Query<&RandomNode>,
     compute_nodes: Query<&ComputeNode>,
     scalar_nodes: Query<&ScalarNode>,
+    node_ids: Query<&GraphNode>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     if reduced_view.active {
@@ -34,24 +38,26 @@ pub fn on_node_drag(
         if event.event_target() == link_component.from
             || event.event_target() == link_component.to.unwrap()
         {
-            let from_radius = endpoint_radius(
+            let from_shape = endpoint_shape(
                 link_component.from,
                 &random_nodes,
                 &compute_nodes,
                 &scalar_nodes,
+                &node_ids,
             );
-            let to_radius = endpoint_radius(
+            let to_shape = endpoint_shape(
                 link_component.to.unwrap(),
                 &random_nodes,
                 &compute_nodes,
                 &scalar_nodes,
+                &node_ids,
             );
             let (new_transform, new_mesh) = link_transform_helper(
                 &link_component,
                 &transforms,
                 &mut meshes,
-                from_radius,
-                to_radius,
+                from_shape,
+                to_shape,
             ).unwrap();
             if let Ok(mut link_transform) = transforms.get_mut(link_entity) {
                 if let Ok(mut link_mesh) = mesh_query.get_mut(link_entity) {
@@ -60,6 +66,62 @@ pub fn on_node_drag(
                 }
             }
         }
+    }
+}
+
+/// Reposition links after a rename changes a random node's capsule width.
+pub fn refresh_links_for_resized_random_nodes(
+    changed_random_nodes: Query<Entity, Changed<RandomNode>>,
+    mut graph_links: Query<
+        (&GraphLink, &mut Transform, &mut Mesh2d),
+        (Without<UnfinishedLink>, Without<GraphNode>),
+    >,
+    node_transforms: Query<&Transform, With<GraphNode>>,
+    random_nodes: Query<&RandomNode>,
+    compute_nodes: Query<&ComputeNode>,
+    scalar_nodes: Query<&ScalarNode>,
+    node_ids: Query<&GraphNode>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    if changed_random_nodes.is_empty() {
+        return;
+    }
+
+    for (link, mut transform, mut mesh) in &mut graph_links {
+        let Some(to) = link.to else {
+            continue;
+        };
+        if !changed_random_nodes.contains(link.from) && !changed_random_nodes.contains(to) {
+            continue;
+        }
+        let (Ok(from_transform), Ok(to_transform)) =
+            (node_transforms.get(link.from), node_transforms.get(to))
+        else {
+            continue;
+        };
+        let from_shape = endpoint_shape(
+            link.from,
+            &random_nodes,
+            &compute_nodes,
+            &scalar_nodes,
+            &node_ids,
+        );
+        let to_shape = endpoint_shape(
+            to,
+            &random_nodes,
+            &compute_nodes,
+            &scalar_nodes,
+            &node_ids,
+        );
+        let (translation, rotation, length) = link_geometry(
+            from_transform.translation,
+            to_transform.translation,
+            from_shape,
+            to_shape,
+        );
+        transform.translation = translation;
+        transform.rotation = rotation;
+        mesh.0 = meshes.add(arrow_mesh(length));
     }
 }
 
@@ -96,8 +158,8 @@ pub fn spawn_finished_link(
     to: Entity,
     from_pos: Vec3,
     to_pos: Vec3,
-    from_radius: f32,
-    to_radius: f32,
+    from_shape: EndpointShape,
+    to_shape: EndpointShape,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
 ) -> Entity {
@@ -106,8 +168,8 @@ pub fn spawn_finished_link(
         GraphLink { from, to: Some(to) },
         from_pos,
         to_pos,
-        from_radius,
-        to_radius,
+        from_shape,
+        to_shape,
         meshes,
         materials,
     )
@@ -118,16 +180,16 @@ pub fn spawn_link_visual<B: Bundle>(
     marker: B,
     from_pos: Vec3,
     to_pos: Vec3,
-    from_radius: f32,
-    to_radius: f32,
+    from_shape: EndpointShape,
+    to_shape: EndpointShape,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
 ) -> Entity {
     let (translation, rotation, length) = link_geometry(
         from_pos,
         to_pos,
-        from_radius,
-        to_radius,
+        from_shape,
+        to_shape,
     );
     commands
         .spawn((
@@ -148,8 +210,8 @@ pub fn link_transform_helper(
     link: &GraphLink,
     transforms: &Query<&mut Transform>,
     meshes: &mut ResMut<Assets<Mesh>>,
-    from_radius: f32,
-    to_radius: f32,
+    from_shape: EndpointShape,
+    to_shape: EndpointShape,
 ) -> Option<(Transform, Mesh2d)> {
     let to = link.to?;
 
@@ -159,8 +221,8 @@ pub fn link_transform_helper(
     let (translation, rotation, length) = link_geometry(
         from_pos,
         to_pos,
-        from_radius,
-        to_radius,
+        from_shape,
+        to_shape,
     );
 
     Some((
@@ -173,38 +235,109 @@ pub fn link_transform_helper(
     ))
 }
 
-pub fn endpoint_radius(
+#[derive(Clone, Copy, Debug)]
+pub struct EndpointShape {
+    radius: f32,
+    straight_length: f32,
+}
+
+impl EndpointShape {
+    pub const fn circle(radius: f32) -> Self {
+        Self {
+            radius,
+            straight_length: 0.0,
+        }
+    }
+
+    pub const fn horizontal_capsule(radius: f32, straight_length: f32) -> Self {
+        Self {
+            radius,
+            straight_length,
+        }
+    }
+
+    fn boundary_distance(self, direction: Vec2) -> f32 {
+        let direction = direction.normalize_or_zero();
+        let half_straight = self.straight_length / 2.0;
+        if half_straight == 0.0 || direction == Vec2::ZERO {
+            return self.radius;
+        }
+
+        // A ray exits through a horizontal side when it reaches y = +/-radius
+        // before the rounded end cap begins.
+        if direction.y != 0.0 {
+            let side_distance = self.radius / direction.y.abs();
+            if side_distance * direction.x.abs() <= half_straight {
+                return side_distance;
+            }
+        }
+
+        // Otherwise intersect the circle centered at the relevant end of the
+        // capsule's straight section.
+        let discriminant =
+            (self.radius * self.radius - half_straight.powi(2) * direction.y.powi(2))
+                .max(0.0);
+        half_straight * direction.x.abs() + discriminant.sqrt()
+    }
+}
+
+pub fn endpoint_shape(
     entity: Entity,
     random_nodes: &Query<&RandomNode>,
     compute_nodes: &Query<&ComputeNode>,
     scalar_nodes: &Query<&ScalarNode>,
-) -> f32 {
+    node_ids: &Query<&GraphNode>,
+) -> EndpointShape {
     if scalar_nodes.contains(entity) {
-        SCALAR_NODE_RAD
+        EndpointShape::circle(SCALAR_NODE_RAD)
     } else if compute_nodes.contains(entity) {
-        COMPUTE_NODE_RAD
-    } else if random_nodes.contains(entity) {
-        RANDOM_NODE_RAD
+        EndpointShape::circle(COMPUTE_NODE_RAD)
+    } else if let (Ok(random), Ok(node_id)) = (random_nodes.get(entity), node_ids.get(entity)) {
+        let label = random_node_label(random, node_id.0);
+        EndpointShape::horizontal_capsule(
+            RANDOM_NODE_RAD,
+            random_node_straight_length(&label),
+        )
     } else {
-        RANDOM_NODE_RAD
+        EndpointShape::circle(RANDOM_NODE_RAD)
     }
 }
 
 fn link_geometry(
     from_pos: Vec3,
     to_pos: Vec3,
-    from_radius: f32,
-    to_radius: f32,
+    from_shape: EndpointShape,
+    to_shape: EndpointShape,
 ) -> (Vec3, Quat, f32) {
     let delta = to_pos - from_pos;
     let distance = delta.length();
     let direction = delta.try_normalize().unwrap_or(Vec3::X);
-    let start = from_pos + direction * from_radius.min(distance);
-    let end = to_pos - direction * to_radius.min(distance);
-    let length = (distance - from_radius - to_radius).max(0.0);
+    let from_offset = from_shape.boundary_distance(direction.xy());
+    let to_offset = to_shape.boundary_distance(direction.xy());
+    let start = from_pos + direction * from_offset.min(distance);
+    let end = to_pos - direction * to_offset.min(distance);
+    let length = (distance - from_offset - to_offset).max(0.0);
     (
         start.lerp(end, 0.5),
         Quat::from_rotation_z(delta.y.atan2(delta.x)),
         length,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capsule_boundary_distance_matches_sides_and_end_caps() {
+        let capsule = EndpointShape::horizontal_capsule(20.0, 36.0);
+
+        assert!((capsule.boundary_distance(Vec2::Y) - 20.0).abs() < 0.001);
+        assert!((capsule.boundary_distance(Vec2::X) - 38.0).abs() < 0.001);
+
+        let diagonal = Vec2::new(1.0, 1.0).normalize();
+        let point = diagonal * capsule.boundary_distance(diagonal);
+        let cap_center = Vec2::new(18.0, 0.0);
+        assert!((point.distance(cap_center) - 20.0).abs() < 0.001);
+    }
 }

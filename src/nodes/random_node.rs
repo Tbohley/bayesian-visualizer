@@ -78,11 +78,7 @@ pub fn random_node_label(random_node: &RandomNode, node_num: u32) -> String {
 }
 
 pub fn random_node_mesh(radius: f32, label: &str) -> Mesh {
-    let extra_length = label
-        .chars()
-        .count()
-        .saturating_sub(1) as f32
-        * RANDOM_NODE_NAME_ADVANCE;
+    let extra_length = random_node_straight_length(label);
     if extra_length == 0.0 {
         Mesh::from(Circle::new(radius))
     } else {
@@ -92,12 +88,17 @@ pub fn random_node_mesh(radius: f32, label: &str) -> Mesh {
 }
 
 pub fn random_selection_mesh(label: &str) -> Mesh {
-    let extra_length = label
+    let extra_length = random_node_straight_length(label);
+    capsule_selection_indicator(RANDOM_NODE_RAD, extra_length)
+}
+
+/// Length of the straight middle section of a random node's capsule.
+pub fn random_node_straight_length(label: &str) -> f32 {
+    label
         .chars()
         .count()
         .saturating_sub(1) as f32
-        * RANDOM_NODE_NAME_ADVANCE;
-    capsule_selection_indicator(RANDOM_NODE_RAD, extra_length)
+        * RANDOM_NODE_NAME_ADVANCE
 }
 
 //store parameters for distributions plus a valid default value

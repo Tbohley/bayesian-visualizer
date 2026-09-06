@@ -2,10 +2,13 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 
-use super::{GraphLink, Selected, UnfinishedLink, spawn_link_visual};
+use super::{EndpointShape, GraphLink, Selected, UnfinishedLink, spawn_link_visual};
 use crate::constants::RANDOM_NODE_RAD;
 use crate::data_vis::CloseHistogramPanel;
-use crate::nodes::{ComputeNode, GraphNode, RandomNode, ScalarNode, SelectedIndicator};
+use crate::nodes::{
+    ComputeNode, GraphNode, RandomNode, ScalarNode, SelectedIndicator, random_node_label,
+    random_node_straight_length,
+};
 use crate::sidebar::ReloadSidebar;
 
 #[derive(Resource, Default)]
@@ -52,6 +55,7 @@ pub fn toggle_reduced_view(
         Or<(With<RandomNode>, With<ComputeNode>, With<ScalarNode>)>,
     >,
     transforms: Query<&Transform, With<GraphNode>>,
+    node_ids: Query<&GraphNode>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
@@ -91,6 +95,7 @@ pub fn toggle_reduced_view(
             &mut commands,
             &node_data,
             &transforms,
+            &node_ids,
             &mut meshes,
             &mut materials,
         );
@@ -137,6 +142,7 @@ pub fn refresh_reduced_view(
         Or<(With<RandomNode>, With<ComputeNode>, With<ScalarNode>)>,
     >,
     transforms: Query<&Transform, With<GraphNode>>,
+    node_ids: Query<&GraphNode>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
@@ -153,6 +159,7 @@ pub fn refresh_reduced_view(
         &mut commands,
         &node_data,
         &transforms,
+        &node_ids,
         &mut meshes,
         &mut materials,
     );
@@ -204,6 +211,7 @@ fn spawn_reduced_links(
         Or<(With<RandomNode>, With<ComputeNode>, With<ScalarNode>)>,
     >,
     transforms: &Query<&Transform, With<GraphNode>>,
+    node_ids: &Query<&GraphNode>,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
 ) {
@@ -233,13 +241,29 @@ fn spawn_reduced_links(
         let (Ok(from), Ok(to)) = (transforms.get(source), transforms.get(target)) else {
             continue;
         };
+        let (Ok((_, Some(from_random), _, _)), Ok((_, Some(to_random), _, _))) =
+            (node_data.get(source), node_data.get(target))
+        else {
+            continue;
+        };
+        let (Ok(from_id), Ok(to_id)) = (node_ids.get(source), node_ids.get(target)) else {
+            continue;
+        };
+        let from_label = random_node_label(from_random, from_id.0);
+        let to_label = random_node_label(to_random, to_id.0);
         spawn_link_visual(
             commands,
             (ReducedViewLink, Pickable::IGNORE),
             from.translation,
             to.translation,
-            RANDOM_NODE_RAD,
-            RANDOM_NODE_RAD,
+            EndpointShape::horizontal_capsule(
+                RANDOM_NODE_RAD,
+                random_node_straight_length(&from_label),
+            ),
+            EndpointShape::horizontal_capsule(
+                RANDOM_NODE_RAD,
+                random_node_straight_length(&to_label),
+            ),
             meshes,
             materials,
         );

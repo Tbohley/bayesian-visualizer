@@ -1,11 +1,11 @@
 use super::graph_checks::{ModelResult, ModelValues};
 use super::model_compilation::CompiledGraph;
 use fugue::{
-    adaptive_single_site_mh, DiminishingAdaptation, PriorHandler, SafeReplayHandler,
-    ScoreGivenTrace, Trace,
+    adaptive_single_site_mh, Address, Choice, ChoiceValue, DiminishingAdaptation, Distribution,
+    Handler, PriorHandler, SafeReplayHandler, ScoreGivenTrace, Trace,
 };
 use rand::{rngs::StdRng, SeedableRng};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// All retained posterior executions and their Fugue traces.
 ///
@@ -25,14 +25,83 @@ pub struct ControlledInferenceResult {
     pub cancelled: bool,
 }
 
-fn has_negative_infinite_log_probability(trace: &Trace) -> bool {
-    [trace.log_prior, trace.log_likelihood, trace.log_factors]
-        .into_iter()
-        .any(|logp| logp == f64::NEG_INFINITY)
-        || trace
-            .choices
-            .values()
-            .any(|choice| choice.logp == f64::NEG_INFINITY)
+fn negative_infinite_addresses(trace: &Trace) -> Vec<&str> {
+    trace
+        .choices
+        .values()
+        .filter(|choice| choice.logp == f64::NEG_INFINITY)
+        .map(|choice| choice.addr.0.as_str())
+        .collect()
+}
+
+/// Rescores a trace while retaining the address and current log probability of
+/// observations as well as sampled choices. Fugue's `ScoreGivenTrace` only
+/// stores sampled choices, so its aggregate likelihood cannot identify which
+/// observed variable contributed `-infinity`.
+struct AddressedScoreGivenTrace {
+    base: Trace,
+    trace: Trace,
+}
+
+impl AddressedScoreGivenTrace {
+    fn record(&mut self, addr: &Address, value: ChoiceValue, logp: f64) {
+        self.trace.choices.insert(
+            addr.clone(),
+            Choice {
+                addr: addr.clone(),
+                value,
+                logp,
+            },
+        );
+    }
+}
+
+impl Handler for AddressedScoreGivenTrace {
+    fn on_sample_f64(&mut self, addr: &Address, dist: &dyn Distribution<f64>) -> f64 {
+        let value = self.base.get_f64(addr).expect("missing f64 sample in warmup trace");
+        let logp = dist.log_prob(&value);
+        self.trace.log_prior += logp;
+        self.record(addr, ChoiceValue::F64(value), logp);
+        value
+    }
+
+    fn on_sample_bool(&mut self, _: &Address, _: &dyn Distribution<bool>) -> bool {
+        unreachable!("compiled graphs only contain f64 random variables")
+    }
+
+    fn on_sample_u64(&mut self, _: &Address, _: &dyn Distribution<u64>) -> u64 {
+        unreachable!("compiled graphs only contain f64 random variables")
+    }
+
+    fn on_sample_usize(&mut self, _: &Address, _: &dyn Distribution<usize>) -> usize {
+        unreachable!("compiled graphs only contain f64 random variables")
+    }
+
+    fn on_observe_f64(&mut self, addr: &Address, dist: &dyn Distribution<f64>, value: f64) {
+        let logp = dist.log_prob(&value);
+        self.trace.log_likelihood += logp;
+        self.record(addr, ChoiceValue::F64(value), logp);
+    }
+
+    fn on_observe_bool(&mut self, _: &Address, _: &dyn Distribution<bool>, _: bool) {
+        unreachable!("compiled graphs only contain f64 observations")
+    }
+
+    fn on_observe_u64(&mut self, _: &Address, _: &dyn Distribution<u64>, _: u64) {
+        unreachable!("compiled graphs only contain f64 observations")
+    }
+
+    fn on_observe_usize(&mut self, _: &Address, _: &dyn Distribution<usize>, _: usize) {
+        unreachable!("compiled graphs only contain f64 observations")
+    }
+
+    fn on_factor(&mut self, logw: f64) {
+        self.trace.log_factors += logw;
+    }
+
+    fn finish(self) -> Trace {
+        self.trace
+    }
 }
 
 /// One scalar posterior value and the retained draw that produced it.
@@ -88,7 +157,7 @@ impl CompiledGraph {
         n_warmup: usize,
         should_cancel: impl Fn() -> bool,
         mut on_warmup: impl FnMut(usize),
-        mut on_warmup_complete: impl FnMut(bool),
+        mut on_warmup_complete: impl FnMut(Vec<String>),
         mut on_sample: impl FnMut(usize, &ModelValues),
     ) -> Result<ControlledInferenceResult, String> {
         if n_samples == 0 {
@@ -147,9 +216,20 @@ impl CompiledGraph {
             model_fn(),
         );
         current_trace = scored_warmup_trace;
-        let warmup_had_negative_infinite_log_probability =
-            has_negative_infinite_log_probability(&current_trace);
-        on_warmup_complete(warmup_had_negative_infinite_log_probability);
+        let (_, diagnostic_trace) = fugue::runtime::handler::run(
+            AddressedScoreGivenTrace {
+                base: current_trace.clone(),
+                trace: Trace::default(),
+            },
+            model_fn(),
+        );
+        let negative_infinite_variables = negative_infinite_addresses(&diagnostic_trace)
+            .into_iter()
+            .map(|address| self.variable_label_for_address(address))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        on_warmup_complete(negative_infinite_variables);
 
         let mut samples_by_node = HashMap::<u32, Vec<ModelResult>>::new();
         let mut traces = Vec::with_capacity(n_samples);
@@ -202,6 +282,23 @@ impl CompiledGraph {
             },
             cancelled,
         })
+    }
+
+    fn variable_label_for_address(&self, address: &str) -> String {
+        let node_id = address
+            .strip_prefix("node#")
+            .and_then(|suffix| suffix.split('/').next())
+            .and_then(|id| id.parse::<u32>().ok());
+        node_id
+            .and_then(|id| self.graph().nodes.get(&id))
+            .map(|node| match node {
+                super::NodeIR::Random {
+                    label: Some(label), ..
+                } => label.clone(),
+                super::NodeIR::Random { id, .. } => format!("node {id}"),
+                _ => address.to_string(),
+            })
+            .unwrap_or_else(|| address.to_string())
     }
 
     /// Replays one retained posterior trace while freshly sampling nodes that
@@ -411,13 +508,83 @@ mod tests {
             log_factors: 0.0,
             ..Default::default()
         };
-        assert!(!has_negative_infinite_log_probability(&finite));
+        assert!(negative_infinite_addresses(&finite).is_empty());
 
-        let invalid = Trace {
-            log_likelihood: f64::NEG_INFINITY,
-            ..finite
-        };
-        assert!(has_negative_infinite_log_probability(&invalid));
+        let mut invalid = finite;
+        let address = Address("node#3/plate#10[2]".to_string());
+        invalid.choices.insert(
+            address.clone(),
+            Choice {
+                addr: address,
+                value: ChoiceValue::F64(1.0),
+                logp: f64::NEG_INFINITY,
+            },
+        );
+        assert_eq!(
+            negative_infinite_addresses(&invalid),
+            vec!["node#3/plate#10[2]"]
+        );
+
+        let compiled = simple_random_graph();
+        assert_eq!(
+            compiled.variable_label_for_address("node#3/plate#10[2]"),
+            "theta"
+        );
+    }
+
+    #[test]
+    fn reports_observed_variable_with_negative_infinite_warmup_likelihood() {
+        use std::cell::RefCell;
+
+        let mut graph = GraphIR::new();
+        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 0.0 });
+        graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 1.0 });
+        graph.nodes.insert(
+            3,
+            NodeIR::Random {
+                id: 3,
+                label: Some("theta".to_string()),
+                dist_type: "Normal".to_string(),
+                params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
+            },
+        );
+        graph.nodes.insert(
+            4,
+            NodeIR::Random {
+                id: 4,
+                label: Some("y".to_string()),
+                dist_type: "Uniform".to_string(),
+                params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
+            },
+        );
+        graph.plates.insert(
+            10,
+            PlateIR {
+                id: 10,
+                n: 1,
+                nodes: vec![4],
+                plates: Vec::new(),
+                data: HashMap::from([("observed".to_string(), vec![2.0])]),
+                mapping: HashMap::from([(4, "observed".to_string())]),
+            },
+        );
+
+        let diagnostic = RefCell::new(Vec::new());
+        graph
+            .compile()
+            .unwrap()
+            .run_inference_controlled(
+                42,
+                1,
+                1,
+                || false,
+                |_| {},
+                |variables| *diagnostic.borrow_mut() = variables,
+                |_, _| {},
+            )
+            .unwrap();
+
+        assert_eq!(*diagnostic.borrow(), vec!["y"]);
     }
 
     #[test]
