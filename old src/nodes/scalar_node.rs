@@ -1,5 +1,5 @@
 use super::*;
-use bevy::prelude::*;
+use bevy::{prelude::*, sprite::Anchor};
 
 pub fn new_scalar(
     commands: &mut Commands,
@@ -69,6 +69,7 @@ pub fn replace_node_label(
     node_entity: Entity,
     label_text: impl Into<String>,
     labels: &Query<(Entity, &NodeLabel, &ChildOf)>,
+    selected_plate: Option<&Plate>,
 ) {
     let label_text = label_text.into();
 
@@ -78,6 +79,20 @@ pub fn replace_node_label(
         }
     }
 
+    if let Some(plate) = selected_plate {
+        commands.entity(node_entity).with_child((
+            NodeLabel,
+            Text2d::new(label_text.clone()),
+            TextColor(PLATE_COLOR),
+            Anchor::BOTTOM_RIGHT,
+            TextFont {
+                font_size: px(NODE_LABEL_FONT_SIZE).into(),
+                ..text_font()
+            },
+            Pickable::IGNORE,
+            Transform::from_translation(plate.get_corner_pos()),
+        ));
+    } else {
         commands.entity(node_entity).with_child((
             NodeLabel,
             Text2d::new(label_text.clone()),
@@ -93,6 +108,7 @@ pub fn replace_node_label(
             Transform::from_xyz(0.0, 0.0, 2.0),
         ));
     }
+}
 
 pub fn replace_scalar_label(
     commands: &mut Commands,

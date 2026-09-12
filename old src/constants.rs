@@ -139,28 +139,5 @@ pub fn bundled_presets() -> Vec<GraphPreset> {
         plates: vec![
             PresetPlate { id: 1, bounds: PresetBounds { min: [-138.90625, -2.8125076], max: [310.1289, 107.65624] }, dataset_id: "sim_sleep_react.csv", mapping: vec![PresetMapping { node: 2, column: "sleep_hours" }, PresetMapping { node: 3, column: "reaction_time_ms" }] }
         ],
-    },
-
-    GraphPreset {
-        id: "simple_overlap",
-        title: "Overlapping",
-        description: "Replace me",
-        study_condition: None,
-        nodes: vec![
-            PresetNode::Scalar { id: 3, position: [-115.14845, 231.65237], value: 1.0, name: Some("row_sd") },
-            PresetNode::Scalar { id: 4, position: [206.73833, 238.65236], value: 0.6, name: Some("col_sd") },
-            PresetNode::Scalar { id: 5, position: [-301.47656, 83.9258], value: 0.0, name: None },
-            PresetNode::Scalar { id: 6, position: [366.54303, 90.67969], value: 0.0, name: None },
-            PresetNode::Scalar { id: 7, position: [43.875015, -100.187515], value: 0.3, name: Some("noise_sd") },
-            PresetNode::Random { id: 8, position: [-128.4805, 93.582054], name: Some("row_eff"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(5) }, PresetParameter { name: "std_dev", source: Some(3) }] },
-            PresetNode::Random { id: 9, position: [152.74223, 94.49612], name: Some("col_eff"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(6) }, PresetParameter { name: "std_dev", source: Some(4) }] },
-            PresetNode::Compute { id: 10, position: [5.2851744, 116.70704], operation: Operation::Add, parameters: vec![PresetParameter { name: "first", source: Some(8) }, PresetParameter { name: "second", source: Some(9) }] },
-            PresetNode::Random { id: 11, position: [11.371099, 65.69141], name: Some("outcome"), distribution: "Normal", parameters: vec![PresetParameter { name: "mean", source: Some(10) }, PresetParameter { name: "std_dev", source: Some(7) }] }
-        ],
-        plates: vec![
-            PresetPlate { id: 1, bounds: PresetBounds { min: [-191.53908, -1.4765472], max: [89.832016, 182.43361] }, dataset_id: "No dataset", mapping: vec![PresetMapping { node: 8, column: "unobserved" }, PresetMapping { node: 11, column: "unobserved" }] },
-            PresetPlate { id: 2, bounds: PresetBounds { min: [-71.57811, 33.164078], max: [246.71095, 151.4883] }, dataset_id: "No dataset", mapping: vec![PresetMapping { node: 9, column: "unobserved" }, PresetMapping { node: 11, column: "unobserved" }] }
-        ],
-    },
-    ]
+    }]
 }

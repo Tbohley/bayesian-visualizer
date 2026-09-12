@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-    path::Path,
-};
+use std::{collections::{HashMap, HashSet}, error::Error, path::Path};
 
 use super::*;
 
@@ -17,8 +13,10 @@ impl Dataset {
         let mut reader = csv::Reader::from_path(path)?;
         let headers: Vec<String> = reader.headers()?.iter().map(String::from).collect();
 
-        let mut data: HashMap<String, Vec<f64>> =
-            headers.iter().map(|h| (h.clone(), Vec::new())).collect();
+        let mut data: HashMap<String, Vec<f64>> = headers
+            .iter()
+            .map(|h| (h.clone(), Vec::new()))
+            .collect();
 
         let mut n = 0;
         for result in reader.records() {
@@ -40,13 +38,7 @@ impl Plate{
         commands: &mut Commands,
         sidebar_entity: Entity,
         nodes: &Query<
-            (
-                Entity,
-                &GraphNode,
-                &Transform,
-                Option<&RandomNode>,
-                Option<&ScalarNode>,
-            ),
+            (Entity, &GraphNode, &Transform, Option<&RandomNode>, Option<&ScalarNode>),
             Or<(With<RandomNode>, With<ScalarNode>)>,
         >,
     ) {
@@ -83,8 +75,7 @@ impl Plate{
         ));
 
     //spawn context menu
-        let context_menu = commands
-            .spawn((
+    let context_menu = commands.spawn((
         Name::new("dataset_context_menu"),
         Button,
         Node {
@@ -106,8 +97,7 @@ impl Plate{
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
-            ))
-            .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
+    )).observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
         event.propagate(false);
         println!("Clicked context menu");
         debug!("click: {}", event.pointer_location.position);
@@ -115,53 +105,9 @@ impl Plate{
         commands.trigger(OpenDatasetMenu {
             pos: event.pointer_location.position,
         });
-            })
-            .id();
+    }).id();
     commands.entity(sidebar_entity).add_child(context_menu);
     commands.entity(sidebar_entity).with_child(divider());
-
-        if self.data.data.is_empty() {
-            let extent = commands
-                .spawn((
-                    Node {
-                        width: percent(100.),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: px(4.),
-                        margin: px(8.).bottom(),
-                        ..default()
-                    },
-                    children![
-                        (
-                            Text::new("Index size"),
-                            text_font(),
-                            TextColor(NODE_NAME_COLOR)
-                        ),
-                        (
-                            PlateNTextbox,
-                            Node {
-                                width: px(120.),
-                                min_height: px(25.),
-                                border: px(2).all(),
-                                padding: px(4).all(),
-                                ..default()
-                            },
-                            BorderColor::from(Color::from(SLATE_300)),
-                            BackgroundColor(DARK_GREY.into()),
-                            EditableText::new(self.data.n.to_string()),
-                            text_font(),
-                            TextColor(Color::WHITE),
-                            TextLayout::no_wrap(),
-                            TextCursorStyle::default(),
-                            TabIndex(1),
-                            Name::new("plate_extent_textbox"),
-                        )
-                    ],
-                ))
-                .id();
-            commands.entity(sidebar_entity).add_child(extent);
-            commands.entity(sidebar_entity).with_child(divider());
-            return;
-        }
 
         for (entity, graph_node, _, random, scalar) in contents {
             let label = match (random, scalar) {
@@ -188,20 +134,20 @@ impl Plate{
                 .expect("contained nodes should have a plate mapping")
                 .clone();
             let mapping_menu = selector_button(commands, "plate_mapping_context_menu", &mapping)
-                .observe(
-                    move |mut event: On<Pointer<Press>>, mut commands: Commands| {
+                .observe(move |mut event: On<Pointer<Press>>, mut commands: Commands| {
                     event.propagate(false);
                     commands.trigger(OpenPlateMappingMenu {
                         pos: event.pointer_location.position,
                         node: entity,
                     });
-                    },
-                )
+                })
                 .id();
             commands.entity(sidebar_entity).add_child(mapping_menu);
         }
         
         commands.entity(sidebar_entity).with_child(divider());
+
+
     }
 }
 
@@ -249,27 +195,11 @@ fn on_select_dataset(
     let Ok(item) = menu_items.get(event.original_event_target()) else {
         return;
     };
-    let Ok(mut plate) = plates.get_mut(*selected) else {
+    let Some(dataset) = datasets.datasets.iter().find(|dataset| dataset.name == item.0) else {
+        warn!("Selected dataset '{}' is no longer available", item.0);
         return;
     };
-
-    if item.0 == "No dataset" {
-        plate.data.name = item.0.clone();
-        plate.data.data.clear();
-        plate
-            .mapping
-            .values_mut()
-            .for_each(|mapping| *mapping = "unobserved".into());
-        commands.trigger(CloseContextMenus);
-        commands.trigger(ReloadSidebar);
-        return;
-    }
-    let Some(dataset) = datasets
-        .datasets
-        .iter()
-        .find(|dataset| dataset.name == item.0)
-    else {
-        warn!("Selected dataset '{}' is no longer available", item.0);
+    let Ok(mut plate) = plates.get_mut(*selected) else {
         return;
     };
 
@@ -311,7 +241,6 @@ pub fn on_open_dataset_menu(
         .id();
 
     commands.entity(menu).with_children(|parent| {
-        parent.spawn(context_item("No dataset"));
         for dataset in &datasets.datasets {
             parent.spawn(context_item(&dataset.name));
         }

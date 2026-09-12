@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
-use super::{
-    Plate, PlateBorder, PlateBounds, PlateDraft, PlateIndexHandle, PlateIndexLabel, Selected,
-};
-use crate::bevy_to_fugue::{GraphIRResource, InferenceStatusResource};
+use super::{Plate, PlateBorder, PlateBounds, PlateDraft, Selected};
 use crate::constants::*;
-use crate::data_vis::{HistogramSubject, OpenHistogramPanel};
-use crate::nodes::{GraphNode, RandomNode, ScalarNode, SelectedIndicator};
+use crate::nodes::{
+    GraphNode, NodeLabel, RandomNode, ScalarNode, SelectedIndicator, replace_node_label,
+};
 use crate::sidebar::ReloadSidebar;
 use bevy::prelude::*;
 
@@ -111,146 +109,19 @@ pub fn spawn_completed_plate(
         .id();
 
     add_plate_borders(commands, plate_entity, Some(size), meshes, materials);
-    spawn_plate_handle(commands, plate_entity, size);
-    plate_entity
-}
-
-fn spawn_plate_handle(commands: &mut Commands, plate: Entity, size: Vec2) {
-    let handle = commands
-        .spawn((
-            PlateIndexHandle,
-            Sprite::from_color(PLATE_COLOR, Vec2::splat(24.0)),
-            Pickable {
-                should_block_lower: true,
-                is_hoverable: true,
-            },
-            Transform::from_xyz(size.x / 2.0 - 12.0, -size.y / 2.0 + 12.0, 3.0),
-        ))
-        .observe(on_plate_handle_click)
-        .id();
-    commands.entity(handle).with_child((
-        PlateIndexLabel,
-        Text2d::new("A"),
-        TextColor(Color::WHITE),
+    commands.entity(plate_entity).with_child((
+        NodeLabel,
+        Text2d::new("N"),
+        TextColor(PLATE_COLOR),
+        bevy::sprite::Anchor::BOTTOM_RIGHT,
         TextFont {
-            font_size: px(14).into(),
+            font_size: px(NODE_LABEL_FONT_SIZE).into(),
             ..text_font()
         },
         Pickable::IGNORE,
-        Transform::from_xyz(0.0, 0.0, 1.0),
+        Transform::from_translation(Vec3::new(size.x / 2.0 - 5.0, -size.y / 2.0 + 5.0, 1.0)),
     ));
-    commands.entity(plate).add_child(handle);
-}
-
-pub fn plate_index_label(mut index: usize) -> String {
-    let mut label = String::new();
-    loop {
-        label.insert(0, (b'A' + (index % 26) as u8) as char);
-        if index < 26 {
-            break;
-        }
-        index = index / 26 - 1;
-    }
-    label
-}
-
-pub fn relabel_plates(
-    changed: Query<(), Or<(Added<PlateIndexHandle>, Changed<GraphNode>)>>,
-    mut removed: RemovedComponents<Plate>,
-    plates: Query<(Entity, &GraphNode), With<Plate>>,
-    handles: Query<&ChildOf, With<PlateIndexHandle>>,
-    mut labels: Query<(&ChildOf, &mut Text2d), With<PlateIndexLabel>>,
-) {
-    if changed.is_empty() && removed.read().next().is_none() {
-        return;
-    }
-    let mut ordered = plates.iter().collect::<Vec<_>>();
-    ordered.sort_by_key(|(_, id)| id.0);
-    let ranks = ordered
-        .into_iter()
-        .enumerate()
-        .map(|(rank, (entity, _))| (entity, plate_index_label(rank)))
-        .collect::<HashMap<_, _>>();
-    for (child_of, mut text) in &mut labels {
-        if let Ok(handle_parent) = handles.get(child_of.parent())
-            && let Some(label) = ranks.get(&handle_parent.parent())
-        {
-            text.0.clone_from(label);
-        }
-    }
-}
-
-fn on_plate_handle_click(
-    mut event: On<Pointer<Click>>,
-    mut commands: Commands,
-    parents: Query<&ChildOf, With<PlateIndexHandle>>,
-    node_ids: Query<&GraphNode, With<Plate>>,
-    selected: Option<Single<Entity, With<Selected>>>,
-    selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
-    compiled: Option<Res<GraphIRResource>>,
-    inference: Option<Res<InferenceStatusResource>>,
-) {
-    if event.count != 1 || inference.is_none() {
-        return;
-    }
-    event.propagate(false);
-    let Ok(parent) = parents.get(event.event_target()) else {
-        return;
-    };
-    let plate = parent.parent();
-    if let Some(selected) = selected {
-        let selected = *selected;
-        commands.entity(selected).remove::<Selected>();
-        for (indicator, parent) in &selection_indicators {
-            if parent.parent() == selected {
-                commands.entity(indicator).despawn();
-            }
-        }
-    }
-    commands.entity(plate).insert(Selected);
-    commands.trigger(ReloadSidebar);
-    if compiled.is_some()
-        && let Ok(id) = node_ids.get(plate)
-    {
-        commands.trigger(OpenHistogramPanel {
-            subject: HistogramSubject::PlateIndex(id.0),
-            clear_toasts: true,
-        });
-    }
-}
-
-pub fn update_plate_handle_colors(
-    selected: Query<Entity, (With<Plate>, With<Selected>)>,
-    inference: Option<Res<InferenceStatusResource>>,
-    added_handles: Query<(), Added<PlateIndexHandle>>,
-    mut handles: Query<(&ChildOf, &mut Sprite, &mut Pickable), With<PlateIndexHandle>>,
-    mut previous: Local<(Option<Entity>, bool)>,
-) {
-    let selected = selected.iter().next();
-    let inference_available = inference.is_some();
-    let inference_changed = inference.as_ref().is_some_and(|status| status.is_changed());
-    if *previous == (selected, inference_available)
-        && !inference_changed
-        && added_handles.is_empty()
-    {
-        return;
-    }
-    *previous = (selected, inference_available);
-    for (parent, mut sprite, mut pickable) in &mut handles {
-        *pickable = if inference_available {
-            Pickable {
-                should_block_lower: true,
-                is_hoverable: true,
-            }
-        } else {
-            Pickable::IGNORE
-        };
-        sprite.color = if selected == Some(parent.parent()) {
-            Color::srgb(0.18, 0.38, 0.75)
-        } else {
-            PLATE_COLOR
-        };
-    }
+    plate_entity
 }
 
 fn add_plate_borders(
@@ -417,6 +288,7 @@ pub fn on_plate_drag_end(
     _event: On<Pointer<DragEnd>>,
     mut commands: Commands,
     plate: Single<(Entity, &mut Plate), With<PlateDraft>>,
+    labels: Query<(Entity, &NodeLabel, &ChildOf)>,
     nodes: Query<(Entity, &Transform), Or<(With<RandomNode>, With<ScalarNode>)>>,
     graph_nodes: Query<&GraphNode>,
 ) {
@@ -439,7 +311,7 @@ pub fn on_plate_drag_end(
             .entity(entity)
             .insert(GraphNode(id))
             .remove::<PlateDraft>();
-        spawn_plate_handle(&mut commands, entity, plate.bounds.size());
+        replace_node_label(&mut commands, entity, format!("N"), &labels, Some(&plate))
     } else {
         commands.entity(entity).despawn();
     }
@@ -493,15 +365,5 @@ mod tests {
         assert_eq!(bounds.size(), size);
         assert_eq!(bounds.min, Vec2::new(-5.0, 45.0));
         assert_eq!(bounds.max, Vec2::new(35.0, 105.0));
-    }
-
-    #[test]
-    fn plate_letters_are_deterministic_beyond_z() {
-        assert_eq!(plate_index_label(0), "A");
-        assert_eq!(plate_index_label(25), "Z");
-        assert_eq!(plate_index_label(26), "AA");
-        assert_eq!(plate_index_label(27), "AB");
-        assert_eq!(plate_index_label(701), "ZZ");
-        assert_eq!(plate_index_label(702), "AAA");
     }
 }

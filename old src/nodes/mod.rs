@@ -1,19 +1,19 @@
-pub mod compute_node;
 pub mod random_node;
+pub mod compute_node;
 pub mod scalar_node;
-use crate::bevy_to_fugue::InferenceResultResource;
+pub use random_node::*;
+pub use compute_node::*;
+pub use scalar_node::*;
 use crate::constants::*;
-use crate::data_vis::{
-    CloseHistogramPanel, HistogramView, OpenHistogramPanel,
-    OpenJointDistributionView,
-};
+use bevy::prelude::*;
 use crate::graph::*;
 use crate::sidebar::*;
 use crate::ui::*;
-use bevy::prelude::*;
-pub use compute_node::*;
-pub use random_node::*;
-pub use scalar_node::*;
+use crate::bevy_to_fugue::InferenceResultResource;
+use crate::data_vis::{
+    CloseHistogramPanel, HistogramView, OpenHistogramPanel, OpenJointDistributionView,
+    DEFAULT_HISTOGRAM_BINS,
+};
 
 //on all node entities
 #[derive(Component)]
@@ -28,7 +28,7 @@ pub struct NodeInterior;
 pub enum NodeType{
     Random,
     Compute,
-    Scalar,
+    Scalar
 }
 
 #[derive(Component)]
@@ -44,7 +44,7 @@ pub enum Operation{
     Logarithm,
     Power,
     Sum,
-    Product,
+    Product
 }
 
 #[derive(Debug, Clone)]
@@ -87,28 +87,16 @@ pub fn set_node_name(
     mut meshes: ResMut<Assets<Mesh>>,
     mut random_nodes: Query<
         (&GraphNode, &mut RandomNode, &mut Mesh2d),
-        (
-            Without<ScalarNode>,
-            Without<NodeInterior>,
-            Without<SelectedIndicator>,
-        ),
+        (Without<ScalarNode>, Without<NodeInterior>, Without<SelectedIndicator>),
     >,
     mut scalar_nodes: Query<&mut ScalarNode, Without<RandomNode>>,
     mut interiors: Query<
         (&ChildOf, &mut Mesh2d),
-        (
-            With<NodeInterior>,
-            Without<RandomNode>,
-            Without<SelectedIndicator>,
-        ),
+        (With<NodeInterior>, Without<RandomNode>, Without<SelectedIndicator>),
     >,
     mut indicators: Query<
         (&ChildOf, &mut Mesh2d),
-        (
-            With<SelectedIndicator>,
-            Without<RandomNode>,
-            Without<NodeInterior>,
-        ),
+        (With<SelectedIndicator>, Without<RandomNode>, Without<NodeInterior>),
     >,
     mut labels: Query<(&ChildOf, &mut Text2d), With<NodeLabel>>,
     plates: Query<&Plate, Without<PlateDraft>>,
@@ -163,10 +151,7 @@ pub fn scalar_display_label(
     scalar: &ScalarNode,
     plates: &Query<&Plate, Without<PlateDraft>>,
 ) -> String {
-    scalar
-        .name
-        .clone()
-        .or_else(|| {
+    scalar.name.clone().or_else(|| {
         plates.iter().find_map(|plate| {
             plate
                 .mapping
@@ -174,8 +159,7 @@ pub fn scalar_display_label(
                 .filter(|column| column.as_str() != "unobserved")
                 .cloned()
         })
-        })
-        .unwrap_or_else(|| format!("{:.1}", scalar.val))
+    }).unwrap_or_else(|| format!("{:.1}", scalar.val))
 }
 
 pub trait NodeDisplay{
@@ -187,26 +171,22 @@ pub trait NodeDisplay{
 pub struct RandomNode{
     pub name: Option<String>,
     pub dist_type: String,
-    pub params: Vec<ParamValue>,
+    pub params: Vec<ParamValue>
 }
 
 impl NodeDisplay for RandomNode{
     fn label(&self) -> String{
-        format![
-            "{}{}",
-            match self.name.clone() {
+        format!["{}{}", match self.name.clone() {
             Some(n) => n + " ~ ",
-                None => "var ~ ".to_string(),
-            },
-            self.dist_type
-        ]
+            None => "var ~ ".to_string()
+        }, self.dist_type]
     }
 }
 
 #[derive(Component)]
 pub struct ComputeNode{
     pub operation: Operation,
-    pub params: Vec<ParamValue>,
+    pub params: Vec<ParamValue>
 }
 
 #[derive(Component)]
@@ -226,16 +206,16 @@ pub fn update_node_observation_colors(
     mut materials: ResMut<Assets<ColorMaterial>>,
     plates: Query<&Plate, Without<PlateDraft>>,
     mut labels: Query<(&ChildOf, &mut Text2d), With<NodeLabel>>,
-    nodes: Query<
-        (
+    nodes: Query<(
         Entity,
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Has<ObservedNode>,
-        ),
-        Or<(With<RandomNode>, With<ScalarNode>)>,
+    ), Or<(With<RandomNode>, With<ScalarNode>)>>,
+    mut interiors: Query<
+        (&ChildOf, &mut MeshMaterial2d<ColorMaterial>),
+        With<NodeInterior>,
     >,
-    mut interiors: Query<(&ChildOf, &mut MeshMaterial2d<ColorMaterial>), With<NodeInterior>>,
 ) {
     for (entity, random, scalar, was_observed) in &nodes {
         let is_observed = plates.iter().any(|plate| {
@@ -267,10 +247,7 @@ pub fn update_node_observation_colors(
         }
 
         if let Some(scalar) = scalar {
-            let label = scalar
-                .name
-                .clone()
-                .or_else(|| {
+            let label = scalar.name.clone().or_else(|| {
                 plates.iter().find_map(|plate| {
                     plate
                         .mapping
@@ -278,8 +255,7 @@ pub fn update_node_observation_colors(
                         .filter(|column| column.as_str() != "unobserved")
                         .cloned()
                 })
-                })
-                .unwrap_or_else(|| format!("{:.1}", scalar.val));
+            }).unwrap_or_else(|| format!("{:.1}", scalar.val));
             for (child_of, mut text) in &mut labels {
                 if child_of.parent() == entity && text.0 != label {
                     text.0 = label.clone();
@@ -291,9 +267,7 @@ pub fn update_node_observation_colors(
 
 impl NodeDisplay for ScalarNode{
     fn label(&self) -> String{
-        self.name
-            .clone()
-            .unwrap_or_else(|| format!["{:.2}", self.val])
+        self.name.clone().unwrap_or_else(|| format!["{:.2}", self.val])
     }
 }
 
@@ -353,9 +327,11 @@ pub fn on_background_click(
     match node_mode.into_inner().0 {
         NodeType::Random => new_random(&mut commands, loc, node_num, meshes, materials),
         NodeType::Compute => new_compute(&mut commands, loc, node_num, meshes, materials),
-        NodeType::Scalar => new_scalar(&mut commands, loc, node_num, meshes, materials),
+        NodeType::Scalar => new_scalar(&mut commands, loc, node_num, meshes, materials)
     };
+    
 }
+
 
 //multifunctional: single click to edit a node, shift click two nodes consecutively to create a link
 pub fn on_node_click(
@@ -379,15 +355,12 @@ pub fn on_node_click(
     let shift_held = input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let joint_pair = histogram_view.as_ref().and_then(|view| {
         let y_node_id = node_ids.get(event.event_target()).ok()?.0;
-        let crate::data_vis::HistogramSubject::Node(x_node_id) = view.subject else {
-            return None;
-        };
-        (inference_results.is_some() && y_node_id != x_node_id).then_some((x_node_id, y_node_id))
+        (inference_results.is_some() && y_node_id != view.node_id)
+            .then_some((view.node_id, y_node_id))
     });
     //if there is an unfinished GraphLink, complete it.
-    if !reduced_view.active
-        && let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut()
-    {
+    if !reduced_view.active && let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut() {
+
         commands.entity(unfinished_ent).remove::<UnfinishedLink>();
 
         //if user tries to create a link from a node to itself
@@ -419,9 +392,13 @@ pub fn on_node_click(
             &scalar_nodes,
             &node_ids,
         );
-        if let Some((arrow_transform, arrow_mesh)) =
-            link_transform_helper(&ends, &transforms, &mut meshes, from_shape, to_shape)
-        {
+        if let Some((arrow_transform, arrow_mesh)) = link_transform_helper(
+            &ends,
+            &transforms,
+            &mut meshes,
+            from_shape,
+            to_shape,
+        ) {
             commands.entity(unfinished_ent).insert((
                 arrow_mesh,
                 MeshMaterial2d(materials.add(ARROW_COLOR)),
@@ -439,9 +416,9 @@ pub fn on_node_click(
         commands.spawn((
             GraphLink{
                 from: event.event_target(),
-                to: None,
+                to: None
             },
-            UnfinishedLink,
+            UnfinishedLink
         ));
         println!("Created an UnfinishedLink");
     //normal click, select the node
@@ -460,6 +437,7 @@ pub fn on_node_click(
                         commands.entity(indicator_entity).despawn();
                     }
                 }
+                
             }
             //select this node
             let selection_mesh = if let Ok(random) = random_nodes.get(event.event_target()) {
@@ -475,29 +453,30 @@ pub fn on_node_click(
             } else {
                 selection_indicator(RANDOM_NODE_RAD)
             };
-            commands
-                .entity(event.event_target())
-                .insert(Selected)
-                .with_child((
+            commands.entity(event.event_target()).insert(
+                Selected
+            ).with_child((
                     SelectedIndicator,
                     Pickable::IGNORE,
                     Mesh2d(meshes.add(selection_mesh)),
                     MeshMaterial2d(materials.add(SELECTION_INDICATOR_COLOR)),
-                    Transform::from_xyz(0.0, 0.0, 1.),
-                ));
+                    Transform::from_xyz(0.0, 0.0, 1.)));
 
             commands.trigger(ReloadSidebar);
 
             if let Ok(node) = node_ids.get(event.event_target()) {
                 if inference_results.is_some() {
                     commands.trigger(OpenHistogramPanel {
-                        subject: crate::data_vis::HistogramSubject::Node(node.0),
+                        node_id: node.0,
+                        bin_count: DEFAULT_HISTOGRAM_BINS,
                         clear_toasts: true,
                     });
                 } else {
                     commands.trigger(CloseHistogramPanel);
                 }
             }
+
+
         }
     }
 }

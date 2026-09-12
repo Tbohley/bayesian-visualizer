@@ -1,16 +1,19 @@
+use bevy::{
+    input_focus::InputFocus,
+    prelude::*,
+    text::EditableText,
+    ui::InteractionDisabled,
+};
+use std::sync::atomic::Ordering;
 use super::*;
 use crate::bayesian_core::GraphIR;
-use crate::bevy_to_fugue::*;
+use crate::nodes::*;
 use crate::constants::*;
+use crate::bevy_to_fugue::*;
 use crate::data_vis::{
-    CloseHistogramPanel, HistogramSelectionControls, HistogramSelectionStatus, PlateIndexScopes,
-    SampleSelections, deselect_histogram_indices, deselect_histogram_results,
+    CloseHistogramPanel, HistogramSelectionControls, HistogramSelectionStatus, SampleSelections,
     deselect_histogram_selection,
 };
-use crate::nodes::*;
-use bevy::{input_focus::InputFocus, prelude::*, text::EditableText, ui::InteractionDisabled};
-use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 
 const DISABLED_CONTROL_COLOR: Color = Color::srgb(0.35, 0.35, 0.35);
 const DISABLED_TEXT_COLOR: Color = Color::srgb(0.65, 0.65, 0.65);
@@ -18,12 +21,15 @@ const DISABLED_TEXT_COLOR: Color = Color::srgb(0.65, 0.65, 0.65);
 #[derive(Component)]
 struct NodeTypeButtonLabel;
 
-pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &GlobalSidebar)>) {
+
+pub fn load_global_sidebar(
+    mut commands: Commands,
+    global: Query<(Entity, &GlobalSidebar)>,
+){
     for (sidebar_entity, _comp) in global.iter(){
         commands.entity(sidebar_entity).despawn();
     }
-    let global_sidebar_entity = commands
-        .spawn((
+    let global_sidebar_entity = commands.spawn((
         GlobalSidebar,
         Node {
             position_type: PositionType::Absolute,
@@ -35,16 +41,14 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
             padding: px(16).all(),
             ..default()
         },
-            BackgroundColor(DARK_GREY.into()),
-        ))
-        .observe(
+        BackgroundColor(DARK_GREY.into())
+    )).observe(
         //sidebar observes clicks to close distribution context menu
         |_: On<Pointer<Press>>, mut commands: Commands| {
             commands.trigger(CloseContextMenus);
-            },
-        )
-        .id();
-    commands.entity(global_sidebar_entity).with_child((
+    }).id();
+    commands.entity(global_sidebar_entity).with_child(
+        (
             Text::new("Bayesian Visualizer"),
             text_font(),
             Node {
@@ -54,8 +58,7 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
             TextColor(NODE_NAME_COLOR),
         ));
 
-    let load_preset_button = commands
-        .spawn((
+    let load_preset_button = commands.spawn((
         Name::new("load_preset_button"),
         Button,
         Node {
@@ -77,20 +80,15 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
-        ))
-        .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
+    )).observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
         event.propagate(false);
         commands.trigger(OpenPresetMenu {
             pos: event.pointer_location.position,
         });
-        })
-        .id();
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(load_preset_button);
+    }).id();
+    commands.entity(global_sidebar_entity).add_child(load_preset_button);
 
-    let reduced_view_button = commands
-        .spawn((
+    let reduced_view_button = commands.spawn((
         Name::new("reduced_view_button"),
         Button,
         Node {
@@ -113,15 +111,11 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
-        ))
-        .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
+    )).observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
         event.propagate(false);
         commands.trigger(ToggleReducedView);
-        })
-        .id();
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(reduced_view_button);
+    }).id();
+    commands.entity(global_sidebar_entity).add_child(reduced_view_button);
 
     commands.entity(global_sidebar_entity).with_child(divider());
 
@@ -135,8 +129,7 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
         TextColor(NODE_NAME_COLOR),
     ));
 
-    let nodemode_menu = commands
-        .spawn((
+    let nodemode_menu = commands.spawn((
         Name::new("node_mode_context_menu"),
         Button,
         Node {
@@ -159,19 +152,16 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
-        ))
-        .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
+    )).observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
         event.propagate(false);
         println!("Clicked context menu");
         debug!("click: {}", event.pointer_location.position);
         commands.trigger(OpenNodeTypeMenu {
             pos: event.pointer_location.position,
         });
-        })
-        .id();
+    }).id();
 
-    let compile_button = commands
-        .spawn((
+    let compile_button = commands.spawn((
         Name::new("compile_button"),
         Button,
         Node {
@@ -193,14 +183,14 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
             TextColor(Color::WHITE),
             TextShadow::default(),
         )],
-        ))
-        .observe(|_event: On<Pointer<Press>>, mut commands: Commands| {
+    )).observe(
+        |_event: On<Pointer<Press>>, 
+        mut commands: Commands| 
+        {
             commands.trigger(TriggerCompilation)
-        })
-        .id();
+        }).id();
 
-    let sample_button = commands
-        .spawn((
+    let sample_button = commands.spawn((
         Name::new("sample_button"),
         RequiresCompilation,
         InteractionDisabled,
@@ -224,12 +214,9 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
             text_font(),
             TextColor(DISABLED_TEXT_COLOR),
         )],
-        ))
-        .observe(compilation::global_sample)
-        .id();
+    )).observe(compilation::global_sample).id();
 
-    let posterior_sample_button = commands
-        .spawn((
+    let posterior_sample_button = commands.spawn((
         Name::new("posterior_sample_button"),
         RequiresInference,
         InteractionDisabled,
@@ -253,23 +240,13 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
             text_font(),
             TextColor(DISABLED_TEXT_COLOR),
         )],
-        ))
-        .observe(compilation::posterior_sample)
-        .id();
+    )).observe(compilation::posterior_sample).id();
 
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(nodemode_menu);
+    commands.entity(global_sidebar_entity).add_child(nodemode_menu);
     commands.entity(global_sidebar_entity).with_child(divider());
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(compile_button);
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(sample_button);
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(posterior_sample_button);
+    commands.entity(global_sidebar_entity).add_child(compile_button);
+    commands.entity(global_sidebar_entity).add_child(sample_button);
+    commands.entity(global_sidebar_entity).add_child(posterior_sample_button);
     commands.entity(global_sidebar_entity).with_child(divider());
     commands.entity(global_sidebar_entity).with_child((
         Text::new("Inference:"),
@@ -313,8 +290,7 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
         samples_box,
     );
 
-    let inference_button = commands
-        .spawn((
+    let inference_button = commands.spawn((
         Name::new("run_inference_button"),
         RequiresCompilation,
         InteractionDisabled,
@@ -339,12 +315,8 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
             text_font(),
             TextColor(DISABLED_TEXT_COLOR),
         )],
-        ))
-        .observe(compilation::run_inference)
-        .id();
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(inference_button);
+    )).observe(compilation::run_inference).id();
+    commands.entity(global_sidebar_entity).add_child(inference_button);
 
     let progress_fill = commands
         .spawn((
@@ -446,57 +418,13 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
         ))
         .observe(deselect_histogram_selection)
         .id();
-    let selective_clear_buttons = commands
-        .spawn(Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            column_gap: px(6.0),
-            ..default()
-        })
-        .id();
-    let indices_only_button = spawn_selective_clear_button(&mut commands, "Indices only");
-    commands
-        .entity(indices_only_button)
-        .observe(deselect_histogram_indices);
-    let results_only_button = spawn_selective_clear_button(&mut commands, "Results only");
-    commands
-        .entity(results_only_button)
-        .observe(deselect_histogram_results);
-    commands
-        .entity(selective_clear_buttons)
-        .add_children(&[indices_only_button, results_only_button]);
     commands
         .entity(selection_controls)
-        .add_children(&[selection_status, deselect_button, selective_clear_buttons]);
+        .add_children(&[selection_status, deselect_button]);
     commands
         .entity(global_sidebar_entity)
         .add_child(selection_controls);
     //TODO: context menu for selecting which type of node to create
-}
-
-fn spawn_selective_clear_button(commands: &mut Commands, label: &'static str) -> Entity {
-    commands
-        .spawn((
-            Button,
-            Node {
-                flex_grow: 1.0,
-                height: px(24.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::MAX,
-                ..default()
-            },
-            BackgroundColor(BUTTON_COLOR),
-            children![(
-                Pickable::IGNORE,
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(11.0),
-                    ..text_font()
-                },
-                TextColor(Color::WHITE),
-            )],
-        ))
-        .id()
 }
 
 fn inference_textbox(
@@ -505,8 +433,7 @@ fn inference_textbox(
     value: &'static str,
     tab_index: i32,
 ) -> Entity {
-    let textbox = commands
-        .spawn((
+    let textbox = commands.spawn((
         RequiresCompilation,
         InferenceTextbox { tab_index },
         InteractionDisabled,
@@ -526,8 +453,7 @@ fn inference_textbox(
         TextLayout::no_wrap(),
         TextCursorStyle::default(),
         Name::new(format!("{name}_textbox")),
-        ))
-        .id();
+    )).id();
     if name == "random_seed" {
         commands.entity(textbox).insert(RandomSeedTextbox);
     }
@@ -540,8 +466,7 @@ fn add_inference_field(
     label: &'static str,
     textbox: Entity,
 ) {
-    let field = commands
-        .spawn((
+    let field = commands.spawn((
         Node {
             width: percent(100.),
             flex_direction: FlexDirection::Column,
@@ -550,12 +475,13 @@ fn add_inference_field(
             ..default()
         },
         Name::new(format!("{label}_box")),
-        ))
-        .id();
+    )).id();
     commands.entity(sidebar).add_child(field);
-    commands
-        .entity(field)
-        .with_child((Text::new(label), text_font(), TextColor(NODE_NAME_COLOR)));
+    commands.entity(field).with_child((
+        Text::new(label),
+        text_font(),
+        TextColor(NODE_NAME_COLOR),
+    ));
     commands.entity(field).add_child(textbox);
 }
 
@@ -564,24 +490,17 @@ pub fn set_inference_controls_enabled(
     event: On<SetInferenceControlsEnabled>,
     mut commands: Commands,
     mut input_focus: ResMut<InputFocus>,
-    mut controls: Query<
-        (
+    mut controls: Query<(
         Entity,
         &mut BackgroundColor,
         &mut BorderColor,
         Option<&InferenceTextbox>,
         Option<&Children>,
-        ),
-        With<RequiresCompilation>,
-    >,
+    ), With<RequiresCompilation>>,
     mut text_colors: Query<&mut TextColor, Without<RandomSeedPlaceholder>>,
     mut placeholder_color: Single<&mut TextColor, With<RandomSeedPlaceholder>>,
 ) {
-    placeholder_color.0 = if event.0 {
-        Color::WHITE
-    } else {
-        DISABLED_TEXT_COLOR
-    };
+    placeholder_color.0 = if event.0 { Color::WHITE } else { DISABLED_TEXT_COLOR };
 
     for (entity, mut background, mut border, textbox, children) in &mut controls {
         if event.0 {
@@ -604,9 +523,7 @@ pub fn set_inference_controls_enabled(
                 commands.entity(entity).insert(TabIndex(textbox.tab_index));
             }
         } else {
-            commands
-                .entity(entity)
-                .insert((InteractionDisabled, Pickable::IGNORE));
+            commands.entity(entity).insert((InteractionDisabled, Pickable::IGNORE));
             commands.entity(entity).remove::<TabIndex>();
             if input_focus.get() == Some(entity) {
                 input_focus.clear();
@@ -616,11 +533,7 @@ pub fn set_inference_controls_enabled(
         if let Some(children) = children {
             for child in children.iter() {
                 if let Ok(mut text_color) = text_colors.get_mut(child) {
-                    text_color.0 = if event.0 {
-                        Color::WHITE
-                    } else {
-                        DISABLED_TEXT_COLOR
-                    };
+                    text_color.0 = if event.0 { Color::WHITE } else { DISABLED_TEXT_COLOR };
                 }
             }
         }
@@ -628,11 +541,7 @@ pub fn set_inference_controls_enabled(
             let mut text_color = text_colors
                 .get_mut(entity)
                 .expect("inference textboxes should have text colors");
-            text_color.0 = if event.0 {
-                Color::WHITE
-            } else {
-                DISABLED_TEXT_COLOR
-            };
+            text_color.0 = if event.0 { Color::WHITE } else { DISABLED_TEXT_COLOR };
         }
     }
 }
@@ -641,23 +550,16 @@ pub fn set_inference_controls_enabled(
 pub fn set_posterior_sample_enabled(
     event: On<SetPosteriorSampleEnabled>,
     mut commands: Commands,
-    mut controls: Query<
-        (
+    mut controls: Query<(
         Entity,
         &mut BackgroundColor,
         &mut BorderColor,
         Option<&Children>,
-        ),
-        With<RequiresInference>,
-    >,
+    ), With<RequiresInference>>,
     mut text_colors: Query<&mut TextColor>,
 ) {
     for (entity, mut background, mut border, children) in &mut controls {
-        let color = if event.0 {
-            BUTTON_COLOR
-        } else {
-            DISABLED_CONTROL_COLOR
-        };
+        let color = if event.0 { BUTTON_COLOR } else { DISABLED_CONTROL_COLOR };
         background.0 = color;
         *border = BorderColor::all(color);
 
@@ -665,19 +567,13 @@ pub fn set_posterior_sample_enabled(
             commands.entity(entity).remove::<InteractionDisabled>();
             commands.entity(entity).remove::<Pickable>();
         } else {
-            commands
-                .entity(entity)
-                .insert((InteractionDisabled, Pickable::IGNORE));
+            commands.entity(entity).insert((InteractionDisabled, Pickable::IGNORE));
         }
 
         if let Some(children) = children {
             for child in children.iter() {
                 if let Ok(mut text_color) = text_colors.get_mut(child) {
-                    text_color.0 = if event.0 {
-                        Color::WHITE
-                    } else {
-                        DISABLED_TEXT_COLOR
-                    };
+                    text_color.0 = if event.0 { Color::WHITE } else { DISABLED_TEXT_COLOR };
                 }
             }
         }
@@ -711,23 +607,19 @@ pub fn invalidate_compilation_on_graph_change(
                 Changed<ComputeNode>,
                 Changed<ScalarNode>,
                 Changed<GraphLink>,
+                Changed<Plate>,
             )>,
             Without<PlateDraft>,
         ),
     >,
-    changed_plates: Query<(), (Changed<Plate>, Without<PlateDraft>)>,
-    changed_positions: Query<
-        (),
-        (
+    changed_positions: Query<(), (
         Changed<Transform>,
         With<GraphNode>,
         Without<Plate>,
         Without<PlateDraft>,
-        ),
-    >,
+    )>,
     node_positions: Query<(&GraphNode, &Transform), (Without<Plate>, Without<PlateDraft>)>,
     plates: Query<(&GraphNode, &Plate), Without<PlateDraft>>,
-    graph_nodes: Query<&GraphNode>,
     mut removed_graph_nodes: RemovedComponents<GraphNode>,
 ) {
     let Some(graph_resource) = graph_resource else {
@@ -735,11 +627,12 @@ pub fn invalidate_compilation_on_graph_change(
     };
     let graph_node_removed = removed_graph_nodes.read().next().is_some();
     let membership_changed = !changed_positions.is_empty()
-        && node_plate_membership_changed(graph_resource.0.graph(), &node_positions, &plates);
-    let plate_changed = !changed_plates.is_empty()
-        && plate_execution_metadata_changed(graph_resource.0.graph(), &node_positions, &plates, &graph_nodes);
-    let graph_changed =
-        !changed_graph.is_empty() || membership_changed || plate_changed || graph_node_removed;
+        && node_plate_membership_changed(
+            graph_resource.0.graph(),
+            &node_positions,
+            &plates,
+        );
+    let graph_changed = !changed_graph.is_empty() || membership_changed || graph_node_removed;
 
     if graph_changed {
         if let Some(job) = inference_job {
@@ -750,15 +643,14 @@ pub fn invalidate_compilation_on_graph_change(
         commands.remove_resource::<InferenceResultResource>();
         commands.remove_resource::<InferenceStatusResource>();
         commands.remove_resource::<SampleSelections>();
-        commands.remove_resource::<PlateIndexScopes>();
         commands.trigger(SetInferenceControlsEnabled(false));
         commands.trigger(SetPosteriorSampleEnabled(false));
         commands.trigger(CloseHistogramPanel);
     }
 }
 
-/// Node coordinates only affect the compiled model when they change complete
-/// plate membership. Ordinary dragging within the same scope is presentation-only.
+/// Node coordinates only affect the compiled model when they change direct
+/// plate ownership. Ordinary dragging within the same scope is presentation-only.
 fn node_plate_membership_changed(
     compiled: &GraphIR,
     node_positions: &Query<(&GraphNode, &Transform), (Without<Plate>, Without<PlateDraft>)>,
@@ -779,9 +671,22 @@ fn node_plate_membership_changed(
     }
 
     for &(plate_id, bounds) in &current_plates {
+        let child_bounds = current_plates
+            .iter()
+            .filter(|(candidate_id, candidate_bounds)| {
+                *candidate_id != plate_id && bounds.contains_bounds(*candidate_bounds)
+            })
+            .map(|(_, bounds)| *bounds)
+            .collect::<Vec<_>>();
         let mut current_nodes = node_positions
             .iter()
-            .filter(|(_, transform)| bounds.contains_point(transform.translation.truncate()))
+            .filter(|(_, transform)| {
+                let position = transform.translation.truncate();
+                bounds.contains_point(position)
+                    && !child_bounds
+                        .iter()
+                        .any(|child| child.contains_point(position))
+            })
             .map(|(node, _)| node.0)
             .collect::<Vec<_>>();
         current_nodes.sort_unstable();
@@ -797,56 +702,6 @@ fn node_plate_membership_changed(
     false
 }
 
-/// Plate movement is presentation-only unless it changes execution metadata.
-fn plate_execution_metadata_changed(
-    compiled: &GraphIR,
-    node_positions: &Query<(&GraphNode, &Transform), (Without<Plate>, Without<PlateDraft>)>,
-    plates: &Query<(&GraphNode, &Plate), Without<PlateDraft>>,
-    graph_nodes: &Query<&GraphNode>,
-) -> bool {
-    if node_plate_membership_changed(compiled, node_positions, plates) {
-        return true;
-    }
-
-    let current = plates.iter().collect::<Vec<_>>();
-    for (plate_node, plate) in &current {
-        let Some(compiled_plate) = compiled.plates.get(&plate_node.0) else {
-            return true;
-        };
-        if plate.data.n != compiled_plate.n || plate.data.data != compiled_plate.data {
-            return true;
-        }
-
-        let mapping = plate
-            .mapping
-            .iter()
-            .filter(|(_, column)| column.as_str() != "unobserved")
-            .map(|(entity, column)| {
-                graph_nodes
-                    .get(*entity)
-                    .map(|node| (node.0, column.clone()))
-            })
-            .collect::<Result<HashMap<_, _>, _>>();
-        match mapping {
-            Ok(mapping) if mapping == compiled_plate.mapping => {}
-            _ => return true,
-        }
-
-        let mut contained = current
-            .iter()
-            .filter(|(candidate, candidate_plate)| {
-                candidate.0 != plate_node.0
-                    && plate.bounds.contains_bounds(candidate_plate.bounds)
-            })
-            .map(|(candidate, _)| candidate.0)
-            .collect::<Vec<_>>();
-        contained.sort_unstable();
-        if contained != compiled_plate.plates {
-            return true;
-        }
-    }
-    false
-}
 
 //
 fn on_set_node_mode(
@@ -866,14 +721,19 @@ fn on_set_node_mode(
             "Random" => NodeType::Random,
             "Compute" => NodeType::Compute,
             "Scalar" => NodeType::Scalar,
-            _ => NodeType::Random,
+            _ => NodeType::Random
         };
         commands.trigger(CloseContextMenus);
         commands.trigger(ReloadSidebar);
+        
     }
+    
 }
 
-pub fn on_open_node_type_menu(event: On<OpenNodeTypeMenu>, mut commands: Commands) {
+pub fn on_open_node_type_menu(
+    event: On<OpenNodeTypeMenu>, 
+    mut commands: Commands,
+) {
     commands.trigger(CloseContextMenus);
     let pos = event.pos;
     println!("open context menu at: {pos}");

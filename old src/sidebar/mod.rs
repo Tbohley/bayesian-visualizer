@@ -1,20 +1,19 @@
-pub mod compute_menu;
+pub mod random_menu;
 pub mod global;
+pub mod compute_menu;
+pub mod scalar_menu;
 pub mod link_params;
 pub mod plate_menu;
-pub mod random_menu;
-pub mod scalar_menu;
-use crate::constants::*;
-use crate::data_vis::{HistogramSubject, OpenHistogramPanel};
-use crate::graph::*;
-use crate::nodes::*;
+use std::collections::HashMap;
 use bevy::color::palettes::css::BLACK;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;
 use bevy::input_focus::tab_navigation::TabIndex;
-use bevy::prelude::*;
 use bevy::text::{EditableText, TextCursorStyle};
-use std::collections::HashMap;
+use bevy::prelude::*;
+use crate::constants::*;
+use crate::graph::*;
+use crate::nodes::*;
 
 #[derive(Component)]
 pub struct LocalSidebar;
@@ -110,6 +109,7 @@ pub struct OpenParamLinkMenu{
     pub param_num: usize,
 }
 
+
 /// event will be sent to close currently open context menus
 #[derive(Event)]
 pub struct CloseContextMenus;
@@ -120,6 +120,7 @@ pub struct ReloadSidebar;
 /// marker component identifying root of a context menu
 #[derive(Component)]
 pub struct ContextMenu;
+
 
 #[derive(Component)]
 pub struct ParamMenuItem {
@@ -138,17 +139,14 @@ trait SidebarContent {
         &self, 
         commands: &mut Commands, 
         sidebar_entity: Entity,
-        node_data: &Query<(
-            Option<&RandomNode>,
-            Option<&ScalarNode>,
-            Option<&ComputeNode>,
-        )>,
+        node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
         finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
         node: Entity,
         observed: bool,
         observed_columns: &HashMap<Entity, String>,
     );
 }
+
 
 pub fn context_item(text: &str) -> impl Bundle {
     (
@@ -168,26 +166,23 @@ pub fn context_item(text: &str) -> impl Bundle {
     )
 }
 
-pub fn divider() -> (
-    bevy::prelude::Node,
-    bevy::prelude::BackgroundColor,
-    bevy::prelude::TextColor,
-) {
-    (
-        Node {
+pub fn divider() -> (bevy::prelude::Node, bevy::prelude::BackgroundColor, bevy::prelude::TextColor) {
+    (Node {
         width: px(SIDEBAR_WIDTH - 32.0),
         height: px(5.0),
         margin: px(12).bottom(),
         ..default()
     },
     BackgroundColor(NODE_NAME_COLOR),
-        TextColor(bevy::prelude::Color::Srgba(BLACK)),
-    )
+    TextColor(bevy::prelude::Color::Srgba(BLACK)))
 }
 
-pub fn add_node_name_field(commands: &mut Commands, sidebar: Entity, current_name: Option<&str>) {
-    let field = commands
-        .spawn((
+pub fn add_node_name_field(
+    commands: &mut Commands,
+    sidebar: Entity,
+    current_name: Option<&str>,
+) {
+    let field = commands.spawn((
         Node {
             width: percent(100.),
             flex_direction: FlexDirection::Column,
@@ -196,12 +191,13 @@ pub fn add_node_name_field(commands: &mut Commands, sidebar: Entity, current_nam
             ..default()
         },
         Name::new("node_name_box"),
-        ))
-        .id();
+    )).id();
     commands.entity(sidebar).add_child(field);
-    commands
-        .entity(field)
-        .with_child((Text::new("name"), text_font(), TextColor(NODE_NAME_COLOR)));
+    commands.entity(field).with_child((
+        Text::new("name"),
+        text_font(),
+        TextColor(NODE_NAME_COLOR),
+    ));
     commands.entity(field).with_child((
         NodeNameTextbox,
         Node {
@@ -230,11 +226,7 @@ pub fn add_node_name_field(commands: &mut Commands, sidebar: Entity, current_nam
 //generate menu of incoming links for any node
 pub fn available_links(
     commands: &mut Commands,
-    _node_data: &Query<(
-        Option<&RandomNode>,
-        Option<&ScalarNode>,
-        Option<&ComputeNode>,
-    )>,
+    _node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
     finished_links: &Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar_entity: Entity,
     node: Entity,
@@ -260,19 +252,9 @@ pub fn reload_sidebar(
     _event: On<ReloadSidebar>,
     mut commands: Commands,
     selected: Option<Single<(Entity, &Selected, &GraphNode)>>,
-    node_data: Query<(
-        Option<&RandomNode>,
-        Option<&ScalarNode>,
-        Option<&ComputeNode>,
-    )>,
+    node_data: Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
     plate_nodes: Query<
-        (
-            Entity,
-            &GraphNode,
-            &Transform,
-            Option<&RandomNode>,
-            Option<&ScalarNode>,
-        ),
+        (Entity, &GraphNode, &Transform, Option<&RandomNode>, Option<&ScalarNode>),
         Or<(With<RandomNode>, With<ScalarNode>)>,
     >,
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
@@ -289,8 +271,7 @@ pub fn reload_sidebar(
     if let Some(single) = selected{
         let (entity, _selected_comp, node) = single.into_inner();
 
-        let sidebar_entity = commands
-            .spawn((
+        let sidebar_entity = commands.spawn((
             LocalSidebar,
             Node {
                 position_type: PositionType::Absolute,
@@ -302,16 +283,14 @@ pub fn reload_sidebar(
                 padding: px(16).all(),
                 ..default()
             },
-                BackgroundColor(DARK_GREY.into()),
-            ))
-            .observe(
+            BackgroundColor(DARK_GREY.into())
+        )).observe(
             //sidebar observes clicks to close distribution context menu
             |_: On<Pointer<Press>>, mut commands: Commands| {
                 commands.trigger(CloseContextMenus);
-                },
-            )
-            .id();
-        commands.entity(sidebar_entity).with_child((
+        }).id();
+        commands.entity(sidebar_entity).with_child(
+            (
                 Text::new(if plates.contains(entity) {
                     format!("Plate ID: {}", node.0)
                 } else {
@@ -338,73 +317,14 @@ pub fn reload_sidebar(
                 .is_some_and(|column| column != "unobserved")
         });
         match (maybe_random, maybe_scalar, maybe_transform) {
-            (Some(rv), None, None) => rv.build(
-                &mut commands,
-                sidebar_entity,
-                &node_data,
-                finished_links,
-                entity,
-                is_observed,
-                &observed_columns,
-            ),
-            (None, Some(sc), None) => sc.build(
-                &mut commands,
-                sidebar_entity,
-                &node_data,
-                finished_links,
-                entity,
-                is_observed,
-                &observed_columns,
-            ),
-            (None, None, Some(cn)) => cn.build(
-                &mut commands,
-                sidebar_entity,
-                &node_data,
-                finished_links,
-                entity,
-                is_observed,
-                &observed_columns,
-            ),
+            (Some(rv), None, None) => rv.build(&mut commands, sidebar_entity, &node_data, finished_links, entity, is_observed, &observed_columns),
+            (None, Some(sc), None) => sc.build(&mut commands, sidebar_entity, &node_data, finished_links, entity, is_observed, &observed_columns),
+            (None, None, Some(cn)) => cn.build(&mut commands, sidebar_entity, &node_data, finished_links, entity, is_observed, &observed_columns),
             (None, None, None) if plates.contains(entity) => plates
                 .get_mut(entity)
                 .expect("selected plate should exist")
                 .build(&mut commands, sidebar_entity, &plate_nodes),
             _ => warn!("Node has invalid or multiple node type components"),
-        }
-
-        if is_observed {
-            let node_id = node.0;
-            let raw_data = commands
-                .spawn((
-                    RequiresCompilation,
-                    Button,
-                    Node {
-                        width: px(SIDEBAR_WIDTH * 0.75),
-                        height: px(30),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        margin: px(4).bottom(),
-                        ..default()
-                    },
-                    BackgroundColor(BUTTON_COLOR),
-                    children![(
-                        Pickable::IGNORE,
-                        Text::new("View mapped source data"),
-                        text_font(),
-                        TextColor(Color::WHITE)
-                    )],
-                ))
-                .observe(
-                    move |mut event: On<Pointer<Click>>, mut commands: Commands| {
-                        event.propagate(false);
-                        commands.trigger(OpenHistogramPanel {
-                            subject: HistogramSubject::ObservedData(node_id),
-                            clear_toasts: true,
-                        });
-                    },
-                )
-                .id();
-            commands.entity(sidebar_entity).add_child(raw_data);
         }
 
         let delete_button = commands.spawn((
@@ -437,7 +357,7 @@ pub fn reload_sidebar(
                 |{
                     let (node, _selected, _graphnode) = selected.into_inner();
                         commands.entity(node).despawn();
-
+                        
                         //despawn connected links
                         for (link_entity, link_component) in finished_links.iter_mut() {
                             if node == link_component.from || link_component.to == Some(node) {
@@ -455,7 +375,11 @@ pub fn reload_sidebar(
             ).id();
             commands.entity(sidebar_entity).add_child(delete_button);
     }
+
 }
+
+
+
 
 //close all context menus
 pub fn on_trigger_close_menus(

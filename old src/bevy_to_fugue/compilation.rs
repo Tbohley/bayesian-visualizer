@@ -1,59 +1,28 @@
+use std::collections::HashMap;
+use std::sync::{Arc, atomic::Ordering};
+use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, futures::check_ready};
 use super::*;
 use crate::bayesian_core::graph_checks::ModelResult;
-use crate::bayesian_core::*;
-use crate::constants::*;
-use crate::data_vis::{
-    CloseHistogramPanel, HistogramSubject, HistogramView,
-    JointDistributionView, OpenHistogramPanel, OpenJointDistributionView, PlateIndexScopes,
-    SampleSelections,
-};
-use crate::graph::*;
 use crate::nodes::*;
+use crate::bayesian_core::*;
+use crate::sidebar::link_params::format_number;
 use crate::sidebar::SetInferenceControlsEnabled;
 use crate::sidebar::SetPosteriorSampleEnabled;
-use crate::sidebar::link_params::format_number;
 use crate::sidebar::{
     InferenceProgressContainer, InferenceProgressFill, InferenceProgressLabel,
     InferenceRunButtonLabel, NumberOfSamplesTextbox, NumberOfWarmupTextbox, RandomSeedTextbox,
 };
-use crate::ui::{ErrorToast, ShowCompilationErrorMarkers};
-use bevy::prelude::*;
-use bevy::tasks::{AsyncComputeTaskPool, futures::check_ready};
+use crate::ui::ErrorToast;
+use crate::constants::*;
+use crate::graph::*;
+use crate::data_vis::{
+    CloseHistogramPanel, DEFAULT_HISTOGRAM_BINS, HistogramView, JointDistributionView,
+    OpenHistogramPanel, OpenJointDistributionView, SampleSelections,
+};
 use bevy::text::EditableText;
 use rand::Rng;
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, atomic::Ordering};
 
-fn node_ids_in_compilation_error(error: &str) -> Vec<u32> {
-    let mut ids = HashSet::new();
-    for prefix in ["node#", "node "] {
-        for (start, _) in error.match_indices(prefix) {
-            let digits = error[start + prefix.len()..]
-                .chars()
-                .take_while(char::is_ascii_digit)
-                .collect::<String>();
-            if let Ok(id) = digits.parse() {
-                ids.insert(id);
-            }
-        }
-    }
-    let mut ids = ids.into_iter().collect::<Vec<_>>();
-    ids.sort_unstable();
-    ids
-}
-
-fn report_compilation_error(commands: &mut Commands, text: String, mut node_ids: Vec<u32>) {
-    node_ids.extend(node_ids_in_compilation_error(&text));
-    node_ids.sort_unstable();
-    node_ids.dedup();
-    commands.trigger(ErrorToast {
-        color: ERR_COLOR,
-        text,
-    });
-    if !node_ids.is_empty() {
-        commands.trigger(ShowCompilationErrorMarkers { node_ids });
-    }
-}
 
 pub fn compile(
     _event: On<TriggerCompilation>,
@@ -83,7 +52,6 @@ pub fn compile(
     commands.remove_resource::<InferenceResultResource>();
     commands.remove_resource::<InferenceStatusResource>();
     commands.remove_resource::<SampleSelections>();
-    commands.remove_resource::<PlateIndexScopes>();
     commands.trigger(CloseHistogramPanel);
     commands.trigger(SetPosteriorSampleEnabled(false));
     let graph = compile_ir(
@@ -97,8 +65,21 @@ pub fn compile(
 
     match graph {
         Ok(g) => {
+            if let Err(error) = g.validate_current_feature_support() {
+                commands.trigger(ErrorToast {
+                    color: ERR_COLOR,
+                    text: error.clone(),
+                });
+                println!("{error}");
+                commands.remove_resource::<GraphIRResource>();
+                commands.trigger(SetInferenceControlsEnabled(false));
+                return;
+            }
             if let Err(error) = g.validate_plate_semantics() {
-                report_compilation_error(&mut commands, error.clone(), Vec::new());
+                commands.trigger(ErrorToast {
+                    color: ERR_COLOR,
+                    text: error.clone(),
+                });
                 println!("{error}");
                 commands.remove_resource::<GraphIRResource>();
                 commands.trigger(SetInferenceControlsEnabled(false));
@@ -122,11 +103,10 @@ pub fn compile(
                             commands.trigger(SetInferenceControlsEnabled(true));
                         }
                         Err(error) => {
-                            report_compilation_error(
-                                &mut commands,
-                                format!("Compilation error: {error}"),
-                                Vec::new(),
-                            );
+                            commands.trigger(ErrorToast {
+                                color: ERR_COLOR,
+                                text: format!("Compilation error: {error}"),
+                            });
                             commands.remove_resource::<GraphIRResource>();
                             commands.remove_resource::<InferenceResultResource>();
                             commands.trigger(SetInferenceControlsEnabled(false));
@@ -134,18 +114,23 @@ pub fn compile(
                     }
                 }
                 Err(node_ids) => {
-                    report_compilation_error(
-                        &mut commands,
-                        format!("Graph contains a cycle including node IDs: {:?}", node_ids),
-                        node_ids,
-                    );
+                    commands.trigger(ErrorToast {
+                        color: ERR_COLOR,
+                        text: format!(
+                            "Graph contains a cycle including node IDs: {:?}",
+                            node_ids
+                        ),
+                    });
                     commands.remove_resource::<GraphIRResource>();
                     commands.trigger(SetInferenceControlsEnabled(false));
                 }
             }
         }
         Err(error) => {
-            report_compilation_error(&mut commands, error.clone(), Vec::new());
+            commands.trigger(ErrorToast {
+                color: ERR_COLOR,
+                text: error.clone(),
+            });
             println!("{error}");
             commands.remove_resource::<GraphIRResource>();
             commands.trigger(SetInferenceControlsEnabled(false));
@@ -153,12 +138,13 @@ pub fn compile(
     };
 }
 
+
 pub fn global_sample(
     _event: On<Pointer<Click>>,
     mut commands: Commands,
     node_ids: Query<(Entity, &GraphNode, &Transform)>,
     graph_resource: Option<Res<GraphIRResource>>,
-    old_samples: Query<(Entity, &SamplePopup)>,
+    old_samples: Query<(Entity, &SamplePopup)>
 ){
     for samp in old_samples.iter(){
         commands.entity(samp.0).despawn();
@@ -166,7 +152,7 @@ pub fn global_sample(
     let Some(compiled) = graph_resource else {
         commands.trigger(ErrorToast{
             text: "Graph not compiled.".to_string(),
-            color: ERR_COLOR,
+            color: ERR_COLOR
         });
         return;
     };
@@ -178,7 +164,7 @@ pub fn global_sample(
         Err(error) => {
             commands.trigger(ErrorToast{
                 text: format!("Sampling error: {error}"),
-                color: ERR_COLOR,
+                color: ERR_COLOR
             });
             return;
         }
@@ -253,8 +239,7 @@ fn display_sample(
         .expect("topological ordering should be validated by compilation");
 
     for node_id in order {
-        let (_, _, transform) = node_ids
-            .iter()
+        let (_, _, transform) = node_ids.iter()
         .find(|(_, node, _)| node.0 == node_id)
         .expect("node not found");
         let value = values
@@ -263,17 +248,13 @@ fn display_sample(
         let console_output = match value {
             ModelResult::Scalar(_) => None,
             ModelResult::Plate(_) => Some(
-                graph
-                    .format_node_value(node_id, value)
+                graph.format_node_value(node_id, value)
                     .unwrap_or_else(|error| format!("Could not format node {node_id}: {error}")),
             ),
         };
 
         commands.trigger(SampleDisplay{
-            pos: Vec2 {
-                x: transform.translation.x,
-                y: transform.translation.y,
-            },
+            pos: Vec2{x: transform.translation.x, y: transform.translation.y},
             val: first_scalar(value)
                 .map(format_number)
                 .unwrap_or_else(|| "empty".to_string()),
@@ -348,7 +329,9 @@ pub fn run_inference(
         }
     };
 
-    println!("Running inference: seed={seed}, samples={n_samples}, warmup={n_warmup}");
+    println!(
+        "Running inference: seed={seed}, samples={n_samples}, warmup={n_warmup}"
+    );
     commands.remove_resource::<InferenceResultResource>();
     commands.remove_resource::<SampleSelections>();
     commands.insert_resource(InferenceStatusResource {
@@ -414,11 +397,7 @@ pub fn run_inference(
 fn append_live_draws(result: &mut InferenceResult, draws: Vec<ModelValues>) {
     for values in draws {
         for (node_id, value) in values {
-            result
-                .samples_by_node
-                .entry(node_id)
-                .or_default()
-                .push(value);
+            result.samples_by_node.entry(node_id).or_default().push(value);
         }
         result.n_samples += 1;
     }
@@ -429,23 +408,23 @@ fn reopen_selected_histogram(
     selected: &Query<&GraphNode, With<Selected>>,
     view: Option<&HistogramView>,
 ) {
-    if let Some(view) = view {
-        commands.trigger(OpenHistogramPanel {
-            subject: view.subject,
-            clear_toasts: false,
-        });
-        return;
-    }
     let Ok(node) = selected.single() else {
         return;
     };
+    let bin_count = view
+        .filter(|view| view.node_id == node.0)
+        .map_or(DEFAULT_HISTOGRAM_BINS, |view| view.bin_count);
     commands.trigger(OpenHistogramPanel {
-        subject: HistogramSubject::Node(node.0),
+        node_id: node.0,
+        bin_count,
         clear_toasts: false,
     });
 }
 
-fn reopen_joint_distribution(commands: &mut Commands, joint_view: Option<JointDistributionView>) {
+fn reopen_joint_distribution(
+    commands: &mut Commands,
+    joint_view: Option<JointDistributionView>,
+) {
     if let Some(joint) = joint_view {
         commands.trigger(OpenJointDistributionView {
             x_node_id: joint.x_node_id,
@@ -473,7 +452,10 @@ pub fn poll_inference_job(
     });
     let discard = job.control.discard_result.load(Ordering::Relaxed);
     if !discard
-        && job.control.warmup_diagnostic_ready.load(Ordering::Acquire)
+        && job
+            .control
+            .warmup_diagnostic_ready
+            .load(Ordering::Acquire)
         && job.control.warmup_negative_infinity.load(Ordering::Relaxed)
         && !job
             .control
@@ -586,9 +568,9 @@ pub fn poll_inference_job(
             });
         }
         Err(error) => {
-            let partial_count = live_results
-                .as_ref()
-                .map_or(received_draws, |results| results.0.n_samples);
+            let partial_count = live_results.as_ref().map_or(received_draws, |results| {
+                results.0.n_samples
+            });
             commands.insert_resource(InferenceStatusResource {
                 state: InferenceResultState::Failed,
                 requested_samples: job.requested_samples,
@@ -616,20 +598,11 @@ pub fn poll_inference_job(
 pub fn update_inference_progress(
     job: Option<Res<InferenceJob>>,
     mut containers: Query<&mut Node, With<InferenceProgressContainer>>,
-    mut fills: Query<
-        &mut Node,
-        (
-            With<InferenceProgressFill>,
-            Without<InferenceProgressContainer>,
-        ),
-    >,
+    mut fills: Query<&mut Node, (With<InferenceProgressFill>, Without<InferenceProgressContainer>)>,
     mut progress_labels: Query<&mut Text, With<InferenceProgressLabel>>,
     mut button_labels: Query<
         &mut Text,
-        (
-            With<InferenceRunButtonLabel>,
-            Without<InferenceProgressLabel>,
-        ),
+        (With<InferenceRunButtonLabel>, Without<InferenceProgressLabel>),
     >,
 ) {
     let Ok(mut container) = containers.single_mut() else {
@@ -699,8 +672,7 @@ pub fn sample_popup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ){
-    commands
-        .spawn((
+    commands.spawn((
         Mesh2d(meshes.add(Rectangle::new(100., 30.))),
         MeshMaterial2d(materials.add(ColorMaterial::from_color(SAMPLE_COLOR))),
         SamplePopup {
@@ -732,7 +704,10 @@ fn first_scalar(value: &ModelResult) -> Option<f64> {
     }
 }
 
-fn print_plate_sample(mut event: On<Pointer<Click>>, popups: Query<&SamplePopup>) {
+fn print_plate_sample(
+    mut event: On<Pointer<Click>>,
+    popups: Query<&SamplePopup>,
+) {
     event.propagate(false);
     let Ok(popup) = popups.get(event.event_target()) else {
         return;
@@ -763,12 +738,12 @@ pub fn compile_ir(
     node_ids: &Query<(Entity, &GraphNode)>,
     node_positions: &Query<(&GraphNode, &Transform), Without<Plate>>,
     plates: &Query<(&GraphNode, &Plate)>,
-) -> Result<GraphIR, String> {
+) -> Result<GraphIR, String>
+{
     let mut graph = GraphIR::new();
 
     let param_to_ir = |param: &ParamValue| -> Result<ParamIR, String> {
-        let entity = param
-            .1
+        let entity = param.1
             .ok_or_else(|| "A node has unspecified parameters!".to_string())?;
 
         let node_id = node_ids
@@ -781,62 +756,38 @@ pub fn compile_ir(
     };
 
     for (entity, rand) in rand_nodes.into_iter(){
-        let node = node_ids
-            .get(entity)
+        let node = node_ids.get(entity)
         .map_err(|_| "Node is missing its GraphNode ID")?
         .1;
-        let params = rand
-            .params
-            .iter()
-            .map(|param| {
-                param_to_ir(param).map_err(|error| format!("node {}: {error}", node.0))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        graph.nodes.insert(
-            node.0,
-            NodeIR::Random {
+        let params = rand.params.iter().map(param_to_ir).collect::<Result<Vec<_>, _>>()?;
+        graph.nodes.insert(node.0, NodeIR::Random{
             id: node.0,
             label: rand.name.clone(),
             dist_type: rand.dist_type.clone(),
             params: params,
-            },
-        );
+        });
     }
 
     for (entity, compute) in compute_nodes.into_iter(){
-        let node = node_ids
-            .get(entity)
+        let node = node_ids.get(entity)
         .map_err(|_| "Node is missing its GraphNode ID")?
         .1;
-        let params = compute
-            .params
-            .iter()
-            .map(|param| {
-                param_to_ir(param).map_err(|error| format!("node {}: {error}", node.0))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        graph.nodes.insert(
-            node.0,
-            NodeIR::Compute {
+        let params = compute.params.iter().map(param_to_ir).collect::<Result<Vec<_>, _>>()?;
+        graph.nodes.insert(node.0, NodeIR::Compute{
             id: node.0,
             operation: compute.operation,
             params: params,
-            },
-        );
+        });
     }
 
     for (entity, scalar) in scalar_nodes.into_iter(){
-        let node = node_ids
-            .get(entity)
+        let node = node_ids.get(entity)
         .map_err(|_| "Node is missing its GraphNode ID")?
         .1;
-        graph.nodes.insert(
-            node.0,
-            NodeIR::Scalar {
+        graph.nodes.insert(node.0, NodeIR::Scalar{
             id: node.0,
             value: scalar.val,
-            },
-        );
+        });
     }
 
     let plate_bounds = plates
@@ -850,10 +801,11 @@ pub fn compile_ir(
         .collect::<Vec<_>>();
     graph.plates = compile_plate_irs(&plate_bounds, &positions)?;
 
-    for (node, plate) in plates
-        .iter()
-        .filter(|(_, plate)| plate.bounds.is_substantial())
-    {
+    for (node, plate) in plates.iter().filter(|(_, plate)| plate.bounds.is_substantial()) {
+        if plate.data.data.is_empty() {
+            return Err(format!("plate {} has no dataset", node.0));
+        }
+
         let plate_ir = graph
             .plates
             .get_mut(&node.0)
@@ -891,6 +843,17 @@ fn compile_plate_irs(
                     "plates {left_id} and {right_id} have identical bounds"
                 ));
             }
+
+            let interiors_overlap = left_bounds.min.x < right_bounds.max.x
+                && left_bounds.max.x > right_bounds.min.x
+                && left_bounds.min.y < right_bounds.max.y
+                && left_bounds.max.y > right_bounds.min.y;
+
+            if interiors_overlap && !left_contains_right && !right_contains_left {
+                return Err(format!(
+                    "plates {left_id} and {right_id} partially overlap; plates must be disjoint or fully nested"
+                ));
+            }
         }
     }
 
@@ -907,28 +870,50 @@ fn compile_plate_irs(
 
         let mut direct_plates = contained_plates
             .iter()
+            .filter(|(candidate_id, candidate_bounds, _)| {
+                !contained_plates.iter().any(|(middle_id, middle_bounds, _)| {
+                    middle_id != candidate_id
+                        && middle_bounds.contains_bounds(*candidate_bounds)
+                })
+            })
             .map(|(id, _, _)| *id)
             .collect::<Vec<_>>();
         direct_plates.sort_unstable();
 
-        let mut member_nodes = nodes
+        let mut direct_nodes = nodes
             .iter()
-            .filter(|(_, position)| bounds.contains_point(*position))
+            .filter(|(_, position)| {
+                bounds.contains_point(*position)
+                    && !contained_plates.iter().any(|(_, child_bounds, _)| {
+                        child_bounds.contains_point(*position)
+                    })
+            })
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
-        member_nodes.sort_unstable();
+        direct_nodes.sort_unstable();
 
         result.insert(
             plate_id,
             PlateIR {
                 id: plate_id,
                 n,
-                nodes: member_nodes,
+                nodes: direct_nodes,
                 plates: direct_plates,
                 data: HashMap::new(),
                 mapping: HashMap::new(),
             },
         );
+    }
+
+    let mut node_owners = HashMap::<u32, u32>::new();
+    for (&plate_id, plate) in &result {
+        for &node_id in &plate.nodes {
+            if let Some(previous_owner) = node_owners.insert(node_id, plate_id) {
+                return Err(format!(
+                    "node {node_id} belongs to multiple sibling plates: {previous_owner} and {plate_id}"
+                ));
+            }
+        }
     }
 
     Ok(result)
@@ -938,17 +923,6 @@ fn compile_plate_irs(
 #[cfg(test)]
 mod plate_tests {
     use super::*;
-
-    #[test]
-    fn compilation_errors_extract_stable_node_ids() {
-        assert_eq!(
-            node_ids_in_compilation_error(
-                "invalid dependency from node 12 to node 4 at node#12[plate#3=0]"
-            ),
-            vec![4, 12]
-        );
-        assert!(node_ids_in_compilation_error("plate 3 has no dataset").is_empty());
-    }
 
     #[test]
     fn plate_ir_records_direct_nested_contents() {
@@ -972,14 +946,14 @@ mod plate_tests {
 
         let result = compile_plate_irs(&plates, &nodes).unwrap();
 
-        assert_eq!(result[&1].nodes, vec![1, 2]);
+        assert_eq!(result[&1].nodes, vec![1]);
         assert_eq!(result[&1].plates, vec![2]);
         assert_eq!(result[&2].nodes, vec![2]);
         assert!(result[&2].plates.is_empty());
     }
 
     #[test]
-    fn plate_ir_accepts_partial_overlap_with_complete_membership() {
+    fn plate_ir_rejects_partial_overlap() {
         let plates = vec![
             (
                 10,
@@ -993,10 +967,8 @@ mod plate_tests {
             ),
         ];
 
-        let nodes = vec![(1, Vec2::new(75.0, 75.0))];
-        let result = compile_plate_irs(&plates, &nodes).unwrap();
-        assert_eq!(result[&10].nodes, vec![1]);
-        assert_eq!(result[&11].nodes, vec![1]);
+        let error = compile_plate_irs(&plates, &[]).unwrap_err();
+        assert!(error.contains("partially overlap"));
     }
 
     #[test]
@@ -1018,7 +990,7 @@ mod plate_tests {
     }
 
     #[test]
-    fn plate_ir_includes_node_on_every_touching_border() {
+    fn plate_ir_rejects_node_on_shared_sibling_border() {
         let plates = vec![
             (
                 10,
@@ -1033,31 +1005,7 @@ mod plate_tests {
         ];
         let nodes = vec![(1, Vec2::new(50.0, 25.0))];
 
-        let result = compile_plate_irs(&plates, &nodes).unwrap();
-        assert_eq!(result[&10].nodes, vec![1]);
-        assert_eq!(result[&11].nodes, vec![1]);
-    }
-
-    #[test]
-    fn node_motion_invalidates_only_when_complete_membership_changes() {
-        let plates = vec![
-            (
-                10,
-                PlateBounds::from_points(Vec2::ZERO, Vec2::new(100.0, 100.0)),
-                2,
-            ),
-            (
-                20,
-                PlateBounds::from_points(Vec2::new(50.0, 0.0), Vec2::new(150.0, 100.0)),
-                3,
-            ),
-        ];
-        let before = compile_plate_irs(&plates, &[(1, Vec2::new(60.0, 20.0))]).unwrap();
-        let within = compile_plate_irs(&plates, &[(1, Vec2::new(80.0, 80.0))]).unwrap();
-        let crossed = compile_plate_irs(&plates, &[(1, Vec2::new(120.0, 80.0))]).unwrap();
-        assert_eq!(before[&10].nodes, within[&10].nodes);
-        assert_eq!(before[&20].nodes, within[&20].nodes);
-        assert_ne!(before[&10].nodes, crossed[&10].nodes);
-        assert_eq!(before[&20].nodes, crossed[&20].nodes);
+        let error = compile_plate_irs(&plates, &nodes).unwrap_err();
+        assert!(error.contains("multiple sibling plates"));
     }
 }

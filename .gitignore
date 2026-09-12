@@ -12,3 +12,5 @@ src/.DS_Store
 /.DS_Store
 assets/cursors/.DS_Store
 src/CODEBASE_GUIDE.md
+old src/CODEBASE_GUIDE.md
+test.py

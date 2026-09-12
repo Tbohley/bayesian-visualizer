@@ -1,20 +1,17 @@
-use crate::bayesian_core::shared_dimension_positions;
 use crate::bayesian_core::{NodeInstanceSamples, PosteriorSample};
 use crate::bevy_to_fugue::{
     GraphIRResource, InferenceResultResource, InferenceResultState, InferenceStatusResource,
 };
-use crate::constants::{
-    ERR_COLOR, SAMPLE_COLOR, SELECTION_INDICATOR_COLOR, SIDEBAR_WIDTH, text_font,
-};
+use crate::constants::{text_font, ERR_COLOR, SAMPLE_COLOR, SIDEBAR_WIDTH};
 use crate::nodes::{
-    ComputeNode, GraphNode, NodeLabel, RandomNode, ScalarNode, random_node_label,
-    random_selection_mesh,
+    random_node_label, random_selection_mesh, ComputeNode, GraphNode, NodeLabel, RandomNode,
+    ScalarNode,
 };
 use crate::sidebar::LocalSidebar;
-use crate::ui::{ClearToasts, ErrorToast, selection_indicator};
+use crate::ui::{selection_indicator, ClearToasts, ErrorToast};
 use crate::{COMPUTE_NODE_RAD, SCALAR_NODE_RAD};
 use bevy::{
-    input_focus::{InputFocus, tab_navigation::TabIndex},
+    input_focus::{tab_navigation::TabIndex, InputFocus},
     prelude::*,
     text::{EditableText, TextCursorStyle},
 };
@@ -28,94 +25,9 @@ const SELECTED_HISTOGRAM_COLOR: Color = Color::srgb(0.2, 0.7, 0.35);
 
 #[derive(Event)]
 pub struct OpenHistogramPanel {
-    pub subject: HistogramSubject,
+    pub node_id: u32,
+    pub bin_count: usize,
     pub clear_toasts: bool,
-}
-
-#[derive(Resource, Clone, Copy, Debug)]
-pub struct HistogramBinCount(pub usize);
-
-impl Default for HistogramBinCount {
-    fn default() -> Self {
-        Self(DEFAULT_HISTOGRAM_BINS)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HistogramSubject {
-    Node(u32),
-    PlateIndex(u32),
-    ObservedData(u32),
-}
-
-#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlateIndexScopes {
-    /// Inclusive, sorted, disjoint ranges for each active plate filter.
-    pub ranges_by_plate: HashMap<u32, Vec<(usize, usize)>>,
-}
-
-impl PlateIndexScopes {
-    pub fn contains(&self, plate_id: u32, index: usize) -> bool {
-        self.ranges_by_plate.get(&plate_id).is_none_or(|ranges| {
-            ranges
-                .iter()
-                .any(|&(start, end)| index >= start && index <= end)
-        })
-    }
-
-    pub fn union(&mut self, plate_id: u32, start: usize, end: usize) {
-        let mut ranges = self.ranges_by_plate.remove(&plate_id).unwrap_or_default();
-        ranges.push((start.min(end), start.max(end)));
-        ranges.sort_unstable();
-        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
-        for (start, end) in ranges {
-            if let Some(last) = merged.last_mut()
-                && start <= last.1.saturating_add(1)
-            {
-                last.1 = last.1.max(end);
-            } else {
-                merged.push((start, end));
-            }
-        }
-        self.ranges_by_plate.insert(plate_id, merged);
-    }
-
-    pub fn selected_count(&self, plate_id: u32, extent: usize) -> usize {
-        self.ranges_by_plate
-            .get(&plate_id)
-            .map_or(extent, |ranges| {
-                ranges.iter().map(|&(start, end)| end - start + 1).sum()
-            })
-    }
-
-    pub fn toggle(&mut self, plate_id: u32, index: usize) {
-        let Some(ranges) = self.ranges_by_plate.get(&plate_id) else {
-            self.union(plate_id, index, index);
-            return;
-        };
-        if !ranges
-            .iter()
-            .any(|&(start, end)| index >= start && index <= end)
-        {
-            self.union(plate_id, index, index);
-            return;
-        }
-
-        let mut updated = Vec::with_capacity(ranges.len() + 1);
-        for &(start, end) in ranges {
-            if index < start || index > end {
-                updated.push((start, end));
-            } else {
-                if start < index {
-                    updated.push((start, index - 1));
-                }
-                if index < end {
-                    updated.push((index + 1, end));
-                }
-            }
-        }
-        self.ranges_by_plate.insert(plate_id, updated);
-    }
 }
 
 #[derive(Event)]
@@ -231,7 +143,7 @@ struct JointLassoMark;
 /// The currently open posterior histogram and its rendering parameters.
 #[derive(Component)]
 pub struct HistogramView {
-    pub subject: HistogramSubject,
+    pub node_id: u32,
     pub bin_count: usize,
     pub displayed_sample_count: f64,
 }
@@ -257,7 +169,7 @@ pub struct HistogramPlot {
     pub samples: Vec<HistogramSample>,
     pub instance_paths: Vec<Vec<usize>>,
     pub plate_ids: Vec<u32>,
-    pub subject: HistogramSubject,
+    pub source_node_id: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -481,47 +393,6 @@ fn displayed_instance_samples(
     }
 }
 
-fn scoped_instances(
-    instances: &[NodeInstanceSamples],
-    plate_ids: &[u32],
-    scopes: Option<&PlateIndexScopes>,
-) -> Vec<NodeInstanceSamples> {
-    instances
-        .iter()
-        .filter(|instance| {
-            scopes.is_none_or(|scopes| {
-                plate_ids.iter().enumerate().all(|(position, &plate_id)| {
-                    scopes.contains(plate_id, instance.indices[position])
-                })
-            })
-        })
-        .cloned()
-        .collect()
-}
-
-fn format_scope_ranges(ranges: &[(usize, usize)]) -> String {
-    const DISPLAY_LIMIT: usize = 6;
-    let mut display = ranges
-        .iter()
-        .take(DISPLAY_LIMIT)
-        .map(|&(start, end)| {
-            if start == end {
-                start.to_string()
-            } else {
-                format!("{start}-{end}")
-            }
-        })
-        .collect::<Vec<_>>();
-    if ranges.len() > DISPLAY_LIMIT {
-        display.push(format!("... (+{} ranges)", ranges.len() - DISPLAY_LIMIT));
-    }
-    if display.is_empty() {
-        "none".to_string()
-    } else {
-        display.join(", ")
-    }
-}
-
 #[cfg(test)]
 fn linked_samples(
     instances: &[NodeInstanceSamples],
@@ -639,7 +510,16 @@ fn linked_samples_for_selections(
 }
 
 fn shared_plate_positions(source: &[u32], target: &[u32]) -> Vec<(usize, usize)> {
-    shared_dimension_positions(source, target)
+    source
+        .iter()
+        .enumerate()
+        .filter_map(|(source_index, plate)| {
+            target
+                .iter()
+                .position(|target| target == plate)
+                .map(|target_index| (source_index, target_index))
+        })
+        .collect()
 }
 
 fn project_context_path(
@@ -792,8 +672,6 @@ pub fn open_histogram_panel(
     graph: Option<Res<GraphIRResource>>,
     inference_status: Option<Res<InferenceStatusResource>>,
     selections: Option<Res<SampleSelections>>,
-    scopes: Option<Res<PlateIndexScopes>>,
-    bin_count_setting: Res<HistogramBinCount>,
     old_panels: Query<Entity, With<InferenceHistogramPanel>>,
     graph_nodes: Query<(
         Entity,
@@ -804,79 +682,44 @@ pub fn open_histogram_panel(
     )>,
     node_labels: Query<(&ChildOf, &Text2d), With<NodeLabel>>,
 ) {
-    let requested_bin_count = bin_count_setting.0.clamp(1, MAX_HISTOGRAM_BINS);
     if event.clear_toasts {
         commands.trigger(ClearToasts);
     }
     despawn_histogram_panels(&mut commands, &old_panels);
-
-    if let HistogramSubject::PlateIndex(plate_id) = event.subject {
-        open_plate_index_panel(
-            &mut commands,
-            graph.as_deref(),
-            scopes.as_deref(),
-            plate_id,
-            requested_bin_count,
-        );
-        return;
-    }
-    if let HistogramSubject::ObservedData(node_id) = event.subject {
-        let label = graph_node_label(node_id, &graph_nodes, &node_labels);
-        open_observed_data_panel(
-            &mut commands,
-            graph.as_deref(),
-            scopes.as_deref(),
-            node_id,
-            &label,
-            requested_bin_count,
-        );
-        return;
-    }
-    let HistogramSubject::Node(node_id) = event.subject else {
-        unreachable!()
-    };
 
     let Some(results) = inference_results else {
         return;
     };
     let Some(plate_ids) = graph
         .as_ref()
-        .and_then(|graph| graph.0.node_plate_path(node_id))
+        .and_then(|graph| graph.0.node_plate_path(event.node_id))
         .map(<[u32]>::to_vec)
     else {
         commands.trigger(ErrorToast {
-            text: format!("Could not find plate metadata for node {node_id}."),
+            text: format!("Could not find plate metadata for node {}.", event.node_id),
             color: ERR_COLOR,
         });
         return;
     };
-    let instances = match results.0.samples_for_node(node_id) {
+    let instances = match results.0.samples_for_node(event.node_id) {
         Ok(instances) if !instances.is_empty() => instances,
         Ok(_) => {
             commands.trigger(ErrorToast {
-                text: format!("Node {node_id} has no posterior values."),
+                text: format!("Node {} has no posterior values.", event.node_id),
                 color: ERR_COLOR,
             });
             return;
         }
         Err(error) => {
             commands.trigger(ErrorToast {
-                text: format!("Could not display node {node_id}: {error}"),
+                text: format!("Could not display node {}: {error}", event.node_id),
                 color: ERR_COLOR,
             });
             return;
         }
     };
-    let node_label = graph_node_label(node_id, &graph_nodes, &node_labels);
+    let node_label = graph_node_label(event.node_id, &graph_nodes, &node_labels);
 
-    let instances = scoped_instances(&instances, &plate_ids, scopes.as_deref());
-    if instances.is_empty() {
-        commands.trigger(ErrorToast {
-            text: format!("The active index scope excludes every instance of {node_label}."),
-            color: ERR_COLOR,
-        });
-        return;
-    }
     let (full_samples, scope) = displayed_instance_samples(&instances);
     let (plot_samples, instance_paths) = histogram_samples(&instances);
     let full_weighted_samples = unweighted_samples(&full_samples.samples);
@@ -884,10 +727,10 @@ pub fn open_histogram_panel(
         .as_ref()
         .filter(|selections| !selections.entries.is_empty())
         .map(|selections| linked_samples_for_selections(&instances, selections, &plate_ids));
-    let displayed_sample_count = highlighted_samples
+    let stats_samples = highlighted_samples
         .as_deref()
-        .map_or(full_samples.samples.len() as f64, effective_count);
-    let bin_count = requested_bin_count;
+        .unwrap_or(&full_weighted_samples);
+    let bin_count = event.bin_count.clamp(1, MAX_HISTOGRAM_BINS);
     let histogram = match build_histogram(&full_samples.samples, bin_count) {
         Ok(histogram) => histogram,
         Err(error) => {
@@ -926,40 +769,38 @@ pub fn open_histogram_panel(
         ),
         _ => format!("Posterior samples - {node_label}"),
     };
-    let scope_heading = plate_ids
-        .iter()
-        .map(|plate_id| {
-            let extent = graph.as_ref().unwrap().0.graph().plates[plate_id].n;
-            match scopes
-                .as_deref()
-                .and_then(|scope| scope.ranges_by_plate.get(plate_id))
-            {
-                Some(ranges) => format!("plate {plate_id}: {}", format_scope_ranges(ranges)),
-                None => format!("plate {plate_id}: all {extent} indices"),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" x ");
-    let heading = if scope_heading.is_empty() {
-        heading
-    } else {
-        format!(
-            "{heading}\nIndex scope: {scope_heading}\n{} instances x {} draws",
-            instances.len(),
-            results.0.n_samples
-        )
-    };
 
-    let panel = spawn_histogram_panel(
-        &mut commands,
-        event.subject,
-        bin_count,
-        displayed_sample_count,
-    );
+    let panel = commands
+        .spawn((
+            InferenceHistogramPanel,
+            HistogramView {
+                node_id: event.node_id,
+                bin_count,
+                displayed_sample_count: effective_count(stats_samples),
+            },
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(SIDEBAR_WIDTH),
+                right: px(SIDEBAR_WIDTH),
+                bottom: px(0.0),
+                height: px(HISTOGRAM_PANEL_HEIGHT),
+                padding: px(16.0).all(),
+                column_gap: px(20.0),
+                flex_direction: FlexDirection::Row,
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.10, 0.11, 0.14)),
+            BorderColor::all(Color::srgb(0.28, 0.30, 0.36)),
+            ZIndex(100),
+        ))
+        .observe(|mut event: On<Pointer<Press>>| {
+            event.propagate(false);
+        })
+        .id();
 
     let probability_line = histogram_selection_probability_line(
         &node_label,
-        node_id,
+        event.node_id,
         &full_samples.samples,
         highlighted_samples.as_deref(),
         selections.as_deref(),
@@ -967,7 +808,7 @@ pub fn open_histogram_panel(
     let stats = spawn_stats(
         &mut commands,
         &node_label,
-        &full_weighted_samples,
+        stats_samples,
         &scope,
         probability_line,
         bin_count,
@@ -979,220 +820,9 @@ pub fn open_histogram_panel(
         &plot_samples,
         &instance_paths,
         &plate_ids,
-        event.subject,
+        event.node_id,
         selections.as_deref(),
         &heading,
-    );
-    commands.entity(panel).add_children(&[stats, chart]);
-}
-
-fn open_plate_index_panel(
-    commands: &mut Commands,
-    graph: Option<&GraphIRResource>,
-    scopes: Option<&PlateIndexScopes>,
-    plate_id: u32,
-    requested_bins: usize,
-) {
-    let Some(plate) = graph.and_then(|graph| graph.0.graph().plates.get(&plate_id)) else {
-        commands.trigger(ErrorToast {
-            text: format!("Compile the graph before opening plate {plate_id}'s index scope."),
-            color: ERR_COLOR,
-        });
-        return;
-    };
-    let extent = plate.n;
-    let bin_count = requested_bins.min(extent).max(1);
-    let domain = HistogramDomain {
-        min: -0.5,
-        max: extent as f64 - 0.5,
-    };
-    let weighted = (0..extent)
-        .map(|index| WeightedSample {
-            value: index as f64,
-            weight: 1.0,
-        })
-        .collect::<Vec<_>>();
-    let histogram = build_weighted_histogram(&weighted, bin_count, domain)
-        .expect("validated positive plate extent makes a valid index histogram");
-    let highlighted_histogram = scopes
-        .and_then(|scopes| scopes.ranges_by_plate.get(&plate_id).map(|_| scopes))
-        .map(|scopes| {
-            let selected = weighted
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| scopes.contains(plate_id, *index))
-                .map(|(_, sample)| sample.clone())
-                .collect::<Vec<_>>();
-            build_weighted_histogram(&selected, bin_count, domain)
-                .expect("selected plate indices share the validated index domain")
-        });
-    let samples = (0..extent)
-        .map(|index| HistogramSample {
-            instance: index,
-            draw_index: 0,
-            value: index as f64,
-        })
-        .collect::<Vec<_>>();
-    let paths = (0..extent).map(|index| vec![index]).collect::<Vec<_>>();
-    let selected = scopes.map_or(extent, |scopes| scopes.selected_count(plate_id, extent));
-    let ranges = scopes
-        .and_then(|scopes| scopes.ranges_by_plate.get(&plate_id))
-        .map_or_else(
-            || format!("0-{}", extent - 1),
-            |ranges| format_scope_ranges(ranges),
-        );
-    let percent_selected = selected as f64 * 100.0 / extent as f64;
-
-    let panel = spawn_histogram_panel(
-        commands,
-        HistogramSubject::PlateIndex(plate_id),
-        bin_count,
-        selected as f64,
-    );
-    let summary = commands
-        .spawn((
-            Pickable::IGNORE,
-            Node {
-                width: px(210.0),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(8.0),
-                ..default()
-            },
-            children![
-                (Text::new("Index scope"), TextColor(Color::WHITE), text_font()),
-                (Text::new(format!("{selected} / {extent} indices ({percent_selected:.1}%)")), TextColor(Color::WHITE), text_font()),
-                (Text::new(format!("Active: {ranges}")), TextColor(Color::srgb(0.72, 0.74, 0.80)), text_font()),
-                (Text::new("Drag to select whole indices. Index scopes filter distributions; they are not linked sample selections."), TextColor(Color::srgb(0.72, 0.74, 0.80)), TextFont { font_size: FontSize::Px(10.0), ..text_font() }),
-            ],
-        ))
-        .id();
-    let chart = spawn_chart(
-        commands,
-        &histogram,
-        highlighted_histogram.as_ref(),
-        &samples,
-        &paths,
-        &[plate_id],
-        HistogramSubject::PlateIndex(plate_id),
-        None,
-        &format!("Plate {plate_id} index (uniform discrete selector)"),
-    );
-    commands.entity(panel).add_children(&[summary, chart]);
-}
-
-fn open_observed_data_panel(
-    commands: &mut Commands,
-    graph: Option<&GraphIRResource>,
-    scopes: Option<&PlateIndexScopes>,
-    node_id: u32,
-    node_label: &str,
-    requested_bins: usize,
-) {
-    let Some(graph) = graph else {
-        return;
-    };
-    let Some((owner_id, column, values)) =
-        graph
-            .0
-            .graph()
-            .plates
-            .iter()
-            .find_map(|(&plate_id, plate)| {
-                let column = plate.mapping.get(&node_id)?;
-                Some((
-                    plate_id,
-                    column.as_str(),
-                    plate.data.get(column)?.as_slice(),
-                ))
-            })
-    else {
-        commands.trigger(ErrorToast {
-            text: format!("Node {node_id} has no mapped observation column."),
-            color: ERR_COLOR,
-        });
-        return;
-    };
-    let raw = values
-        .iter()
-        .enumerate()
-        .filter(|(row, _)| scopes.is_none_or(|scopes| scopes.contains(owner_id, *row)))
-        .map(|(row, &value)| PosteriorSample {
-            draw_index: row,
-            value,
-        })
-        .collect::<Vec<_>>();
-    if raw.is_empty() {
-        commands.trigger(ErrorToast {
-            text: "The active owner-plate scope excludes every observed row.".into(),
-            color: ERR_COLOR,
-        });
-        return;
-    }
-    let bin_count = requested_bins.clamp(1, MAX_HISTOGRAM_BINS);
-    let histogram = match build_histogram(&raw, bin_count) {
-        Ok(value) => value,
-        Err(error) => {
-            commands.trigger(ErrorToast {
-                text: format!("Could not build observed-data histogram: {error}"),
-                color: ERR_COLOR,
-            });
-            return;
-        }
-    };
-    let weighted = unweighted_samples(&raw);
-    let samples = raw
-        .iter()
-        .enumerate()
-        .map(|(instance, sample)| HistogramSample {
-            instance,
-            draw_index: sample.draw_index,
-            value: sample.value,
-        })
-        .collect::<Vec<_>>();
-    let paths = raw
-        .iter()
-        .map(|sample| vec![sample.draw_index])
-        .collect::<Vec<_>>();
-    let dimensions = graph.0.node_plate_path(node_id).unwrap_or_default();
-    let broadcasts = dimensions
-        .iter()
-        .filter(|&&id| id != owner_id)
-        .map(u32::to_string)
-        .collect::<Vec<_>>();
-    let broadcast_text = if broadcasts.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "; broadcast across plate dimensions {} without duplicating rows",
-            broadcasts.join(", ")
-        )
-    };
-    let panel = spawn_histogram_panel(
-        commands,
-        HistogramSubject::ObservedData(node_id),
-        bin_count,
-        raw.len() as f64,
-    );
-    let stats = spawn_stats(
-        commands,
-        node_label,
-        &weighted,
-        &HistogramScope::Pooled {
-            instance_count: raw.len(),
-        },
-        Some(format!("{} source rows in current scope", raw.len())),
-        bin_count,
-    );
-    let chart = spawn_chart(
-        commands,
-        &histogram,
-        None,
-        &samples,
-        &paths,
-        &[owner_id],
-        HistogramSubject::ObservedData(node_id),
-        None,
-        &format!("Observed data - {node_label} | plate {owner_id} column {column}{broadcast_text}"),
     );
     commands.entity(panel).add_children(&[stats, chart]);
 }
@@ -1211,39 +841,6 @@ pub fn close_histogram_panel(
     for indicator in &joint_indicators {
         commands.entity(indicator).despawn();
     }
-}
-
-fn spawn_histogram_panel(
-    commands: &mut Commands,
-    subject: HistogramSubject,
-    bin_count: usize,
-    displayed_sample_count: f64,
-) -> Entity {
-    commands
-        .spawn((
-            InferenceHistogramPanel,
-            HistogramView {
-                subject,
-                bin_count,
-                displayed_sample_count,
-            },
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(SIDEBAR_WIDTH),
-                right: px(SIDEBAR_WIDTH),
-                bottom: px(0.0),
-                height: px(HISTOGRAM_PANEL_HEIGHT),
-                padding: px(16.0).all(),
-                column_gap: px(20.0),
-                flex_direction: FlexDirection::Row,
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.10, 0.11, 0.14)),
-            BorderColor::all(Color::srgb(0.28, 0.30, 0.36)),
-            ZIndex(100),
-        ))
-        .observe(|mut event: On<Pointer<Press>>| event.propagate(false))
-        .id()
 }
 
 fn graph_node_label(
@@ -1275,8 +872,6 @@ pub fn open_joint_distribution_view(
     results: Option<Res<InferenceResultResource>>,
     graph: Option<Res<GraphIRResource>>,
     selections: Option<Res<SampleSelections>>,
-    scopes: Option<Res<PlateIndexScopes>>,
-    bin_count_setting: Res<HistogramBinCount>,
     old_sidebars: Query<Entity, With<LocalSidebar>>,
     old_joint_indicators: Query<Entity, With<JointSelectedIndicator>>,
     graph_nodes: Query<(
@@ -1313,8 +908,6 @@ pub fn open_joint_distribution_view(
     let Ok(y_instances) = results.0.samples_for_node(event.y_node_id) else {
         return;
     };
-    let x_instances = scoped_instances(&x_instances, &x_plate_ids, scopes.as_deref());
-    let y_instances = scoped_instances(&y_instances, &y_plate_ids, scopes.as_deref());
     let (points, context_plate_ids, context_instance_paths) =
         build_joint_samples(&x_instances, &x_plate_ids, &y_instances, &y_plate_ids);
     if points.is_empty() {
@@ -1340,7 +933,7 @@ pub fn open_joint_distribution_view(
             value: point.y,
         })
         .collect::<Vec<_>>();
-    let bins = bin_count_setting.0.clamp(1, MAX_HISTOGRAM_BINS);
+    let bins = 14;
     let x_histogram = match build_histogram(&x_values, bins) {
         Ok(histogram) => histogram,
         Err(_) => return,
@@ -1433,12 +1026,7 @@ pub fn open_joint_distribution_view(
             },
         ))
         .id();
-    let top_hist = spawn_marginal_histogram(
-        &mut commands,
-        &x_histogram,
-        false,
-        SELECTION_INDICATOR_COLOR,
-    );
+    let top_hist = spawn_marginal_histogram(&mut commands, &x_histogram, false);
     let body = commands
         .spawn(Node {
             width: percent(100.0),
@@ -1468,12 +1056,7 @@ pub fn open_joint_distribution_view(
             ..default()
         })
         .id();
-    let right_hist = spawn_marginal_histogram(
-        &mut commands,
-        &y_histogram,
-        true,
-        SELECTED_SAMPLE_COLOR,
-    );
+    let right_hist = spawn_marginal_histogram(&mut commands, &y_histogram, true);
     commands.entity(right).add_child(right_hist);
     commands.entity(body).add_children(&[heatmap, right]);
 
@@ -1540,7 +1123,6 @@ fn spawn_marginal_histogram(
     commands: &mut Commands,
     histogram: &Histogram,
     horizontal: bool,
-    color: Color,
 ) -> Entity {
     let bin_extent = if histogram.bins.is_empty() {
         0.0
@@ -1554,7 +1136,11 @@ fn spawn_marginal_histogram(
             } else {
                 px(222.0)
             },
-            height: if horizontal { percent(100.0) } else { px(55.0) },
+            height: if horizontal {
+                percent(100.0)
+            } else {
+                px(55.0)
+            },
             flex_direction: if horizontal {
                 FlexDirection::ColumnReverse
             } else {
@@ -1622,7 +1208,7 @@ fn spawn_marginal_histogram(
                     },
                     ..default()
                 },
-                BackgroundColor(color),
+                BackgroundColor(Color::srgb(0.36, 0.55, 0.88)),
             ))
             .id();
         commands.entity(slot).add_child(bar);
@@ -1905,19 +1491,13 @@ fn histogram_selection_probability_line(
     if total == 0.0 {
         return None;
     }
-    let selected = effective_count(selected_samples);
-    let probability = (selected / total).clamp(0.0, 1.0);
+    let probability = (effective_count(selected_samples) / total).clamp(0.0, 1.0);
     let detailed_bounds = match selections.entries.as_slice() {
         [selection] => selection.source.histogram_range_for(node_id),
         _ => None,
     };
     let Some((lower, upper)) = detailed_bounds else {
-        return Some(format!(
-            "Linked selection: {} of {} instance-draws ({:.1}%)",
-            format_count(selected),
-            format_count(total),
-            probability * 100.0,
-        ));
+        return Some(format!("P({node_label} in selection) = {probability:.4}"));
     };
     let data_min = full_samples
         .iter()
@@ -2052,39 +1632,8 @@ pub fn deselect_histogram_selection(
 ) {
     event.propagate(false);
     commands.remove_resource::<SampleSelections>();
-    commands.remove_resource::<PlateIndexScopes>();
-    refresh_selection_views(&mut commands, view, joint_view);
-}
-
-pub fn deselect_histogram_indices(
-    mut event: On<Pointer<Click>>,
-    mut commands: Commands,
-    view: Option<Single<&HistogramView>>,
-    joint_view: Option<Single<&JointDistributionView>>,
-) {
-    event.propagate(false);
-    commands.remove_resource::<PlateIndexScopes>();
-    refresh_selection_views(&mut commands, view, joint_view);
-}
-
-pub fn deselect_histogram_results(
-    mut event: On<Pointer<Click>>,
-    mut commands: Commands,
-    view: Option<Single<&HistogramView>>,
-    joint_view: Option<Single<&JointDistributionView>>,
-) {
-    event.propagate(false);
-    commands.remove_resource::<SampleSelections>();
-    refresh_selection_views(&mut commands, view, joint_view);
-}
-
-fn refresh_selection_views(
-    commands: &mut Commands,
-    view: Option<Single<&HistogramView>>,
-    joint_view: Option<Single<&JointDistributionView>>,
-) {
     if let Some(view) = view {
-        reopen_histogram(commands, &view);
+        reopen_histogram(&mut commands, &view, view.bin_count);
     }
     if let Some(joint) = joint_view {
         commands.trigger(OpenJointDistributionView {
@@ -2096,7 +1645,6 @@ fn refresh_selection_views(
 
 pub fn update_histogram_selection_controls(
     selections: Option<Res<SampleSelections>>,
-    scopes: Option<Res<PlateIndexScopes>>,
     view: Option<Single<&HistogramView>>,
     mut controls: Query<&mut Node, With<HistogramSelectionControls>>,
     mut statuses: Query<&mut Text, With<HistogramSelectionStatus>>,
@@ -2104,31 +1652,26 @@ pub fn update_histogram_selection_controls(
     let Ok(mut controls) = controls.single_mut() else {
         return;
     };
-    let selection_count = selections
-        .as_ref()
-        .map_or(0, |selections| selections.entries.len());
-    let scope_count = scopes
-        .as_ref()
-        .map_or(0, |scopes| scopes.ranges_by_plate.len());
-    if selection_count == 0 && scope_count == 0 {
+    let Some(selections) = selections.filter(|selections| !selections.entries.is_empty()) else {
         controls.display = Display::None;
         return;
-    }
+    };
     controls.display = Display::Flex;
 
     let (count, suffix) = match view {
         Some(view) => (view.displayed_sample_count, "displayed"),
-        None => (
-            selections.as_ref().map_or(0, |s| s.point_count()) as f64,
-            "selected",
-        ),
+        None => (selections.point_count() as f64, "selected"),
     };
     if let Ok(mut status) = statuses.single_mut() {
         status.0 = format!(
-            "{} samples {suffix}; {selection_count} linked selection{}; {scope_count} index scope{}",
+            "{} samples {suffix} in {} selection{}",
             format_count(count),
-            if selection_count == 1 { "" } else { "s" },
-            if scope_count == 1 { "" } else { "s" },
+            selections.entries.len(),
+            if selections.entries.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
         );
     }
 }
@@ -2137,40 +1680,32 @@ fn decrement_histogram_bins(
     mut event: On<Pointer<Click>>,
     mut commands: Commands,
     view: Single<&HistogramView>,
-    joint: Option<Single<&JointDistributionView>>,
-    mut setting: ResMut<HistogramBinCount>,
 ) {
     event.propagate(false);
-    setting.0 = view.bin_count.saturating_sub(1).max(1);
-    reopen_histogram(&mut commands, &view);
-    reopen_joint_if_open(&mut commands, joint.map(|joint| *joint));
+    reopen_histogram(
+        &mut commands,
+        &view,
+        view.bin_count.saturating_sub(1).max(1),
+    );
 }
 
 fn increment_histogram_bins(
     mut event: On<Pointer<Click>>,
     mut commands: Commands,
     view: Single<&HistogramView>,
-    joint: Option<Single<&JointDistributionView>>,
-    mut setting: ResMut<HistogramBinCount>,
 ) {
     event.propagate(false);
-    setting.0 = view.bin_count.saturating_add(1).min(MAX_HISTOGRAM_BINS);
-    reopen_histogram(&mut commands, &view);
-    reopen_joint_if_open(&mut commands, joint.map(|joint| *joint));
+    reopen_histogram(
+        &mut commands,
+        &view,
+        view.bin_count.saturating_add(1).min(MAX_HISTOGRAM_BINS),
+    );
 }
 
-fn reopen_joint_if_open(commands: &mut Commands, joint: Option<&JointDistributionView>) {
-    if let Some(joint) = joint {
-        commands.trigger(OpenJointDistributionView {
-            x_node_id: joint.x_node_id,
-            y_node_id: joint.y_node_id,
-        });
-    }
-}
-
-fn reopen_histogram(commands: &mut Commands, view: &HistogramView) {
+fn reopen_histogram(commands: &mut Commands, view: &HistogramView, bin_count: usize) {
     commands.trigger(OpenHistogramPanel {
-        subject: view.subject,
+        node_id: view.node_id,
+        bin_count,
         clear_toasts: true,
     });
 }
@@ -2180,8 +1715,6 @@ pub fn apply_typed_histogram_bin_count(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     inputs: Query<&EditableText, With<HistogramBinCountInput>>,
     view: Option<Single<&HistogramView>>,
-    joint: Option<Single<&JointDistributionView>>,
-    mut setting: ResMut<HistogramBinCount>,
     mut commands: Commands,
 ) {
     if !keyboard_input.just_pressed(KeyCode::Enter) {
@@ -2199,16 +1732,14 @@ pub fn apply_typed_histogram_bin_count(
     let parsed = input.value().to_string().trim().parse::<usize>();
     match parsed {
         Ok(bin_count @ 1..=MAX_HISTOGRAM_BINS) => {
-            setting.0 = bin_count;
-            reopen_histogram(&mut commands, &view);
-            reopen_joint_if_open(&mut commands, joint.map(|joint| *joint));
+            reopen_histogram(&mut commands, &view, bin_count);
         }
         _ => {
             commands.trigger(ErrorToast {
                 text: format!("Histogram bins must be from 1 to {MAX_HISTOGRAM_BINS}."),
                 color: ERR_COLOR,
             });
-            reopen_histogram(&mut commands, &view);
+            reopen_histogram(&mut commands, &view, view.bin_count);
         }
     }
 }
@@ -2220,7 +1751,7 @@ fn spawn_chart(
     samples: &[HistogramSample],
     instance_paths: &[Vec<usize>],
     plate_ids: &[u32],
-    subject: HistogramSubject,
+    node_id: u32,
     selections: Option<&SampleSelections>,
     heading_text: &str,
 ) -> Entity {
@@ -2242,28 +1773,6 @@ fn spawn_chart(
             TextColor(Color::WHITE),
             TextFont {
                 font_size: FontSize::Px(16.0),
-                ..text_font()
-            },
-        ))
-        .id();
-    let legend_text = match subject {
-        HistogramSubject::Node(_) if highlighted_histogram.is_some() => {
-            "Blue: all samples in current scope | Green: matched by linked selection"
-        }
-        HistogramSubject::Node(_) => "Blue: All samples in current scope",
-        HistogramSubject::PlateIndex(_) if highlighted_histogram.is_some() => {
-            "Blue: available indices | Green: current index scope"
-        }
-        HistogramSubject::PlateIndex(_) => "Uniform plate indices | Drag to add an index scope",
-        HistogramSubject::ObservedData(_) => "Mapped source rows in the current owner-plate scope",
-    };
-    let legend = commands
-        .spawn((
-            Pickable::IGNORE,
-            Text::new(legend_text),
-            TextColor(Color::srgb(0.72, 0.74, 0.80)),
-            TextFont {
-                font_size: FontSize::Px(11.0),
                 ..text_font()
             },
         ))
@@ -2317,7 +1826,7 @@ fn spawn_chart(
                 samples: samples.to_vec(),
                 instance_paths: instance_paths.to_vec(),
                 plate_ids: plate_ids.to_vec(),
-                subject,
+                source_node_id: node_id,
             },
             Node {
                 width: percent(100.0),
@@ -2336,13 +1845,12 @@ fn spawn_chart(
         .observe(begin_histogram_brush)
         .observe(update_histogram_brush)
         .observe(finish_histogram_brush)
-        .observe(toggle_plate_index)
         .id();
 
     commands
         .entity(plot)
         .add_children(&[active_overlay, tooltip]);
-    if let (Some(selections), HistogramSubject::Node(node_id)) = (selections, subject) {
+    if let Some(selections) = selections {
         for (lower, upper) in selections
             .entries
             .iter()
@@ -2459,17 +1967,10 @@ fn spawn_chart(
             ..default()
         })
         .id();
-    let axis_labels = match subject {
-        HistogramSubject::PlateIndex(_) => [
-            "0".to_string(),
-            samples.len().saturating_sub(1).to_string(),
-        ],
-        _ => [
-            format!("{:.4}", histogram.domain.min),
-            format!("{:.4}", histogram.domain.max),
-        ],
-    };
-    for label in axis_labels {
+    for label in [
+        format!("{:.4}", histogram.domain.min),
+        format!("{:.4}", histogram.domain.max),
+    ] {
         let text = commands
             .spawn((
                 Pickable::IGNORE,
@@ -2484,9 +1985,7 @@ fn spawn_chart(
         commands.entity(axis).add_child(text);
     }
 
-    commands
-        .entity(chart)
-        .add_children(&[heading, legend, plot, axis]);
+    commands.entity(chart).add_children(&[heading, plot, axis]);
     chart
 }
 
@@ -2683,7 +2182,7 @@ fn finish_joint_lasso(
         });
     }
     if let Some(view) = histogram_view {
-        reopen_histogram(&mut commands, &view);
+        reopen_histogram(&mut commands, &view, view.bin_count);
     }
     commands.trigger(OpenJointDistributionView {
         x_node_id: plot.x_node_id,
@@ -2766,57 +2265,6 @@ fn hide_histogram_tooltip(
     }
 }
 
-fn toggle_plate_index(
-    mut event: On<Pointer<Click>>,
-    ui_scale: Res<UiScale>,
-    mut commands: Commands,
-    mut scopes: Option<ResMut<PlateIndexScopes>>,
-    plots: Query<(
-        &HistogramPlot,
-        Option<&HistogramBrushStart>,
-        &ComputedNode,
-        &ComputedUiRenderTargetInfo,
-        &UiGlobalTransform,
-    )>,
-    view: Single<&HistogramView>,
-    joint: Option<Single<&JointDistributionView>>,
-) {
-    let Ok((plot, brush, computed, target, transform)) = plots.get(event.entity) else {
-        return;
-    };
-    let HistogramSubject::PlateIndex(plate_id) = plot.subject else {
-        return;
-    };
-    if event.button != PointerButton::Primary || brush.is_some_and(|brush| brush.dragged) {
-        return;
-    }
-    event.propagate(false);
-    let Some(fraction) = plot_pointer_fraction(
-        event.pointer_location.position,
-        computed,
-        target,
-        transform,
-        &ui_scale,
-    ) else {
-        return;
-    };
-    let width = computed.content_box().width();
-    let value = plot.domain.value_at_plot_x(fraction * width, width);
-    let index = (value + 0.5)
-        .floor()
-        .clamp(0.0, plot.samples.len().saturating_sub(1) as f64) as usize;
-    if let Some(scopes) = scopes.as_mut() {
-        scopes.toggle(plate_id, index);
-    } else {
-        let mut new_scopes = PlateIndexScopes::default();
-        new_scopes.toggle(plate_id, index);
-        commands.insert_resource(new_scopes);
-    }
-    commands.entity(event.entity).remove::<HistogramBrushStart>();
-    reopen_histogram(&mut commands, &view);
-    reopen_joint_if_open(&mut commands, joint.map(|joint| *joint));
-}
-
 fn begin_histogram_brush(
     mut event: On<Pointer<Press>>,
     ui_scale: Res<UiScale>,
@@ -2865,15 +2313,23 @@ fn update_histogram_brush(
         ),
         With<HistogramPlot>,
     >,
-    mut overlays: Query<&mut Node, (With<ActiveHistogramBrushOverlay>, Without<HistogramTooltip>)>,
+    mut overlays: Query<
+        &mut Node,
+        (
+            With<ActiveHistogramBrushOverlay>,
+            Without<HistogramTooltip>,
+        ),
+    >,
     mut tooltips: Query<
         (&mut Node, &mut Text),
-        (With<HistogramTooltip>, Without<ActiveHistogramBrushOverlay>),
+        (
+            With<HistogramTooltip>,
+            Without<ActiveHistogramBrushOverlay>,
+        ),
     >,
 ) {
     event.propagate(false);
-    let Ok((plot, mut brush, computed_node, target, transform)) = plots.get_mut(event.entity)
-    else {
+    let Ok((plot, mut brush, computed_node, target, transform)) = plots.get_mut(event.entity) else {
         return;
     };
     brush.dragged = true;
@@ -2915,11 +2371,7 @@ fn update_histogram_brush(
         tooltip.top = percent((fractions.y * 100.0 + 3.0).clamp(0.0, 82.0));
         text.0 = format!(
             "{sample_count} {} in selection, frac = {selected_fraction:.4}",
-            if sample_count == 1 {
-                "sample"
-            } else {
-                "samples"
-            }
+            if sample_count == 1 { "sample" } else { "samples" }
         );
     }
 }
@@ -2929,7 +2381,6 @@ fn finish_histogram_brush(
     ui_scale: Res<UiScale>,
     mut commands: Commands,
     mut selections: Option<ResMut<SampleSelections>>,
-    mut scopes: Option<ResMut<PlateIndexScopes>>,
     plots: Query<(
         &HistogramPlot,
         &HistogramBrushStart,
@@ -2939,8 +2390,20 @@ fn finish_histogram_brush(
     )>,
     view: Single<&HistogramView>,
     joint_view: Option<Single<&JointDistributionView>>,
-    mut overlays: Query<&mut Node, (With<ActiveHistogramBrushOverlay>, Without<HistogramTooltip>)>,
-    mut tooltips: Query<&mut Node, (With<HistogramTooltip>, Without<ActiveHistogramBrushOverlay>)>,
+    mut overlays: Query<
+        &mut Node,
+        (
+            With<ActiveHistogramBrushOverlay>,
+            Without<HistogramTooltip>,
+        ),
+    >,
+    mut tooltips: Query<
+        &mut Node,
+        (
+            With<HistogramTooltip>,
+            Without<ActiveHistogramBrushOverlay>,
+        ),
+    >,
 ) {
     event.propagate(false);
     let Ok((plot, brush, computed_node, target, transform)) = plots.get(event.entity) else {
@@ -2973,30 +2436,6 @@ fn finish_histogram_brush(
     let width = computed_node.content_box().width();
     let lower = plot.domain.value_at_plot_x(lower_fraction * width, width);
     let upper = plot.domain.value_at_plot_x(upper_fraction * width, width);
-    if let HistogramSubject::PlateIndex(plate_id) = plot.subject {
-        let extent = plot.samples.len();
-        let start = (lower + 0.5)
-            .floor()
-            .clamp(0.0, extent.saturating_sub(1) as f64) as usize;
-        let end = (upper + 0.5)
-            .floor()
-            .clamp(0.0, extent.saturating_sub(1) as f64) as usize;
-        if let Some(scopes) = scopes.as_mut() {
-            scopes.union(plate_id, start, end);
-        } else {
-            let mut new_scopes = PlateIndexScopes::default();
-            new_scopes.union(plate_id, start, end);
-            commands.insert_resource(new_scopes);
-        }
-        reopen_histogram(&mut commands, &view);
-        if let Some(joint) = joint_view {
-            commands.trigger(OpenJointDistributionView {
-                x_node_id: joint.x_node_id,
-                y_node_id: joint.y_node_id,
-            });
-        }
-        return;
-    }
     let draws_by_instance = selected_instances(&plot.samples, &plot.instance_paths, lower, upper);
     if draws_by_instance.is_empty() {
         if let Ok(mut overlay) = overlays.single_mut() {
@@ -3005,12 +2444,9 @@ fn finish_histogram_brush(
         return;
     }
 
-    let HistogramSubject::Node(source_node_id) = plot.subject else {
-        return;
-    };
     let selection = SampleSelection {
         source: SelectionSource::Histogram {
-            node_id: source_node_id,
+            node_id: plot.source_node_id,
             lower,
             upper,
         },
@@ -3025,7 +2461,7 @@ fn finish_histogram_brush(
             entries: vec![selection],
         });
     }
-    reopen_histogram(&mut commands, &view);
+    reopen_histogram(&mut commands, &view, view.bin_count);
     if let Some(joint) = joint_view {
         commands.trigger(OpenJointDistributionView {
             x_node_id: joint.x_node_id,
@@ -3313,11 +2749,9 @@ mod tests {
         assert_eq!(plate_ids, vec![7]);
         assert_eq!(paths, vec![vec![0], vec![1]]);
         assert_eq!(points.len(), 3);
-        assert!(
-            points
+        assert!(points
             .iter()
-                .any(|point| point.x == 10.0 && point.y == 30.0)
-        );
+            .any(|point| point.x == 10.0 && point.y == 30.0));
     }
 
     #[test]
@@ -3400,102 +2834,5 @@ mod tests {
         ];
         assert!(point_in_polygon(Vec2::new(0.2, 0.2), &triangle));
         assert!(!point_in_polygon(Vec2::new(0.8, 0.8), &triangle));
-    }
-
-    #[test]
-    fn plate_scope_brushes_union_and_normalize_ranges() {
-        let mut scopes = PlateIndexScopes::default();
-        scopes.union(7, 3, 5);
-        scopes.union(7, 8, 8);
-        scopes.union(7, 6, 7);
-        assert_eq!(scopes.ranges_by_plate[&7], vec![(3, 8)]);
-        assert!(scopes.contains(7, 4));
-        assert!(!scopes.contains(7, 2));
-        assert_eq!(scopes.selected_count(7, 20), 6);
-    }
-
-    #[test]
-    fn plate_index_clicks_toggle_individual_indices() {
-        let mut scopes = PlateIndexScopes::default();
-        scopes.toggle(7, 3);
-        scopes.toggle(7, 5);
-        scopes.toggle(7, 4);
-        assert_eq!(scopes.ranges_by_plate[&7], vec![(3, 5)]);
-
-        scopes.toggle(7, 4);
-        assert_eq!(scopes.ranges_by_plate[&7], vec![(3, 3), (5, 5)]);
-        scopes.toggle(7, 3);
-        scopes.toggle(7, 5);
-        assert!(scopes.ranges_by_plate[&7].is_empty());
-        assert!(!scopes.contains(7, 3));
-    }
-
-    #[test]
-    fn long_scope_labels_truncate_without_losing_ranges() {
-        let ranges = (0..8).map(|index| (index * 2, index * 2)).collect::<Vec<_>>();
-        let label = format_scope_ranges(&ranges);
-        assert_eq!(label, "0, 2, 4, 6, 8, 10, ... (+2 ranges)");
-        assert_eq!(ranges.len(), 8);
-    }
-
-    #[test]
-    fn different_plate_scopes_intersect_only_on_member_dimensions() {
-        let instances = (0..2)
-            .flat_map(|i| {
-                (0..3).map(move |j| NodeInstanceSamples {
-                    indices: vec![i, j],
-                    samples: vec![sample(0, (i * 10 + j) as f64)],
-                })
-            })
-            .collect::<Vec<_>>();
-        let mut scopes = PlateIndexScopes::default();
-        scopes.union(10, 1, 1);
-        scopes.union(20, 2, 2);
-        scopes.union(99, 0, 0);
-
-        let filtered = scoped_instances(&instances, &[10, 20], Some(&scopes));
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].indices, vec![1, 2]);
-        assert_eq!(scoped_instances(&instances, &[10, 20], None).len(), 6);
-        let root = vec![NodeInstanceSamples {
-            indices: vec![],
-            samples: vec![sample(0, 1.0)],
-        }];
-        assert_eq!(scoped_instances(&root, &[], Some(&scopes)), root);
-    }
-
-    #[test]
-    fn linked_selection_is_applied_after_plate_scope_filtering() {
-        let instances = vec![
-            NodeInstanceSamples {
-                indices: vec![0],
-                samples: vec![sample(0, 1.0)],
-            },
-            NodeInstanceSamples {
-                indices: vec![1],
-                samples: vec![sample(0, 2.0)],
-            },
-        ];
-        let mut scopes = PlateIndexScopes::default();
-        scopes.union(10, 1, 1);
-        let scoped = scoped_instances(&instances, &[10], Some(&scopes));
-        let selection = SampleSelection {
-            source: SelectionSource::Histogram {
-                node_id: 1,
-                lower: 0.0,
-                upper: 3.0,
-            },
-            context_plate_ids: vec![10],
-            context_instance_paths: vec![vec![0], vec![1]],
-            draws_by_instance: HashMap::from([
-                (vec![0], HashSet::from([0])),
-                (vec![1], HashSet::from([0])),
-            ]),
-        };
-        let linked = linked_samples(&scoped, &selection, &[10]);
-        assert_eq!(
-            linked.iter().map(|sample| sample.value).collect::<Vec<_>>(),
-            vec![2.0]
-        );
     }
 }

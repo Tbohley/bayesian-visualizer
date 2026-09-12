@@ -1,15 +1,14 @@
-use crate::nodes::Operation;
 use std::collections::HashMap;
+use crate::nodes::Operation;
 pub mod graph_checks;
-mod inference;
 mod model_compilation;
 mod plate_validation;
+mod inference;
 
 pub use inference::{
     ControlledInferenceResult, InferenceResult, NodeInstanceSamples, PosteriorSample,
 };
 pub use model_compilation::CompiledGraph;
-pub(crate) use plate_validation::shared_dimension_positions;
 
 #[derive(Clone)]
 /// Intermediate representation of the complete probabilistic graph and its plates.
@@ -38,12 +37,12 @@ pub enum NodeIR {
     },
     Scalar {
         id: u32,
-        value: f64,
+        value: f64
     },
     Compute {
         id: u32,
         operation: Operation,
-        params: Vec<ParamIR>,
+        params: Vec<ParamIR>
     },
 }
 
@@ -54,12 +53,11 @@ pub struct ParamIR {
 }
 
 #[derive(Clone, Debug)]
-/// Repeated dimension containing every geometrically enclosed node.
+/// Dataset-backed repeated scope containing its direct nodes and child plates.
 pub struct PlateIR {
     pub id: u32,
     pub n: usize,
     pub nodes: Vec<u32>,
-    /// Strictly contained plates; presentation metadata, not execution ownership.
     pub plates: Vec<u32>,
     pub data: HashMap<String, Vec<f64>>,
     pub mapping: HashMap<u32, String>,

@@ -1,21 +1,13 @@
 //use core::f32;
 use bevy::prelude::*;
-mod bayesian_core;
-mod bevy_to_fugue;
-mod constants;
-mod data_vis;
-mod graph;
 mod nodes;
 mod sidebar;
+mod graph;
 mod ui;
-use crate::data_vis::{
-    HistogramBinCount, apply_typed_histogram_bin_count, close_histogram_panel, open_histogram_panel,
-    open_joint_distribution_view, update_histogram_selection_controls,
-};
-use crate::graph::*;
-use crate::nodes::*;
-use crate::sidebar::*;
-use crate::ui::*;
+mod constants;
+mod data_vis;
+mod bayesian_core;
+mod bevy_to_fugue;
 use bevy_to_fugue::compilation::compile;
 use bevy_to_fugue::compilation::poll_inference_job;
 use bevy_to_fugue::compilation::sample_popup;
@@ -23,8 +15,8 @@ use bevy_to_fugue::compilation::tick_sample_popups;
 use bevy_to_fugue::compilation::update_inference_progress;
 pub use constants::*;
 use sidebar::compute_menu::on_open_operation_menu;
-use sidebar::global::invalidate_compilation_on_graph_change;
 use sidebar::global::load_global_sidebar;
+use sidebar::global::invalidate_compilation_on_graph_change;
 use sidebar::global::on_open_node_type_menu;
 use sidebar::global::set_inference_controls_enabled;
 use sidebar::global::set_posterior_sample_enabled;
@@ -33,22 +25,32 @@ use sidebar::link_params::on_open_param_link_menu;
 use sidebar::plate_menu::{on_open_dataset_menu, on_open_plate_mapping_menu};
 use sidebar::random_menu::on_open_distribution_menu;
 use sidebar::scalar_menu::on_enter_clicked;
+use crate::sidebar::*;
+use crate::ui::*;
+use crate::nodes::*;
+use crate::graph::*;
+use crate::data_vis::{
+    apply_typed_histogram_bin_count,
+    close_histogram_panel,
+    open_joint_distribution_view,
+    open_histogram_panel,
+    update_histogram_selection_controls,
+};
 
 fn setup (
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    asset_server: ResMut<AssetServer>,
+    asset_server: ResMut<AssetServer>
 ) {
     commands.spawn(Camera2d);
 
     //spawn clickable background
-    commands
-        .spawn((
+    commands.spawn((
         Canvas,
         Mesh2d(meshes.add(Rectangle::new(CANVAS_WIDTH, CANVAS_HEIGHT))),
         MeshMaterial2d(materials.add(CANVAS_COLOR)),
-            NodeMode(NodeType::Random),
+        NodeMode(NodeType::Random)
     ))
     .observe(on_background_click)
     .observe(on_plate_drag_start)
@@ -62,20 +64,18 @@ fn setup (
     });
 
     commands.insert_resource(Datasets {
-        datasets: vec![
-            Dataset::from_csv("assets/data/SATandGPA.csv").expect("prefilled data should be valid"),
+        datasets: vec![Dataset::from_csv("assets/data/SATandGPA.csv").expect("prefilled data should be valid"),
         Dataset::from_csv("assets/data/poly_reg.csv").expect("prefilled data should be valid"),
-            Dataset::from_csv("assets/data/sim_sleep_react.csv")
-                .expect("prefilled data should be valid"),
-        ],
+        Dataset::from_csv("assets/data/sim_sleep_react.csv").expect("prefilled data should be valid")
+        ]
     });
+
 }
 
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
         .init_resource::<ReducedView>()
-        .init_resource::<HistogramBinCount>()
         .add_observer(on_open_distribution_menu)
         .add_observer(on_open_dataset_menu)
         .add_observer(on_open_plate_mapping_menu)
@@ -90,7 +90,6 @@ fn main() {
         .add_observer(set_node_name)
         .add_observer(toggle_reduced_view)
         .add_observer(throw_err)
-        .add_observer(show_compilation_error_markers)
         .add_observer(clear_toasts)
         .add_observer(compile)
         .add_observer(set_inference_controls_enabled)
@@ -101,9 +100,7 @@ fn main() {
         .add_observer(open_joint_distribution_view)
         .add_observer(close_histogram_panel)
         .add_systems(Startup, (setup, load_global_sidebar))
-        .add_systems(
-            Update,
-            (
+        .add_systems(Update, (
             on_enter_clicked,
             refresh_links_for_resized_random_nodes,
             refresh_reduced_view,
@@ -112,19 +109,15 @@ fn main() {
             poll_inference_job,
             update_inference_progress,
             invalidate_compilation_on_graph_change,
-                relabel_plates,
-                update_plate_handle_colors,
             update_random_seed_placeholder,
             tick_error_toasts, 
-            tick_compilation_error_markers,
             tick_sample_popups,
             click_error_toasts,
             update_node_observation_colors,
-                update_graph_cursor,
-            ),
-        )
+            update_graph_cursor))
         .run();
 }
+
 
 // PROGRESS
 /*

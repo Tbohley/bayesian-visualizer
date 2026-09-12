@@ -1,21 +1,19 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 
+use bevy::prelude::*;
 use super::*;
 use crate::bevy_to_fugue::{
     GraphIRResource, InferenceJob, InferenceResultResource, InferenceStatusResource, SamplePopup,
 };
 use crate::constants::*;
-use crate::data_vis::{
-    CloseHistogramPanel, InferenceHistogramPanel, PlateIndexScopes, SampleSelections,
-};
+use crate::data_vis::{CloseHistogramPanel, InferenceHistogramPanel, SampleSelections};
 use crate::nodes::*;
 use crate::sidebar::{
     CloseContextMenus, ContextMenu, Datasets, LocalSidebar, ReloadSidebar,
     SetInferenceControlsEnabled, SetPosteriorSampleEnabled,
 };
 use crate::ui::{ErrorToast, ErrorToastBox};
-use bevy::prelude::*;
 
 const NO_DATASET: &str = "No dataset";
 
@@ -97,6 +95,8 @@ pub struct PresetMapping {
     pub node: u32,
     pub column: &'static str,
 }
+
+
 
 #[derive(Event)]
 pub struct OpenPresetMenu {
@@ -371,7 +371,6 @@ fn clear_editable_graph(
     commands.remove_resource::<InferenceResultResource>();
     commands.remove_resource::<InferenceStatusResource>();
     commands.remove_resource::<SampleSelections>();
-    commands.remove_resource::<PlateIndexScopes>();
     commands.trigger(SetInferenceControlsEnabled(false));
     commands.trigger(SetPosteriorSampleEnabled(false));
     commands.trigger(CloseHistogramPanel);
@@ -493,9 +492,7 @@ fn spawn_preset(
         };
         entities.insert(node.id(), entity);
         positions.insert(entity, position);
-        endpoint_shapes.insert(
-            entity,
-            match node {
+        endpoint_shapes.insert(entity, match node {
             PresetNode::Random { id, name, .. } => {
                 let label = name.map(str::to_string).unwrap_or_else(|| id.to_string());
                 EndpointShape::horizontal_capsule(
@@ -505,8 +502,7 @@ fn spawn_preset(
             }
             PresetNode::Compute { .. } => EndpointShape::circle(COMPUTE_NODE_RAD),
             PresetNode::Scalar { .. } => EndpointShape::circle(SCALAR_NODE_RAD),
-            },
-        );
+        });
     }
 
     // Pass two: resolve stable IDs into entity-valued parameters and links.

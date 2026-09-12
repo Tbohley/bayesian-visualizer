@@ -1,16 +1,12 @@
-use super::*;
 use bevy::{input_focus::InputFocus, prelude::*, text::EditableText};
+use super::*;
 
 impl SidebarContent for ScalarNode{
     fn build(
         &self, 
         commands: &mut Commands, 
         sidebar_entity: Entity,
-        _node_data: &Query<(
-            Option<&RandomNode>,
-            Option<&ScalarNode>,
-            Option<&ComputeNode>,
-        )>,
+        _node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
         _finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
         _node: Entity,
         observed: bool,
@@ -19,8 +15,7 @@ impl SidebarContent for ScalarNode{
         add_node_name_field(commands, sidebar_entity, self.name.as_deref());
         commands.entity(sidebar_entity).with_child(divider());
 
-        let value_box = commands
-            .spawn((
+        let value_box = commands.spawn((
             Node {
                 width: percent(100.),
                 flex_direction: FlexDirection::Column,
@@ -29,8 +24,7 @@ impl SidebarContent for ScalarNode{
                 ..default()
             },
             Name::new(format!("value_box")),
-            ))
-            .id();
+        )).id();
         commands.entity(sidebar_entity).add_child(value_box);
         commands.entity(value_box).with_child((
             Text::new("value"),
@@ -76,6 +70,7 @@ impl SidebarContent for ScalarNode{
         }
         
         commands.entity(sidebar_entity).with_child(divider());
+
     }
 }
 
@@ -161,15 +156,16 @@ pub fn on_enter_clicked(
         let Some(single) = selected_plate else {
             return;
         };
-        let (_plate_entity, mut plate_node, _selected) = single.into_inner();
+        let (plate_entity, mut plate_node, _selected) = single.into_inner();
         let num = text_input.value().to_string().parse::<usize>();
         match num {
-            Ok(f) if f > 0 => {
+            Ok(f) => {
                 plate_node.data.n = f;
+                replace_node_label(&mut commands,plate_entity,format!("{f:}"), &labels, Some(&plate_node));
                 commands.trigger(ReloadSidebar);
             }
-            _ => {
-                println!("Plate size must be a positive integer!");
+            Err(_e) => {
+                println!("Not a valid plate size integer!");
                 text_input.clear();
             }
         }

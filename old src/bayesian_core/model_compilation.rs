@@ -1,9 +1,9 @@
 use super::graph_checks::{GraphModel, ModelResult, ModelValues};
-use super::plate_validation::{NormalizedPlates, projection_positions};
+use super::plate_validation::{NormalizedPlates, NormalizedScope};
 use super::{GraphIR, NodeIR, ParamIR};
 use fugue::{
-    Address, Beta, Distribution, Exponential, FugueResult, Gamma, LogNormal, Model, ModelExt,
-    Normal, Uniform, pure,
+    pure, Address, Beta, Distribution, Exponential, FugueResult, Gamma, LogNormal, Model, ModelExt,
+    Normal, Uniform,
 };
 use std::collections::HashMap;
 
@@ -30,10 +30,9 @@ enum ExecutionMode {
 }
 
 /// Preprocessed parameter metadata used to locate the applicable producer instance.
-#[derive(Clone)]
 struct CompiledParam {
     from_node: u32,
-    consumer_positions: Vec<usize>,
+    producer_depth: usize,
     producer_plate_ids: Vec<u32>,
 }
 
@@ -102,34 +101,15 @@ impl CompiledGraph {
 
     fn model_for(&self, mode: ExecutionMode) -> Result<GraphModel, String> {
         let mut model = pure(Ok(ExecutionState::default()));
-        for &node_id in &self.order {
-            let node = self.graph.nodes[&node_id].clone();
-            let plate_ids = self.normalized.node_paths[&node_id].clone();
-            let extents = plate_ids
-                .iter()
-                .map(|plate| self.normalized.extents[plate])
-                .collect::<Vec<_>>();
-            let params =
-                compiled_params(node_params(&node), &plate_ids, &self.normalized.node_paths)?;
-            for indices in cartesian_indices(&extents) {
-                let data_value = observation_value(
+        model = compile_scope(
             &self.graph,
             &self.normalized,
-                    node_id,
-                    &plate_ids,
-                    &indices,
-                )?;
-                model = compile_node_instance(
-                    node.clone(),
-                    params.clone(),
-                    plate_ids.clone(),
-                    indices,
-                    data_value,
+            &self.normalized.root,
+            &self.order,
+            &[],
             mode,
             model,
-                );
-            }
-        }
+        )?;
 
         let shapes = self.shapes.clone();
         Ok(model.bind(move |result: Result<ExecutionState, String>| {
@@ -143,46 +123,85 @@ pub(crate) fn create_model(graph: &GraphIR) -> Result<GraphModel, String> {
     CompiledGraph::new(graph.clone())?.model()
 }
 
-fn observation_value(
+/// Recursively compiles one normalized plate scope and its child scopes into a Fugue model.
+fn compile_scope(
     graph: &GraphIR,
     normalized: &NormalizedPlates,
-    node_id: u32,
-    plate_ids: &[u32],
+    scope: &NormalizedScope,
+    order: &[u32],
     indices: &[usize],
-) -> Result<Option<f64>, String> {
-    let Some(&owner_id) = normalized.observation_owners.get(&node_id) else {
-        return Ok(None);
-    };
-    let owner = &graph.plates[&owner_id];
-    let column = &owner.mapping[&node_id];
-    let position = plate_ids.binary_search(&owner_id).map_err(|_| {
-        format!("observation owner plate {owner_id} is not a dimension of node {node_id}")
-    })?;
-    let row = indices[position];
-    owner
+    mode: ExecutionMode,
+    mut model: ExecutionModel,
+) -> Result<ExecutionModel, String> {
+    for &node_id in order {
+        if scope.nodes.binary_search(&node_id).is_err() {
+            continue;
+        }
+
+        let node = graph
+            .nodes
+            .get(&node_id)
+            .cloned()
+            .ok_or_else(|| format!("normalized scope references missing node {node_id}"))?;
+        let plate_ids = normalized
+            .node_paths
+            .get(&node_id)
+            .cloned()
+            .ok_or_else(|| format!("node {node_id} has no normalized plate path"))?;
+        let params = compiled_params(node_params(&node), &normalized.node_paths)?;
+        let data_value = if let Some(plate) = scope.plate {
+            let plate_ir = graph
+                .plates
+                .get(&plate.id)
+                .ok_or_else(|| format!("normalized scope references missing plate {}", plate.id))?;
+
+            if let Some(column) = plate_ir.mapping.get(&node_id) {
+                let row = *indices
+                    .last()
+                    .ok_or_else(|| format!("plate {} node {node_id} has no row index", plate.id))?;
+                Some(
+                    *plate_ir
                         .data
                         .get(column)
                         .and_then(|values| values.get(row))
-        .copied()
-        .map(Some)
-        .ok_or_else(|| format!("plate {owner_id} column {column:?} has no value at row {row}"))
+                        .ok_or_else(|| {
+                            format!(
+                                "plate {} column {column:?} has no value at row {row}",
+                                plate.id
+                            )
+                        })?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        model = compile_node_instance(
+            node,
+            params,
+            plate_ids,
+            indices.to_vec(),
+            data_value,
+            mode,
+            model,
+        );
     }
 
-fn cartesian_indices(extents: &[usize]) -> Vec<Vec<usize>> {
-    let mut paths = vec![Vec::new()];
-    for &extent in extents {
-        paths = paths
-            .into_iter()
-            .flat_map(|path| {
-                (0..extent).map(move |index| {
-                    let mut next = path.clone();
-                    next.push(index);
-                    next
-                })
-            })
-            .collect();
+    for child in &scope.children {
+        let plate = child
+            .plate
+            .ok_or_else(|| "normalized child scope is missing its plate".to_string())?;
+
+        for index in 0..plate.n {
+            let mut child_indices = indices.to_vec();
+            child_indices.push(index);
+            model = compile_scope(graph, normalized, child, order, &child_indices, mode, model)?;
+        }
     }
-    paths
+
+    Ok(model)
 }
 
 /// Extends the execution model with one node instance at its plate indices.
@@ -275,30 +294,25 @@ fn compile_node_instance(
 /// Records each parameter producer's plate depth so instances can be resolved correctly.
 fn compiled_params(
     params: &[ParamIR],
-    consumer_plate_ids: &[u32],
     node_paths: &HashMap<u32, Vec<u32>>,
 ) -> Result<Vec<CompiledParam>, String> {
     params
         .iter()
         .map(|param| {
-            let producer_plate_ids = node_paths
+            let producer_depth = node_paths
                 .get(&param.from_node)
                 .ok_or_else(|| format!("parameter references missing node {}", param.from_node))?
-                .clone();
-            let consumer_positions = projection_positions(&producer_plate_ids, consumer_plate_ids)
-                .map_err(|_| {
-                    format!("node {} has incompatible plate dimensions", param.from_node)
-                })?;
+                .len();
             Ok(CompiledParam {
                 from_node: param.from_node,
-                consumer_positions,
-                producer_plate_ids,
+                producer_depth,
+                producer_plate_ids: node_paths[&param.from_node].clone(),
             })
         })
         .collect()
 }
 
-/// Resolves each parameter by projecting the consumer coordinates onto producer dimensions.
+/// Resolves parameter values from the execution state at the producer's plate depth.
 fn resolve_params(
     params: &[CompiledParam],
     consumer_indices: &[usize],
@@ -307,11 +321,15 @@ fn resolve_params(
     params
         .iter()
         .map(|param| {
-            let producer_indices = param
-                .consumer_positions
-                .iter()
-                .map(|&position| consumer_indices[position])
-                .collect::<Vec<_>>();
+            let producer_indices = consumer_indices
+                .get(..param.producer_depth)
+                .ok_or_else(|| {
+                    format!(
+                        "node {} requires a deeper plate scope than its consumer",
+                        param.from_node
+                    )
+                })?
+                .to_vec();
             let key = InstanceKey {
                 node_id: param.from_node,
                 indices: producer_indices,
@@ -585,17 +603,6 @@ mod tests {
     use super::*;
     use crate::bayesian_core::PlateIR;
 
-    fn empty_plate(id: u32, n: usize, nodes: Vec<u32>) -> PlateIR {
-        PlateIR {
-            id,
-            n,
-            nodes,
-            plates: vec![],
-            data: HashMap::new(),
-            mapping: HashMap::new(),
-        }
-    }
-
     #[test]
     /// Verifies mapped data columns observe random nodes and override scalar literals.
     fn linked_column_observes_random_nodes_and_replaces_scalar_literals() {
@@ -636,73 +643,5 @@ mod tests {
 
         assert_eq!(values[&3], expected);
         assert_eq!(values[&4], expected);
-    }
-
-    #[test]
-    fn one_two_and_three_dimensional_shapes_are_cartesian_products() {
-        let mut graph = GraphIR::new();
-        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 7.0 });
-        graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 8.0 });
-        graph.nodes.insert(3, NodeIR::Scalar { id: 3, value: 9.0 });
-        graph.plates.insert(10, empty_plate(10, 2, vec![1, 2, 3]));
-        graph.plates.insert(20, empty_plate(20, 3, vec![2, 3]));
-        graph.plates.insert(30, empty_plate(30, 4, vec![3]));
-        let values = graph.ancestral_sample().unwrap();
-
-        fn scalars(value: &ModelResult) -> usize {
-            match value {
-                ModelResult::Scalar(_) => 1,
-                ModelResult::Plate(items) => items.iter().map(scalars).sum(),
-            }
-        }
-        assert_eq!(scalars(&values[&1]), 2);
-        assert_eq!(scalars(&values[&2]), 6);
-        assert_eq!(scalars(&values[&3]), 24);
-        assert_eq!(
-            instance_address(3, &[10, 20, 30], &[1, 2, 3]),
-            "node#3/plate#10[1]/plate#20[2]/plate#30[3]"
-        );
-    }
-
-    #[test]
-    fn observation_owner_broadcasts_across_additional_dimensions() {
-        let mut graph = GraphIR::new();
-        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 99.0 });
-        let mut owner = empty_plate(10, 2, vec![1]);
-        owner.data.insert("x".into(), vec![4.0, 5.0]);
-        owner.mapping.insert(1, "x".into());
-        graph.plates.insert(10, owner);
-        graph.plates.insert(20, empty_plate(20, 3, vec![1]));
-
-        let values = graph.ancestral_sample().unwrap();
-        assert_eq!(
-            values[&1],
-            ModelResult::Plate(vec![
-                ModelResult::Plate(vec![ModelResult::Scalar(4.0); 3]),
-                ModelResult::Plate(vec![ModelResult::Scalar(5.0); 3]),
-            ])
-        );
-    }
-
-    #[test]
-    fn parameter_projection_uses_plate_identity_not_prefix_depth() {
-        let param = CompiledParam {
-            from_node: 1,
-            consumer_positions: vec![1],
-            producer_plate_ids: vec![20],
-        };
-        let state = ExecutionState {
-            values: HashMap::from([(
-                InstanceKey {
-                    node_id: 1,
-                    indices: vec![2],
-                },
-                42.0,
-            )]),
-        };
-        assert_eq!(
-            resolve_params(&[param], &[7, 2], &state).unwrap(),
-            vec![42.0]
-        );
     }
 }

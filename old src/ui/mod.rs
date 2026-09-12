@@ -1,8 +1,7 @@
 use bevy::{asset::RenderAssetUsages, mesh::{Indices, PrimitiveTopology}, prelude::*};
-use crate::graph::{Plate, UnfinishedLink};
+use crate::graph::UnfinishedLink;
 use crate::data_vis::HistogramView;
-use crate::nodes::GraphNode;
-use crate::{ERR_BORDER_COLOR, ERR_COLOR};
+use crate::ERR_BORDER_COLOR;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage};
 
 #[derive(Event)]
@@ -13,11 +12,6 @@ pub struct ErrorToast {
 
 #[derive(Event)]
 pub struct ClearToasts;
-
-#[derive(Event)]
-pub struct ShowCompilationErrorMarkers {
-    pub node_ids: Vec<u32>,
-}
 
 #[derive(Resource)]
 pub struct CursorAssets {
@@ -37,15 +31,6 @@ pub enum GraphCursorState {
 pub struct ErrorToastBox {
     pub timer: Timer,
 }
-
-#[derive(Component)]
-pub struct CompilationErrorMarker {
-    timer: Timer,
-    base_y: f32,
-    phase: f32,
-}
-
-const ERROR_TOAST_SECONDS: f32 = 10.0;
 
 fn set_cursor_image(
     commands: &mut Commands,
@@ -268,7 +253,7 @@ pub fn throw_err(
         BackgroundColor(event.color),
         BorderColor::all(ERR_BORDER_COLOR),
         ErrorToastBox {
-            timer: Timer::from_seconds(ERROR_TOAST_SECONDS, TimerMode::Once),
+            timer: Timer::from_seconds(10.0, TimerMode::Once),
         },
         Button,
         ZIndex(999),
@@ -287,57 +272,9 @@ pub fn clear_toasts(
     _event: On<ClearToasts>,
     mut commands: Commands,
     toasts: Query<Entity, With<ErrorToastBox>>,
-    markers: Query<Entity, With<CompilationErrorMarker>>,
 ) {
     for toast in &toasts {
         commands.entity(toast).despawn();
-    }
-    for marker in &markers {
-        commands.entity(marker).despawn();
-    }
-}
-
-pub fn show_compilation_error_markers(
-    event: On<ShowCompilationErrorMarkers>,
-    mut commands: Commands,
-    nodes: Query<(&GraphNode, &Transform), Without<Plate>>,
-) {
-    for (marker_index, node_id) in event.node_ids.iter().enumerate() {
-        let Some((_, node_transform)) = nodes.iter().find(|(node, _)| node.0 == *node_id) else {
-            continue;
-        };
-        let base_y = node_transform.translation.y - 66.0;
-        let marker = commands
-            .spawn((
-                CompilationErrorMarker {
-                    timer: Timer::from_seconds(ERROR_TOAST_SECONDS, TimerMode::Once),
-                    base_y,
-                    phase: marker_index as f32 * 0.7,
-                },
-                Sprite::from_color(ERR_BORDER_COLOR, Vec2::new(10.0, 54.0)),
-                Pickable::IGNORE,
-                Transform::from_xyz(node_transform.translation.x, base_y, 150.0),
-            ))
-            .id();
-        commands.entity(marker).with_children(|parent| {
-            parent.spawn((
-                Sprite::from_color(ERR_COLOR, Vec2::new(6.0, 52.0)),
-                Pickable::IGNORE,
-                Transform::from_xyz(0.0, 0.0, 1.0),
-            ));
-            for (x, rotation) in [(-10.0, -std::f32::consts::FRAC_PI_4), (10.0, std::f32::consts::FRAC_PI_4)] {
-                parent.spawn((
-                    Sprite::from_color(ERR_BORDER_COLOR, Vec2::new(10.0, 30.0)),
-                    Pickable::IGNORE,
-                    Transform::from_xyz(x, 25.0, 0.0).with_rotation(Quat::from_rotation_z(rotation)),
-                ));
-                parent.spawn((
-                    Sprite::from_color(ERR_COLOR, Vec2::new(6.0, 28.0)),
-                    Pickable::IGNORE,
-                    Transform::from_xyz(x, 25.0, 1.0).with_rotation(Quat::from_rotation_z(rotation)),
-                ));
-            }
-        });
     }
 }
 
@@ -355,32 +292,13 @@ pub fn tick_error_toasts(
     }
 }
 
-pub fn tick_compilation_error_markers(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut markers: Query<(Entity, &mut CompilationErrorMarker, &mut Transform)>,
-) {
-    for (entity, mut marker, mut transform) in &mut markers {
-        marker.timer.tick(time.delta());
-        transform.translation.y = marker.base_y
-            + (time.elapsed_secs() * 3.2 + marker.phase).sin() * 6.0;
-        if marker.timer.is_finished() {
-            commands.entity(entity).despawn();
-        }
-    }
-}
-
 pub fn click_error_toasts(
     mut commands: Commands,
     q: Query<(Entity, &Interaction), (Changed<Interaction>, With<ErrorToastBox>)>,
-    markers: Query<Entity, With<CompilationErrorMarker>>,
 ) {
     for (entity, interaction) in &q {
         if *interaction == Interaction::Pressed {
             commands.entity(entity).despawn();
-            for marker in &markers {
-                commands.entity(marker).despawn();
-            }
         }
     }
 }

@@ -1,34 +1,20 @@
-use super::{
-    link_params::{apply_observed_scalar_labels, build_link_param_selector, get_ents_and_labels},
-    *,
-};
-use crate::nodes::replace_node_label;
 use bevy::prelude::*;
+use super::{link_params::{apply_observed_scalar_labels, build_link_param_selector, get_ents_and_labels}, *};
+use crate::nodes::replace_node_label;
 
 impl SidebarContent for ComputeNode{
     fn build(
         &self, 
         mut commands: &mut Commands, 
         sidebar_entity: Entity,
-        node_data: &Query<(
-            Option<&RandomNode>,
-            Option<&ScalarNode>,
-            Option<&ComputeNode>,
-        )>,
+        node_data: &Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
         finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
         node: Entity,
         _observed: bool,
         observed_columns: &std::collections::HashMap<Entity, String>,
     ){
         commands.entity(sidebar_entity).with_child(divider());
-        available_links(
-            &mut commands,
-            &node_data,
-            &finished_links,
-            sidebar_entity,
-            node,
-            observed_columns,
-        );
+        available_links(&mut commands, &node_data, &finished_links, sidebar_entity, node, observed_columns);
         commands.entity(sidebar_entity).with_child(divider());
 
         commands.entity(sidebar_entity).with_child((
@@ -40,8 +26,7 @@ impl SidebarContent for ComputeNode{
             },
             TextColor(NODE_NAME_COLOR),
         ));
-        let context_menu = commands
-            .spawn((
+        let context_menu = commands.spawn((
             Name::new("operation_context_menu"),
             Button,
             Node {
@@ -63,8 +48,7 @@ impl SidebarContent for ComputeNode{
                 TextColor(Color::WHITE),
                 TextShadow::default(),
             )],
-            ))
-            .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
+        )).observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
             event.propagate(false);
             println!("Clicked context menu");
             debug!("click: {}", event.pointer_location.position);
@@ -72,26 +56,22 @@ impl SidebarContent for ComputeNode{
             commands.trigger(OpenOperationMenu {
                 pos: event.pointer_location.position,
             });
-            })
-            .id();
+        }).id();
         commands.entity(sidebar_entity).add_child(context_menu);
         commands.entity(sidebar_entity).with_child(divider());
         let mut link_labels = get_ents_and_labels(commands, node_data, &finished_links, node);
         apply_observed_scalar_labels(&mut link_labels, node_data, observed_columns);
         for (i, _param) in self.params.iter().enumerate() {        
-            build_link_param_selector(
-                commands,
-                link_labels.clone(),
-                self.params.clone(),
-                i,
-                &sidebar_entity,
-            );
+            build_link_param_selector(commands, link_labels.clone(), self.params.clone(), i, &sidebar_entity);
         }
         commands.entity(sidebar_entity).with_child(divider());
     }
 }
 
-pub fn on_open_operation_menu(event: On<OpenOperationMenu>, mut commands: Commands) {
+pub fn on_open_operation_menu(
+    event: On<OpenOperationMenu>, 
+    mut commands: Commands,
+) {
     commands.trigger(CloseContextMenus);
     let pos = event.pos;
     debug!("open context menu at: {pos}");
@@ -125,6 +105,7 @@ pub fn on_open_operation_menu(event: On<OpenOperationMenu>, mut commands: Comman
         ))
         .observe(on_select_operation);
 }
+
 
 fn operation_symbol(operation: &Operation) -> &'static str {
     match operation {
@@ -166,7 +147,7 @@ fn on_select_operation(
                 "Log" => Operation::Logarithm,
                 "Sum" => Operation::Sum,
                 "Product" => Operation::Product,
-                _ => Operation::Add,
+                _ => Operation::Add
             };
 
             compute_var.params = compute_params(&compute_var.operation);
@@ -175,10 +156,12 @@ fn on_select_operation(
                 entity,
                 operation_symbol(&compute_var.operation),
                 &labels,
+                None
             );
             
             commands.trigger(CloseContextMenus);
             commands.trigger(ReloadSidebar);
+            
         }
     }
 }
