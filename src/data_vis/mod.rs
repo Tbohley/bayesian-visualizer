@@ -226,7 +226,7 @@ struct JointLasso {
 }
 
 #[derive(Component)]
-struct JointLassoMark;
+struct ActiveJointLassoDash;
 
 /// The currently open posterior histogram and its rendering parameters.
 #[derive(Component)]
@@ -1660,6 +1660,8 @@ fn spawn_joint_heatmap(
             selected_counts[index] += 1;
         }
     }
+    let selected_cells =
+        joint_selection_cells(&selected_counts, bins, x_node_id, y_node_id, selections);
     let max_count = counts.iter().copied().max().unwrap_or(1).max(1) as f32;
     let plot = commands
         .spawn((
@@ -1675,7 +1677,9 @@ fn spawn_joint_heatmap(
             Node {
                 width: px(222.0),
                 height: px(222.0),
-                flex_wrap: FlexWrap::Wrap,
+                display: Display::Grid,
+                grid_template_columns: vec![RepeatedGridTrack::flex(bins as u16, 1.0)],
+                grid_template_rows: vec![RepeatedGridTrack::flex(bins as u16, 1.0)],
                 overflow: Overflow::clip(),
                 ..default()
             },
@@ -1695,68 +1699,113 @@ fn spawn_joint_heatmap(
                 0.91 - density * 0.78,
                 0.93 - density * 0.60,
             );
-            let selected = selected_counts[index] > 0;
+            let selected = selected_cells[index];
             let boundary =
-                selected.then(|| selected_cell_boundary(&selected_counts, bins, x, data_y));
-            let border = boundary.map_or_else(
-                || px(0.35).all(),
-                |boundary| {
-                    UiRect::new(
-                        px(if boundary.left { 1.8 } else { 0.0 }),
-                        px(if boundary.right { 1.8 } else { 0.0 }),
-                        px(if boundary.top { 1.8 } else { 0.0 }),
-                        px(if boundary.bottom { 1.8 } else { 0.0 }),
-                    )
-                },
-            );
+                selected.then(|| selected_cell_boundary(&selected_cells, bins, x, data_y));
             let cell = commands
                 .spawn((
                     Pickable::IGNORE,
                     Node {
-                        width: percent(100.0 / bins as f32),
-                        height: percent(100.0 / bins as f32),
-                        border,
+                        width: percent(100.0),
+                        height: percent(100.0),
+                        // Draw each internal gridline exactly once. A full
+                        // sub-pixel border on every cell can round away on
+                        // fractional grid tracks or become uneven where two
+                        // adjacent borders meet.
+                        border: UiRect::new(
+                            px(if x > 0 { 1.0 } else { 0.0 }),
+                            px(0.0),
+                            px(if screen_y > 0 { 1.0 } else { 0.0 }),
+                            px(0.0),
+                        ),
                         ..default()
                     },
-                    BorderColor::all(if selected {
-                        Color::BLACK
-                    } else {
-                        Color::srgba(0.2, 0.22, 0.28, 0.35)
-                    }),
+                    BorderColor::all(Color::srgba(0.2, 0.22, 0.28, 0.35)),
                     BackgroundColor(color),
                 ))
                 .id();
-            commands.entity(plot).add_child(cell);
-        }
-    }
-    if let Some(selections) = selections {
-        for polygon in selections
-            .entries
-            .iter()
-            .filter_map(|selection| match &selection.source {
-                SelectionSource::Joint {
-                    x_node_id: x,
-                    y_node_id: y,
-                    polygon,
-                } if *x == x_node_id && *y == y_node_id => Some(polygon),
-                _ => None,
-            })
-        {
-            for point in polygon {
-                spawn_lasso_mark(commands, plot, *point);
+            if let Some(boundary) = boundary {
+                let selection_outline = commands
+                    .spawn((
+                        Pickable::IGNORE,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: px(0.0),
+                            right: px(0.0),
+                            top: px(0.0),
+                            bottom: px(0.0),
+                            border: UiRect::new(
+                                px(if boundary.left { 1.8 } else { 0.0 }),
+                                px(if boundary.right { 1.8 } else { 0.0 }),
+                                px(if boundary.top { 1.8 } else { 0.0 }),
+                                px(if boundary.bottom { 1.8 } else { 0.0 }),
+                            ),
+                            ..default()
+                        },
+                        BorderColor::all(Color::BLACK),
+                        ZIndex(1),
+                    ))
+                    .id();
+                commands.entity(cell).add_child(selection_outline);
             }
+            commands.entity(plot).add_child(cell);
         }
     }
     plot
 }
 
-fn selected_cell_boundary(
+fn joint_selection_cells(
     selected_counts: &[usize],
+    bins: usize,
+    x_node_id: u32,
+    y_node_id: u32,
+    selections: Option<&SampleSelections>,
+) -> Vec<bool> {
+    let mut selected = selected_counts
+        .iter()
+        .map(|&count| count > 0)
+        .collect::<Vec<_>>();
+    let Some(selections) = selections else {
+        return selected;
+    };
+
+    // Sample occupancy is intentionally sparse, so it cannot describe the
+    // interior of a lasso. Rasterize matching joint polygons into the same
+    // data-space grid to produce a closed, continuous selection boundary.
+    for polygon in selections
+        .entries
+        .iter()
+        .filter_map(|selection| match &selection.source {
+            SelectionSource::Joint {
+                x_node_id: x,
+                y_node_id: y,
+                polygon,
+            } if *x == x_node_id && *y == y_node_id => Some(polygon),
+            _ => None,
+        })
+    {
+        for data_y in 0..bins {
+            for x in 0..bins {
+                let cell_center = Vec2::new(
+                    (x as f32 + 0.5) / bins as f32,
+                    1.0 - (data_y as f32 + 0.5) / bins as f32,
+                );
+                if point_in_polygon(cell_center, polygon) {
+                    selected[data_y * bins + x] = true;
+                }
+            }
+        }
+    }
+    selected
+}
+
+fn selected_cell_boundary(
+    selected_cells: &[bool],
     bins: usize,
     x: usize,
     data_y: usize,
 ) -> SelectedCellBoundary {
-    let is_selected = |x: usize, y: usize| selected_counts[y * bins + x] > 0;
+    let is_selected = |x: usize, y: usize| selected_cells[y * bins + x];
     SelectedCellBoundary {
         left: x == 0 || !is_selected(x - 1, data_y),
         right: x + 1 == bins || !is_selected(x + 1, data_y),
@@ -2325,7 +2374,9 @@ fn spawn_chart(
                 flex_grow: 1.0,
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::End,
-                column_gap: px(1.0),
+                // Keep the separator visible when equal-width bins land on
+                // fractional pixels (notably the two center bins).
+                column_gap: px(2.0),
                 padding: UiRect::new(px(8.0), px(8.0), px(8.0), px(0.0)),
                 ..default()
             },
@@ -2548,7 +2599,7 @@ fn begin_joint_lasso(
         ),
         With<JointPlot>,
     >,
-    marks: Query<Entity, With<JointLassoMark>>,
+    dashes: Query<Entity, With<ActiveJointLassoDash>>,
 ) {
     event.propagate(false);
     if event.button != PointerButton::Primary {
@@ -2566,19 +2617,19 @@ fn begin_joint_lasso(
     ) else {
         return;
     };
-    for mark in &marks {
-        commands.entity(mark).despawn();
+    for dash in &dashes {
+        commands.entity(dash).despawn();
     }
     commands.entity(event.entity).insert(JointLasso {
         points: vec![point],
     });
-    spawn_lasso_mark(&mut commands, event.entity, point);
 }
 
 fn update_joint_lasso(
     mut event: On<Pointer<Drag>>,
     ui_scale: Res<UiScale>,
     mut commands: Commands,
+    dashes: Query<Entity, With<ActiveJointLassoDash>>,
     mut plots: Query<
         (
             &mut JointLasso,
@@ -2610,28 +2661,82 @@ fn update_joint_lasso(
         return;
     }
     lasso.points.push(point);
-    spawn_lasso_mark(&mut commands, event.entity, point);
+    for dash in &dashes {
+        commands.entity(dash).despawn();
+    }
+    let content_box = computed.content_box();
+    spawn_active_lasso_dashes(
+        &mut commands,
+        event.entity,
+        &lasso.points,
+        Vec2::new(content_box.width(), content_box.height()),
+    );
 }
 
-fn spawn_lasso_mark(commands: &mut Commands, plot: Entity, point: Vec2) {
-    let mark = commands
-        .spawn((
-            JointLassoMark,
-            Pickable::IGNORE,
-            Node {
-                position_type: PositionType::Absolute,
-                left: percent(point.x * 100.0),
-                top: percent(point.y * 100.0),
-                width: px(4.0),
-                height: px(4.0),
-                border_radius: BorderRadius::MAX,
-                ..default()
-            },
-            BackgroundColor(Color::WHITE),
-            ZIndex(5),
-        ))
-        .id();
-    commands.entity(plot).add_child(mark);
+fn spawn_active_lasso_dashes(
+    commands: &mut Commands,
+    plot: Entity,
+    points: &[Vec2],
+    plot_size: Vec2,
+) {
+    const DASH_LENGTH: f32 = 5.0;
+    const DASH_GAP: f32 = 4.0;
+    const DASH_THICKNESS: f32 = 1.25;
+
+    let pattern_length = DASH_LENGTH + DASH_GAP;
+    let mut path_distance = 0.0;
+    for points in points.windows(2) {
+        let start = points[0];
+        let end = points[1];
+        let delta_pixels = (end - start) * plot_size;
+        let segment_length = delta_pixels.length();
+        if segment_length <= f32::EPSILON {
+            continue;
+        }
+
+        let mut cursor = 0.0;
+        while cursor < segment_length {
+            let pattern_position = (path_distance + cursor) % pattern_length;
+            let drawing_dash = pattern_position < DASH_LENGTH;
+            let distance_to_transition = if drawing_dash {
+                DASH_LENGTH - pattern_position
+            } else {
+                pattern_length - pattern_position
+            };
+            let next_cursor = (cursor + distance_to_transition).min(segment_length);
+            if drawing_dash {
+                let dash_start = start + (end - start) * (cursor / segment_length);
+                let dash_end = start + (end - start) * (next_cursor / segment_length);
+                let midpoint = (dash_start + dash_end) * 0.5;
+                let dash_length = next_cursor - cursor;
+                let angle = delta_pixels.y.atan2(delta_pixels.x);
+                let dash = commands
+                    .spawn((
+                        ActiveJointLassoDash,
+                        Pickable::IGNORE,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: percent(midpoint.x * 100.0),
+                            top: percent(midpoint.y * 100.0),
+                            width: px(dash_length),
+                            height: px(DASH_THICKNESS),
+                            ..default()
+                        },
+                        UiTransform {
+                            translation: Val2::px(-dash_length * 0.5, -DASH_THICKNESS * 0.5),
+                            rotation: Rot2::radians(angle),
+                            ..default()
+                        },
+                        BackgroundColor(Color::BLACK),
+                        ZIndex(5),
+                    ))
+                    .id();
+                commands.entity(plot).add_child(dash);
+            }
+            cursor = next_cursor;
+        }
+        path_distance += segment_length;
+    }
 }
 
 fn finish_joint_lasso(
@@ -2639,6 +2744,7 @@ fn finish_joint_lasso(
     mut commands: Commands,
     mut selections: Option<ResMut<SampleSelections>>,
     plots: Query<(&JointPlot, &JointLasso)>,
+    dashes: Query<Entity, With<ActiveJointLassoDash>>,
     histogram_view: Option<Single<&HistogramView>>,
 ) {
     event.propagate(false);
@@ -2646,6 +2752,9 @@ fn finish_joint_lasso(
         return;
     };
     commands.entity(event.entity).remove::<JointLasso>();
+    for dash in &dashes {
+        commands.entity(dash).despawn();
+    }
     if lasso.points.len() < 3 {
         return;
     }
@@ -3313,18 +3422,16 @@ mod tests {
         assert_eq!(plate_ids, vec![7]);
         assert_eq!(paths, vec![vec![0], vec![1]]);
         assert_eq!(points.len(), 3);
-        assert!(
-            points
+        assert!(points
             .iter()
-                .any(|point| point.x == 10.0 && point.y == 30.0)
-        );
+            .any(|point| point.x == 10.0 && point.y == 30.0));
     }
 
     #[test]
     fn selected_cell_boundaries_merge_adjacent_cells() {
-        let mut selected = vec![0; 9];
-        selected[4] = 1;
-        selected[5] = 1;
+        let mut selected = vec![false; 9];
+        selected[4] = true;
+        selected[5] = true;
 
         assert_eq!(
             selected_cell_boundary(&selected, 3, 1, 1),
@@ -3344,6 +3451,38 @@ mod tests {
                 bottom: true,
             }
         );
+    }
+
+    #[test]
+    fn joint_polygon_fills_empty_cells_inside_selection_boundary() {
+        let selection = SampleSelection {
+            source: SelectionSource::Joint {
+                x_node_id: 1,
+                y_node_id: 2,
+                polygon: vec![
+                    Vec2::new(0.2, 0.2),
+                    Vec2::new(0.8, 0.2),
+                    Vec2::new(0.8, 0.8),
+                    Vec2::new(0.2, 0.8),
+                ],
+            },
+            context_plate_ids: Vec::new(),
+            context_instance_paths: vec![Vec::new()],
+            draws_by_instance: HashMap::new(),
+        };
+        let cells = joint_selection_cells(
+            &[0; 25],
+            5,
+            1,
+            2,
+            Some(&SampleSelections {
+                entries: vec![selection],
+            }),
+        );
+
+        assert!(cells[2 * 5 + 2]);
+        assert!(!cells[0]);
+        assert!(!cells[4 * 5 + 4]);
     }
 
     #[test]

@@ -1,11 +1,13 @@
 use super::graph_checks::{GraphModel, ModelResult, ModelValues};
 use super::plate_validation::{NormalizedPlates, projection_positions};
 use super::{GraphIR, NodeIR, ParamIR};
+use crate::nodes::Operation;
 use fugue::{
     Address, Beta, Distribution, Exponential, FugueResult, Gamma, LogNormal, Model, ModelExt,
     Normal, Uniform, pure,
 };
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 /// Flat runtime identity for one concrete node instance at specific plate indices.
@@ -406,6 +408,15 @@ fn materialize_node(
 }
 
 impl GraphIR {
+    /// Renders the inference model as concise, source-like Fugue code.
+    ///
+    /// This is a presentation-oriented explanation of the compiled model, not
+    /// an exact expansion of the engine's internal execution-state machinery.
+    pub fn bind_debug_string(&self) -> Result<String, String> {
+        let compiled = CompiledGraph::new(self.clone())?;
+        compiled.bind_debug_string()
+    }
+
     // pub fn ancestral_sample_debug(&self) -> Result<String, String> {
     //     let values = self.ancestral_sample()?;
     //     self.format_model_values(&values)
@@ -447,6 +458,229 @@ impl GraphIR {
 
         Ok(lines.join("\n"))
     }
+}
+
+impl CompiledGraph {
+    /// Renders a compact `prob!`/`plate!` view of the compiled inference model.
+    pub fn bind_debug_string(&self) -> Result<String, String> {
+        let mut output = String::new();
+
+        let mut observed_nodes = self
+            .normalized
+            .observation_owners
+            .iter()
+            .map(|(&node_id, &plate_id)| (node_id, plate_id))
+            .collect::<Vec<_>>();
+        observed_nodes.sort_unstable();
+        for (node_id, plate_id) in observed_nodes {
+            let column = &self.graph.plates[&plate_id].mapping[&node_id];
+            writeln!(
+                output,
+                "let observed_node_{node_id} = data.column({column:?}); // plate {plate_id}"
+            )
+            .expect("writing to a String cannot fail");
+        }
+        if !self.normalized.observation_owners.is_empty() {
+            output.push('\n');
+        }
+
+        output.push_str("let model = prob! {\n");
+
+        for &node_id in &self.order {
+            let node = &self.graph.nodes[&node_id];
+            let plate_ids = &self.normalized.node_paths[&node_id];
+            if let NodeIR::Random {
+                label: Some(label), ..
+            } = node
+            {
+                writeln!(output, "    // {label}").expect("writing to a String cannot fail");
+            }
+
+            if plate_ids.is_empty() {
+                render_root_node(&mut output, node, &self.normalized.node_paths);
+            } else {
+                render_plated_node(
+                    &mut output,
+                    node,
+                    plate_ids,
+                    &self.normalized,
+                    &self.normalized.node_paths,
+                );
+            }
+        }
+
+        let results = self
+            .order
+            .iter()
+            .map(|node_id| format!("node_{node_id}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(output, "    pure(({results}))").expect("writing to a String cannot fail");
+        output.push_str("};\n");
+
+        Ok(output)
+    }
+}
+
+/// Renders a node with no repeated dimensions directly inside `prob!`.
+fn render_root_node(output: &mut String, node: &NodeIR, node_paths: &HashMap<u32, Vec<u32>>) {
+    let node_id = node_id(node);
+    match node {
+        NodeIR::Scalar { value, .. } => {
+            writeln!(output, "    let node_{node_id} = {value:?};")
+                .expect("writing to a String cannot fail");
+        }
+        NodeIR::Compute {
+            operation, params, ..
+        } => {
+            let params = debug_param_expressions(params, node_paths);
+            let expression = debug_compute_expression(*operation, &params);
+            writeln!(output, "    let node_{node_id} = {expression};")
+                .expect("writing to a String cannot fail");
+        }
+        NodeIR::Random {
+            dist_type, params, ..
+        } => {
+            let params = debug_param_expressions(params, node_paths);
+            let distribution = debug_distribution(dist_type, &params);
+            writeln!(
+                output,
+                "    let node_{node_id} <- sample(addr!(\"node_{node_id}\"), {distribution});"
+            )
+            .expect("writing to a String cannot fail");
+        }
+    }
+}
+
+/// Renders a node as one or more nested Fugue plates.
+fn render_plated_node(
+    output: &mut String,
+    node: &NodeIR,
+    plate_ids: &[u32],
+    normalized: &NormalizedPlates,
+    node_paths: &HashMap<u32, Vec<u32>>,
+) {
+    let node_id = node_id(node);
+    output.push_str(&format!("    let node_{node_id} <- "));
+    for (depth, plate_id) in plate_ids.iter().enumerate() {
+        if depth > 0 {
+            output.push_str(&"    ".repeat(depth + 1));
+        }
+        writeln!(
+            output,
+            "plate!(i_{plate_id} in 0..{} => {{",
+            normalized.extents[plate_id]
+        )
+        .expect("writing to a String cannot fail");
+    }
+
+    let indent = "    ".repeat(plate_ids.len() + 1);
+    let expression = debug_plated_node_expression(node, plate_ids, normalized, node_paths);
+    writeln!(output, "{indent}{expression}").expect("writing to a String cannot fail");
+
+    for depth in (0..plate_ids.len()).rev() {
+        output.push_str(&"    ".repeat(depth + 1));
+        output.push_str("})");
+        if depth == 0 {
+            output.push_str(";\n");
+        } else {
+            output.push('\n');
+        }
+    }
+}
+
+/// Produces the model expression at the innermost level of a rendered plate.
+fn debug_plated_node_expression(
+    node: &NodeIR,
+    plate_ids: &[u32],
+    normalized: &NormalizedPlates,
+    node_paths: &HashMap<u32, Vec<u32>>,
+) -> String {
+    let node_id = node_id(node);
+    let observed = normalized
+        .observation_owners
+        .get(&node_id)
+        .map(|plate_id| format!("observed_node_{node_id}[i_{plate_id}]"));
+
+    match node {
+        NodeIR::Scalar { value, .. } => {
+            format!("pure({})", observed.unwrap_or_else(|| format!("{value:?}")))
+        }
+        NodeIR::Compute {
+            operation, params, ..
+        } => {
+            let params = debug_param_expressions(params, node_paths);
+            format!("pure({})", debug_compute_expression(*operation, &params))
+        }
+        NodeIR::Random {
+            dist_type, params, ..
+        } => {
+            let params = debug_param_expressions(params, node_paths);
+            let distribution = debug_distribution(dist_type, &params);
+            let address = debug_address(node_id, plate_ids);
+            match observed {
+                Some(value) => {
+                    format!("observe({address}, {distribution}, {value}).map(move |_| {value})")
+                }
+                None => format!("sample({address}, {distribution})"),
+            }
+        }
+    }
+}
+
+/// Expresses parameter projections as direct indexing into upstream plate results.
+fn debug_param_expressions(params: &[ParamIR], node_paths: &HashMap<u32, Vec<u32>>) -> Vec<String> {
+    params
+        .iter()
+        .map(|param| {
+            let mut expression = format!("node_{}", param.from_node);
+            for plate_id in &node_paths[&param.from_node] {
+                expression.push_str(&format!("[i_{plate_id}]"));
+            }
+            expression
+        })
+        .collect()
+}
+
+/// Uses ordinary mathematical notation for deterministic graph nodes.
+fn debug_compute_expression(operation: Operation, params: &[String]) -> String {
+    match (operation, params) {
+        (Operation::Add, [a, b]) => format!("({a} + {b})"),
+        (Operation::Subtract, [a, b]) => format!("({a} - {b})"),
+        (Operation::Multiply, [a, b]) => format!("({a} * {b})"),
+        (Operation::Divide, [a, b]) => format!("({a} / {b})"),
+        (Operation::Power, [base, exponent]) => format!("{base}.powf({exponent})"),
+        (Operation::Exponential, [value]) => format!("{value}.exp()"),
+        (Operation::Logarithm, [value]) => format!("{value}.ln()"),
+        (Operation::Sum, [values]) => format!("{values}.iter().sum()"),
+        (Operation::Product, [values]) => format!("{values}.iter().product()"),
+        _ => format!(
+            "Operation::{operation:?}.evaluate(&[{}]).unwrap()",
+            params.join(", ")
+        ),
+    }
+}
+
+/// Constructs a concrete Fugue distribution expression.
+fn debug_distribution(dist_type: &str, params: &[String]) -> String {
+    format!("{dist_type}::new({}).unwrap()", params.join(", "))
+}
+
+/// Gives each displayed random variable a compact indexed Fugue address.
+fn debug_address(node_id: u32, plate_ids: &[u32]) -> String {
+    if plate_ids.is_empty() {
+        return format!("addr!(\"node_{node_id}\")");
+    }
+
+    let format_string = std::iter::repeat_n("{}", plate_ids.len())
+        .collect::<Vec<_>>()
+        .join("_");
+    let indices = plate_ids
+        .iter()
+        .map(|plate_id| format!("i_{plate_id}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("scoped_addr!(\"node\", \"{node_id}\", \"{format_string}\", {indices})")
 }
 
 /// Formats all instances of a node according to its normalized plate path.
@@ -636,6 +870,43 @@ mod tests {
 
         assert_eq!(values[&3], expected);
         assert_eq!(values[&4], expected);
+    }
+
+    #[test]
+    fn bind_debug_string_presents_plated_observations_as_fugue_code() {
+        let mut graph = GraphIR::new();
+        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 0.0 });
+        graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 1.0 });
+        graph.nodes.insert(
+            3,
+            NodeIR::Random {
+                id: 3,
+                label: Some("x".into()),
+                dist_type: "Normal".into(),
+                params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
+            },
+        );
+        graph.plates.insert(
+            10,
+            PlateIR {
+                id: 10,
+                n: 2,
+                nodes: vec![3],
+                plates: Vec::new(),
+                data: HashMap::from([("x".to_string(), vec![1.25, -0.5])]),
+                mapping: HashMap::from([(3, "x".to_string())]),
+            },
+        );
+
+        let code = graph.bind_debug_string().unwrap();
+
+        assert!(code.contains("let observed_node_3 = data.column(\"x\"); // plate 10"));
+        assert!(code.contains("let model = prob! {"));
+        assert!(code.contains("let node_3 <- plate!(i_10 in 0..2 => {"));
+        assert!(code.contains("observe("));
+        assert!(code.contains("Normal::new(node_1, node_2).unwrap()"));
+        assert!(code.contains("observed_node_3[i_10]"));
+        assert!(code.contains("pure((node_1, node_2, node_3))"));
     }
 
     #[test]

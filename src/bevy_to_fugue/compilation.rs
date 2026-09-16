@@ -117,6 +117,12 @@ pub fn compile(
                     //save graph for other functions
                     match g.compile() {
                         Ok(compiled) => {
+                            match compiled.bind_debug_string() {
+                                Ok(code) => println!("Generated Fugue model:\n{code}"),
+                                Err(error) => {
+                                    println!("Could not render Fugue bind model: {error}")
+                                }
+                            }
                             commands.insert_resource(GraphIRResource(compiled));
                             commands.remove_resource::<InferenceResultResource>();
                             commands.trigger(SetInferenceControlsEnabled(true));
