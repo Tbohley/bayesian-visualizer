@@ -6,8 +6,12 @@ mod model_compilation;
 mod plate_validation;
 
 pub use inference::{
-    ControlledInferenceResult, InferenceResult, NodeInstanceSamples, PosteriorSample,
+    InferenceResult, NodeInstanceSamples, PosteriorSample,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use inference::ControlledInferenceResult;
+#[cfg(target_arch = "wasm32")]
+pub use inference::{InferenceRunner, InferenceStep};
 pub use model_compilation::CompiledGraph;
 pub(crate) use plate_validation::shared_dimension_positions;
 

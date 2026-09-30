@@ -2,7 +2,7 @@ use super::{GraphIR, NodeIR, ParamIR, PlateIR};
 use std::collections::{HashMap, HashSet};
 
 /// Validated plate dimensions, keyed independently of geometric nesting.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct NormalizedPlates {
     pub(crate) node_paths: HashMap<u32, Vec<u32>>,
     pub(crate) extents: HashMap<u32, usize>,

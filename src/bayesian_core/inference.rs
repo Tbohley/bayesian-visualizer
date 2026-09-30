@@ -25,6 +25,40 @@ pub struct ControlledInferenceResult {
     pub cancelled: bool,
 }
 
+/// A single observable boundary in a cooperatively driven inference run.
+///
+/// Each call to [`InferenceRunner::step`] performs at most one model execution,
+/// which lets single-threaded hosts (notably browsers) return to their event
+/// loop between MCMC transitions.
+pub enum InferenceStep {
+    Warmup { completed: usize },
+    WarmupComplete { negative_infinite_variables: Vec<String> },
+    Sample { draw_index: usize, values: ModelValues },
+    Complete(ControlledInferenceResult),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InferencePhase {
+    Warmup,
+    DiagnoseWarmup,
+    Sampling,
+}
+
+/// Stateful adaptive MCMC execution that can be advanced cooperatively.
+pub struct InferenceRunner {
+    compiled: CompiledGraph,
+    rng: StdRng,
+    current_trace: Trace,
+    adaptation: DiminishingAdaptation,
+    seed: u64,
+    requested_samples: usize,
+    requested_warmup: usize,
+    completed_warmup: usize,
+    samples_by_node: HashMap<u32, Vec<ModelResult>>,
+    traces: Vec<Trace>,
+    phase: InferencePhase,
+}
+
 fn negative_infinite_addresses(trace: &Trace) -> Vec<&str> {
     trace
         .choices
@@ -125,6 +159,16 @@ pub struct NodeInstanceSamples {
 }
 
 impl CompiledGraph {
+    /// Starts an inference run without consuming the whole chain at once.
+    pub fn inference_runner(
+        self,
+        seed: u64,
+        n_samples: usize,
+        n_warmup: usize,
+    ) -> Result<InferenceRunner, String> {
+        InferenceRunner::new(self, seed, n_samples, n_warmup)
+    }
+
     #[allow(dead_code)]
     pub fn run_inference(
         &self,
@@ -160,128 +204,21 @@ impl CompiledGraph {
         mut on_warmup_complete: impl FnMut(Vec<String>),
         mut on_sample: impl FnMut(usize, &ModelValues),
     ) -> Result<ControlledInferenceResult, String> {
-        if n_samples == 0 {
-            return Err("number of samples must be greater than zero".to_string());
-        }
-
-        // Surface deterministic model construction errors before starting.
-        self.model()?;
-        let model_fn = || {
-            self.model()
-                .expect("a validated compiled graph should always create a model")
-        };
-        let mut rng = StdRng::seed_from_u64(seed);
-        let (_, mut current_trace) = fugue::runtime::handler::run(
-            PriorHandler {
-                rng: &mut rng,
-                trace: Trace::default(),
-            },
-            model_fn(),
-        );
-        let mut adaptation = DiminishingAdaptation::new(0.44, 0.7);
-        let mut completed_warmup = 0;
-
-        for warmup_index in 0..n_warmup {
-            if should_cancel() {
-                return Ok(ControlledInferenceResult {
-                    result: InferenceResult {
-                        seed,
-                        n_samples: 0,
-                        n_warmup: completed_warmup,
-                        samples_by_node: HashMap::new(),
-                        traces: Vec::new(),
-                    },
-                    cancelled: true,
-                });
-            }
-            let (_, trace) = adaptive_single_site_mh(
-                &mut rng,
-                &model_fn,
-                &current_trace,
-                &mut adaptation,
-            );
-            current_trace = trace;
-            completed_warmup = warmup_index + 1;
-            on_warmup(completed_warmup);
-        }
-
-        // The transition kernel returns its chain trace, not the scored trace
-        // used internally. Rescore the final warmup state once so its recorded
-        // log probabilities match the current values before diagnosing it.
-        let (_, scored_warmup_trace) = fugue::runtime::handler::run(
-            ScoreGivenTrace {
-                base: current_trace,
-                trace: Trace::default(),
-            },
-            model_fn(),
-        );
-        current_trace = scored_warmup_trace;
-        let (_, diagnostic_trace) = fugue::runtime::handler::run(
-            AddressedScoreGivenTrace {
-                base: current_trace.clone(),
-                trace: Trace::default(),
-            },
-            model_fn(),
-        );
-        let negative_infinite_variables = negative_infinite_addresses(&diagnostic_trace)
-            .into_iter()
-            .map(|address| self.variable_label_for_address(address))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        on_warmup_complete(negative_infinite_variables);
-
-        let mut samples_by_node = HashMap::<u32, Vec<ModelResult>>::new();
-        let mut traces = Vec::with_capacity(n_samples);
-        let mut cancelled = false;
-
-        for draw_index in 0..n_samples {
-            if should_cancel() {
-                cancelled = true;
-                break;
-            }
-            let (values, trace) = adaptive_single_site_mh(
-                &mut rng,
-                &model_fn,
-                &current_trace,
-                &mut adaptation,
-            );
-            current_trace = trace;
-            let values: ModelValues = values.map_err(|error| {
-                format!("inference execution {} failed: {error}", draw_index + 1)
-            })?;
-            for (&node_id, value) in &values {
-                samples_by_node
-                    .entry(node_id)
-                    .or_default()
-                    .push(value.clone());
-            }
-            traces.push(current_trace.clone());
-            on_sample(draw_index, &values);
-        }
-
-        let retained = traces.len();
-        if !cancelled {
-            for &node_id in self.graph().nodes.keys() {
-                let count = samples_by_node.get(&node_id).map_or(0, Vec::len);
-                if count != n_samples {
-                    return Err(format!(
-                        "inference retained {count} of {n_samples} draws for node {node_id}"
-                    ));
+        let mut runner = self
+            .clone()
+            .inference_runner(seed, n_samples, n_warmup)?;
+        loop {
+            match runner.step(should_cancel())? {
+                InferenceStep::Warmup { completed } => on_warmup(completed),
+                InferenceStep::WarmupComplete {
+                    negative_infinite_variables,
+                } => on_warmup_complete(negative_infinite_variables),
+                InferenceStep::Sample { draw_index, values } => {
+                    on_sample(draw_index, &values)
                 }
+                InferenceStep::Complete(outcome) => return Ok(outcome),
             }
         }
-
-        Ok(ControlledInferenceResult {
-            result: InferenceResult {
-                seed,
-                n_samples: retained,
-                n_warmup: completed_warmup,
-                samples_by_node,
-                traces,
-            },
-            cancelled,
-        })
     }
 
     fn variable_label_for_address(&self, address: &str) -> String {
@@ -316,6 +253,149 @@ impl CompiledGraph {
             model,
         );
         result
+    }
+}
+
+impl InferenceRunner {
+    fn new(
+        compiled: CompiledGraph,
+        seed: u64,
+        requested_samples: usize,
+        requested_warmup: usize,
+    ) -> Result<Self, String> {
+        if requested_samples == 0 {
+            return Err("number of samples must be greater than zero".to_string());
+        }
+
+        let mut rng = StdRng::seed_from_u64(seed);
+        let (_, current_trace) = fugue::runtime::handler::run(
+            PriorHandler {
+                rng: &mut rng,
+                trace: Trace::default(),
+            },
+            compiled.model()?,
+        );
+        Ok(Self {
+            compiled,
+            rng,
+            current_trace,
+            adaptation: DiminishingAdaptation::new(0.44, 0.7),
+            seed,
+            requested_samples,
+            requested_warmup,
+            completed_warmup: 0,
+            samples_by_node: HashMap::new(),
+            traces: Vec::with_capacity(requested_samples),
+            phase: InferencePhase::Warmup,
+        })
+    }
+
+    /// Advances by one warmup transition, diagnostic pass, or retained draw.
+    pub fn step(&mut self, cancel_requested: bool) -> Result<InferenceStep, String> {
+        if cancel_requested {
+            return Ok(self.finish(true));
+        }
+
+        if self.phase == InferencePhase::Warmup {
+            if self.completed_warmup < self.requested_warmup {
+                let model_fn = || {
+                    self.compiled
+                        .model()
+                        .expect("a validated compiled graph should always create a model")
+                };
+                let (_, trace) = adaptive_single_site_mh(
+                    &mut self.rng,
+                    &model_fn,
+                    &self.current_trace,
+                    &mut self.adaptation,
+                );
+                self.current_trace = trace;
+                self.completed_warmup += 1;
+                return Ok(InferenceStep::Warmup {
+                    completed: self.completed_warmup,
+                });
+            }
+            self.phase = InferencePhase::DiagnoseWarmup;
+        }
+
+        if self.phase == InferencePhase::DiagnoseWarmup {
+            let (_, scored_trace) = fugue::runtime::handler::run(
+                ScoreGivenTrace {
+                    base: std::mem::take(&mut self.current_trace),
+                    trace: Trace::default(),
+                },
+                self.compiled.model()?,
+            );
+            self.current_trace = scored_trace;
+            let (_, diagnostic_trace) = fugue::runtime::handler::run(
+                AddressedScoreGivenTrace {
+                    base: self.current_trace.clone(),
+                    trace: Trace::default(),
+                },
+                self.compiled.model()?,
+            );
+            let negative_infinite_variables = negative_infinite_addresses(&diagnostic_trace)
+                .into_iter()
+                .map(|address| self.compiled.variable_label_for_address(address))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            self.phase = InferencePhase::Sampling;
+            return Ok(InferenceStep::WarmupComplete {
+                negative_infinite_variables,
+            });
+        }
+
+        if self.traces.len() == self.requested_samples {
+            for &node_id in self.compiled.graph().nodes.keys() {
+                let count = self.samples_by_node.get(&node_id).map_or(0, Vec::len);
+                if count != self.requested_samples {
+                    return Err(format!(
+                        "inference retained {count} of {} draws for node {node_id}",
+                        self.requested_samples
+                    ));
+                }
+            }
+            return Ok(self.finish(false));
+        }
+
+        let draw_index = self.traces.len();
+        let model_fn = || {
+            self.compiled
+                .model()
+                .expect("a validated compiled graph should always create a model")
+        };
+        let (values, trace) = adaptive_single_site_mh(
+            &mut self.rng,
+            &model_fn,
+            &self.current_trace,
+            &mut self.adaptation,
+        );
+        self.current_trace = trace;
+        let values: ModelValues = values
+            .map_err(|error| format!("inference execution {} failed: {error}", draw_index + 1))?;
+        for (&node_id, value) in &values {
+            self.samples_by_node
+                .entry(node_id)
+                .or_default()
+                .push(value.clone());
+        }
+        self.traces.push(self.current_trace.clone());
+        Ok(InferenceStep::Sample { draw_index, values })
+    }
+
+    fn finish(&mut self, cancelled: bool) -> InferenceStep {
+        let retained = self.traces.len();
+        InferenceStep::Complete(ControlledInferenceResult {
+            result: InferenceResult {
+                seed: self.seed,
+                n_samples: retained,
+                n_warmup: self.completed_warmup,
+                samples_by_node: std::mem::take(&mut self.samples_by_node),
+                traces: std::mem::take(&mut self.traces),
+            },
+            cancelled,
+        })
     }
 }
 
@@ -441,6 +521,40 @@ mod tests {
         assert_eq!(result.samples_by_node[&2].len(), 8);
         assert_eq!(result.samples_by_node[&3].len(), 8);
         assert_eq!(result.samples_for_node(3).unwrap()[0].samples.len(), 8);
+    }
+
+    #[test]
+    fn incremental_runner_stops_at_every_cooperative_boundary() {
+        let mut runner = simple_random_graph()
+            .inference_runner(42, 2, 2)
+            .unwrap();
+
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Warmup { completed: 1 }
+        ));
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Warmup { completed: 2 }
+        ));
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::WarmupComplete { .. }
+        ));
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Sample { draw_index: 0, .. }
+        ));
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Sample { draw_index: 1, .. }
+        ));
+        let InferenceStep::Complete(outcome) = runner.step(false).unwrap() else {
+            panic!("runner should complete after the requested draws");
+        };
+        assert!(!outcome.cancelled);
+        assert_eq!(outcome.result.n_warmup, 2);
+        assert_eq!(outcome.result.n_samples, 2);
     }
 
     #[test]

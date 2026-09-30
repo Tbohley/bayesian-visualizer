@@ -18,11 +18,18 @@ use crate::sidebar::{
 };
 use crate::ui::{ErrorToast, ShowCompilationErrorMarkers};
 use bevy::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
 use bevy::tasks::{AsyncComputeTaskPool, futures::check_ready};
+#[cfg(target_arch = "wasm32")]
+use bevy::platform::time::Instant;
 use bevy::text::EditableText;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, atomic::Ordering};
+#[cfg(target_arch = "wasm32")]
+use std::time::Duration;
+#[cfg(target_arch = "wasm32")]
+use crate::bayesian_core::InferenceStep;
 
 fn node_ids_in_compilation_error(error: &str) -> Vec<u32> {
     let mut ids = HashSet::new();
@@ -363,58 +370,86 @@ pub fn run_inference(
     });
     commands.trigger(SetPosteriorSampleEnabled(false));
 
-    let graph = compiled.0.graph().clone();
+    let compiled_graph = compiled.0.clone();
     let control = Arc::new(InferenceControl::new());
-    let worker_control = Arc::clone(&control);
-    let task = AsyncComputeTaskPool::get().spawn(async move {
-        let compiled = graph.compile()?;
-        let cancel_control = Arc::clone(&worker_control);
-        let warmup_control = Arc::clone(&worker_control);
-        let diagnostic_control = Arc::clone(&worker_control);
-        let sample_control = Arc::clone(&worker_control);
 
-        compiled.run_inference_controlled(
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let worker_control = Arc::clone(&control);
+        let task = AsyncComputeTaskPool::get().spawn(async move {
+            let cancel_control = Arc::clone(&worker_control);
+            let warmup_control = Arc::clone(&worker_control);
+            let diagnostic_control = Arc::clone(&worker_control);
+            let sample_control = Arc::clone(&worker_control);
+
+            compiled_graph.run_inference_controlled(
+                seed,
+                n_samples,
+                n_warmup,
+                move || cancel_control.cancel_requested.load(Ordering::Relaxed),
+                move |completed| {
+                    warmup_control
+                        .warmup_completed
+                        .store(completed, Ordering::Relaxed);
+                },
+                move |variables| {
+                    diagnostic_control
+                        .warmup_negative_infinity
+                        .store(!variables.is_empty(), Ordering::Relaxed);
+                    *diagnostic_control
+                        .warmup_negative_infinity_variables
+                        .lock()
+                        .expect("warmup diagnostic should not be poisoned") = variables;
+                    diagnostic_control
+                        .warmup_diagnostic_ready
+                        .store(true, Ordering::Release);
+                },
+                move |draw_index, values| {
+                    sample_control
+                        .samples_completed
+                        .store(draw_index + 1, Ordering::Relaxed);
+                    sample_control
+                        .pending_draws
+                        .lock()
+                        .expect("inference draw queue should not be poisoned")
+                        .push(values.clone());
+                },
+            )
+        });
+
+        commands.insert_resource(InferenceJob {
+            task,
+            control,
             seed,
-            n_samples,
-            n_warmup,
-            move || cancel_control.cancel_requested.load(Ordering::Relaxed),
-            move |completed| {
-                warmup_control
-                    .warmup_completed
-                    .store(completed, Ordering::Relaxed);
-            },
-            move |variables| {
-                diagnostic_control
-                    .warmup_negative_infinity
-                    .store(!variables.is_empty(), Ordering::Relaxed);
-                *diagnostic_control
-                    .warmup_negative_infinity_variables
-                    .lock()
-                    .expect("warmup diagnostic should not be poisoned") = variables;
-                diagnostic_control
-                    .warmup_diagnostic_ready
-                    .store(true, Ordering::Release);
-            },
-            move |draw_index, values| {
-                sample_control
-                    .samples_completed
-                    .store(draw_index + 1, Ordering::Relaxed);
-                sample_control
-                    .pending_draws
-                    .lock()
-                    .expect("inference draw queue should not be poisoned")
-                    .push(values.clone());
-            },
-        )
-    });
+            requested_samples: n_samples,
+            requested_warmup: n_warmup,
+        });
+    }
 
-    commands.insert_resource(InferenceJob {
-        task,
-        control,
-        seed,
-        requested_samples: n_samples,
-        requested_warmup: n_warmup,
-    });
+    #[cfg(target_arch = "wasm32")]
+    {
+        let runner = match compiled_graph.inference_runner(seed, n_samples, n_warmup) {
+            Ok(runner) => runner,
+            Err(error) => {
+                commands.insert_resource(InferenceStatusResource {
+                    state: InferenceResultState::Failed,
+                    requested_samples: n_samples,
+                });
+                commands.trigger(ErrorToast {
+                    text: format!("Could not start inference: {error}"),
+                    color: ERR_COLOR,
+                });
+                return;
+            }
+        };
+        commands.insert_resource(InferenceJob {
+            runner,
+            control,
+            seed,
+            requested_samples: n_samples,
+            requested_warmup: n_warmup,
+        });
+    }
 }
 
 fn append_live_draws(result: &mut InferenceResult, draws: Vec<ModelValues>) {
@@ -477,6 +512,69 @@ pub fn poll_inference_job(
         x_node_id: joint.x_node_id,
         y_node_id: joint.y_node_id,
     });
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let outcome = check_ready(&mut job.task);
+
+    // WASM task pools are single-threaded. Drive a bounded number of complete
+    // MCMC transitions here, then return to Bevy so rendering, progress, and
+    // the stop button remain responsive. A single transition is the smallest
+    // safe interruption point in Fugue's current MCMC API.
+    #[cfg(target_arch = "wasm32")]
+    let outcome = {
+        const FRAME_BUDGET: Duration = Duration::from_millis(8);
+        let deadline = Instant::now() + FRAME_BUDGET;
+        let mut outcome = None;
+        loop {
+            let cancelled = job.control.cancel_requested.load(Ordering::Relaxed);
+            match job.runner.step(cancelled) {
+                Ok(InferenceStep::Warmup { completed }) => {
+                    job.control
+                        .warmup_completed
+                        .store(completed, Ordering::Relaxed);
+                }
+                Ok(InferenceStep::WarmupComplete {
+                    negative_infinite_variables,
+                }) => {
+                    job.control.warmup_negative_infinity.store(
+                        !negative_infinite_variables.is_empty(),
+                        Ordering::Relaxed,
+                    );
+                    *job.control
+                        .warmup_negative_infinity_variables
+                        .lock()
+                        .expect("warmup diagnostic should not be poisoned") =
+                        negative_infinite_variables;
+                    job.control
+                        .warmup_diagnostic_ready
+                        .store(true, Ordering::Release);
+                }
+                Ok(InferenceStep::Sample { draw_index, values }) => {
+                    job.control
+                        .samples_completed
+                        .store(draw_index + 1, Ordering::Relaxed);
+                    job.control
+                        .pending_draws
+                        .lock()
+                        .expect("inference draw queue should not be poisoned")
+                        .push(values);
+                }
+                Ok(InferenceStep::Complete(result)) => {
+                    outcome = Some(Ok(result));
+                    break;
+                }
+                Err(error) => {
+                    outcome = Some(Err(error));
+                    break;
+                }
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+        }
+        outcome
+    };
+
     let discard = job.control.discard_result.load(Ordering::Relaxed);
     if !discard
         && job.control.warmup_diagnostic_ready.load(Ordering::Acquire)
@@ -527,7 +625,7 @@ pub fn poll_inference_job(
         reopen_joint_distribution(&mut commands, joint_view);
     }
 
-    let Some(outcome) = check_ready(&mut job.task) else {
+    let Some(outcome) = outcome else {
         return;
     };
     let discard = job.control.discard_result.load(Ordering::Relaxed);

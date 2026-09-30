@@ -1,8 +1,14 @@
 pub mod compilation;
-use bevy::{prelude::*, tasks::Task};
+use bevy::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::tasks::Task;
 use crate::bayesian_core::{
-    graph_checks::ModelValues, CompiledGraph, ControlledInferenceResult, InferenceResult,
+    graph_checks::ModelValues, CompiledGraph, InferenceResult,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::bayesian_core::ControlledInferenceResult;
+#[cfg(target_arch = "wasm32")]
+use crate::bayesian_core::InferenceRunner;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicUsize},
@@ -60,7 +66,10 @@ impl InferenceControl {
 
 #[derive(Resource)]
 pub struct InferenceJob {
+    #[cfg(not(target_arch = "wasm32"))]
     pub task: Task<Result<ControlledInferenceResult, String>>,
+    #[cfg(target_arch = "wasm32")]
+    pub runner: InferenceRunner,
     pub control: Arc<InferenceControl>,
     pub seed: u64,
     pub requested_samples: usize,

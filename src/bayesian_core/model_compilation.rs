@@ -52,6 +52,7 @@ struct NodeShape {
 /// Fugue consumes a model on every execution, so the bind tree is rebuilt for
 /// each proposal. Cycle checks, topological sorting, plate normalization, and
 /// result-shape derivation are retained here and performed only once.
+#[derive(Clone)]
 pub struct CompiledGraph {
     graph: GraphIR,
     normalized: NormalizedPlates,
