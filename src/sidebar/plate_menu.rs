@@ -1,20 +1,11 @@
-use std::{
-    collections::{HashMap, HashSet},
-    error::Error,
-    path::Path,
-};
+use std::{collections::{HashMap, HashSet}, error::Error};
 
 use super::*;
 
 impl Dataset {
-    pub fn from_csv<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error>> {
-        let path = path.as_ref();
-        let name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-
-        let mut reader = csv::Reader::from_path(path)?;
+    pub fn from_csv(name: impl Into<String>, bytes: &[u8]) -> Result<Self, Box<dyn Error>> {
+        let name = name.into();
+        let mut reader = csv::Reader::from_reader(bytes);
         let headers: Vec<String> = reader.headers()?.iter().map(String::from).collect();
 
         let mut data: HashMap<String, Vec<f64>> =
@@ -391,4 +382,19 @@ pub fn on_open_plate_mapping_menu(
             parent.spawn(context_item(&column));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_an_embedded_csv_dataset() {
+        let dataset = Dataset::from_csv("example.csv", b"x,y\n1.5,2\n3,4.25\n").unwrap();
+
+        assert_eq!(dataset.name, "example.csv");
+        assert_eq!(dataset.n, 2);
+        assert_eq!(dataset.data["x"], vec![1.5, 3.0]);
+        assert_eq!(dataset.data["y"], vec![2.0, 4.25]);
+    }
 }

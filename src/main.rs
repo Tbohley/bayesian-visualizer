@@ -63,17 +63,40 @@ fn setup (
 
     commands.insert_resource(Datasets {
         datasets: vec![
-            Dataset::from_csv("assets/data/SATandGPA.csv").expect("prefilled data should be valid"),
-        Dataset::from_csv("assets/data/poly_reg.csv").expect("prefilled data should be valid"),
-            Dataset::from_csv("assets/data/sim_sleep_react.csv")
-                .expect("prefilled data should be valid"),
+            Dataset::from_csv(
+                "SATandGPA.csv",
+                include_bytes!("../assets/data/SATandGPA.csv"),
+            )
+            .expect("prefilled data should be valid"),
+            Dataset::from_csv(
+                "poly_reg.csv",
+                include_bytes!("../assets/data/poly_reg.csv"),
+            )
+            .expect("prefilled data should be valid"),
+            Dataset::from_csv(
+                "sim_sleep_react.csv",
+                include_bytes!("../assets/data/sim_sleep_react.csv"),
+            )
+            .expect("prefilled data should be valid"),
         ],
     });
 }
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, MeshPickingPlugin))
+        .add_plugins((
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Bayesian Visualizer".to_string(),
+                    canvas: cfg!(target_family = "wasm")
+                        .then(|| "#bayesian-visualizer".to_string()),
+                    fit_canvas_to_parent: cfg!(target_family = "wasm"),
+                    ..default()
+                }),
+                ..default()
+            }),
+            MeshPickingPlugin,
+        ))
         .init_resource::<ReducedView>()
         .init_resource::<HistogramBinCount>()
         .add_observer(on_open_distribution_menu)

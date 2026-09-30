@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#17191f" />
+    <link rel="icon" href="data:," />
+    <title>Bayesian Visualizer</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #17191f;
+      }
+
+      #bayesian-visualizer {
+        display: block;
+        width: 100%;
+        height: 100%;
+        outline: none;
+      }
+
+      #loading {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #e4e7ec;
+        font: 500 1rem/1.4 system-ui, sans-serif;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="bayesian-visualizer" tabindex="0"></canvas>
+    <div id="loading" role="status">Loading Bayesian Visualizer…</div>
+    <script type="module">
+      import init from "./bayesian_visualizer.js";
+
+      const loading = document.querySelector("#loading");
+      init()
+        .then(() => loading.remove())
+        .catch((error) => {
+          console.error(error);
+          loading.textContent = "The visualizer failed to start. Check the browser console for details.";
+        });
+    </script>
+  </body>
+</html>

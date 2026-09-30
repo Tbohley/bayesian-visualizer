@@ -2,7 +2,7 @@ use bevy::{asset::RenderAssetUsages, mesh::{Indices, PrimitiveTopology}, prelude
 use crate::graph::{Plate, UnfinishedLink};
 use crate::data_vis::HistogramView;
 use crate::nodes::GraphNode;
-use crate::{ERR_BORDER_COLOR, ERR_COLOR};
+use crate::ERR_BORDER_COLOR;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage};
 
 #[derive(Event)]
@@ -46,6 +46,27 @@ pub struct CompilationErrorMarker {
 }
 
 const ERROR_TOAST_SECONDS: f32 = 10.0;
+const ERROR_MARKER_OFFSET: f32 = 45.0;
+
+fn compilation_error_marker_mesh() -> Mesh {
+    let positions = vec![
+        [-3.0, -12.0, 0.0],
+        [3.0, -12.0, 0.0],
+        [-3.0, 1.0, 0.0],
+        [3.0, 1.0, 0.0],
+        [-9.0, 1.0, 0.0],
+        [9.0, 1.0, 0.0],
+        [0.0, 12.0, 0.0],
+    ];
+    let indices = vec![0, 1, 2, 2, 1, 3, 4, 5, 6];
+
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_indices(Indices::U32(indices))
+}
 
 fn set_cursor_image(
     commands: &mut Commands,
@@ -301,43 +322,27 @@ pub fn show_compilation_error_markers(
     event: On<ShowCompilationErrorMarkers>,
     mut commands: Commands,
     nodes: Query<(&GraphNode, &Transform), Without<Plate>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    let marker_mesh = meshes.add(compilation_error_marker_mesh());
+    let marker_material = materials.add(ERR_BORDER_COLOR);
     for (marker_index, node_id) in event.node_ids.iter().enumerate() {
         let Some((_, node_transform)) = nodes.iter().find(|(node, _)| node.0 == *node_id) else {
             continue;
         };
-        let base_y = node_transform.translation.y - 66.0;
-        let marker = commands
-            .spawn((
-                CompilationErrorMarker {
-                    timer: Timer::from_seconds(ERROR_TOAST_SECONDS, TimerMode::Once),
-                    base_y,
-                    phase: marker_index as f32 * 0.7,
-                },
-                Sprite::from_color(ERR_BORDER_COLOR, Vec2::new(10.0, 54.0)),
-                Pickable::IGNORE,
-                Transform::from_xyz(node_transform.translation.x, base_y, 150.0),
-            ))
-            .id();
-        commands.entity(marker).with_children(|parent| {
-            parent.spawn((
-                Sprite::from_color(ERR_COLOR, Vec2::new(6.0, 52.0)),
-                Pickable::IGNORE,
-                Transform::from_xyz(0.0, 0.0, 1.0),
-            ));
-            for (x, rotation) in [(-10.0, -std::f32::consts::FRAC_PI_4), (10.0, std::f32::consts::FRAC_PI_4)] {
-                parent.spawn((
-                    Sprite::from_color(ERR_BORDER_COLOR, Vec2::new(10.0, 30.0)),
-                    Pickable::IGNORE,
-                    Transform::from_xyz(x, 25.0, 0.0).with_rotation(Quat::from_rotation_z(rotation)),
-                ));
-                parent.spawn((
-                    Sprite::from_color(ERR_COLOR, Vec2::new(6.0, 28.0)),
-                    Pickable::IGNORE,
-                    Transform::from_xyz(x, 25.0, 1.0).with_rotation(Quat::from_rotation_z(rotation)),
-                ));
-            }
-        });
+        let base_y = node_transform.translation.y - ERROR_MARKER_OFFSET;
+        commands.spawn((
+            CompilationErrorMarker {
+                timer: Timer::from_seconds(ERROR_TOAST_SECONDS, TimerMode::Once),
+                base_y,
+                phase: marker_index as f32 * 0.7,
+            },
+            Mesh2d(marker_mesh.clone()),
+            MeshMaterial2d(marker_material.clone()),
+            Pickable::IGNORE,
+            Transform::from_xyz(node_transform.translation.x, base_y, 150.0),
+        ));
     }
 }
 
@@ -362,8 +367,8 @@ pub fn tick_compilation_error_markers(
 ) {
     for (entity, mut marker, mut transform) in &mut markers {
         marker.timer.tick(time.delta());
-        transform.translation.y = marker.base_y
-            + (time.elapsed_secs() * 3.2 + marker.phase).sin() * 6.0;
+        transform.translation.y =
+            marker.base_y + (time.elapsed_secs() * 3.2 + marker.phase).sin() * 3.0;
         if marker.timer.is_finished() {
             commands.entity(entity).despawn();
         }

@@ -1,4 +1,5 @@
 /target
+/dist
 .vscode/settings.json
 slop/edge_interaction.rs
 slop/graph_data.rs
