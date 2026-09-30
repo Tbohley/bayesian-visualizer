@@ -190,7 +190,7 @@ fn on_plate_handle_click(
     compiled: Option<Res<GraphIRResource>>,
     inference: Option<Res<InferenceStatusResource>>,
 ) {
-    if event.count != 1 || inference.is_none() {
+    if event.count != 1 {
         return;
     }
     event.propagate(false);
@@ -209,7 +209,8 @@ fn on_plate_handle_click(
     }
     commands.entity(plate).insert(Selected);
     commands.trigger(ReloadSidebar);
-    if compiled.is_some()
+    if inference.is_some()
+        && compiled.is_some()
         && let Ok(id) = node_ids.get(plate)
     {
         commands.trigger(OpenHistogramPanel {
@@ -221,30 +222,16 @@ fn on_plate_handle_click(
 
 pub fn update_plate_handle_colors(
     selected: Query<Entity, (With<Plate>, With<Selected>)>,
-    inference: Option<Res<InferenceStatusResource>>,
     added_handles: Query<(), Added<PlateIndexHandle>>,
-    mut handles: Query<(&ChildOf, &mut Sprite, &mut Pickable), With<PlateIndexHandle>>,
-    mut previous: Local<(Option<Entity>, bool)>,
+    mut handles: Query<(&ChildOf, &mut Sprite), With<PlateIndexHandle>>,
+    mut previous: Local<Option<Entity>>,
 ) {
     let selected = selected.iter().next();
-    let inference_available = inference.is_some();
-    let inference_changed = inference.as_ref().is_some_and(|status| status.is_changed());
-    if *previous == (selected, inference_available)
-        && !inference_changed
-        && added_handles.is_empty()
-    {
+    if *previous == selected && added_handles.is_empty() {
         return;
     }
-    *previous = (selected, inference_available);
-    for (parent, mut sprite, mut pickable) in &mut handles {
-        *pickable = if inference_available {
-            Pickable {
-                should_block_lower: true,
-                is_hoverable: true,
-            }
-        } else {
-            Pickable::IGNORE
-        };
+    *previous = selected;
+    for (parent, mut sprite) in &mut handles {
         sprite.color = if selected == Some(parent.parent()) {
             Color::srgb(0.18, 0.38, 0.75)
         } else {
