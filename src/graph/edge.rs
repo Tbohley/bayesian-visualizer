@@ -8,11 +8,14 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::Indices;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
+use crate::bevy_to_fugue::{GraphIRResource, InferenceResultResource};
+use crate::sidebar::global::graph_change_requires_confirmation;
 
 //update arrow transforms connecting to dragged node
 pub fn on_node_drag(
     event: On<Pointer<Drag>>,
     reduced_view: Res<ReducedView>,
+    mut commands: Commands,
     mut transforms: Query<&mut Transform>,
     mut mesh_query: Query<&mut Mesh2d>,
     mut graph_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
@@ -21,9 +24,38 @@ pub fn on_node_drag(
     scalar_nodes: Query<&ScalarNode>,
     node_ids: Query<&GraphNode>,
     mut meshes: ResMut<Assets<Mesh>>,
+    graph_resource: Option<Res<GraphIRResource>>,
+    inference_results: Option<Res<InferenceResultResource>>,
+    plates: Query<(&GraphNode, &Plate), Without<PlateDraft>>,
 ) {
     if reduced_view.active {
         return;
+    }
+    if let (Some(compiled), Some(results), Ok(node), Ok(transform)) = (
+        graph_resource.as_deref(),
+        inference_results.as_deref(),
+        node_ids.get(event.event_target()),
+        transforms.get(event.event_target()),
+    ) {
+        let proposed = transform.translation.truncate() + Vec2::new(event.delta.x, -event.delta.y);
+        let changes_membership = plates.iter().any(|(plate_node, plate)| {
+            let compiled_member = compiled
+                .0
+                .graph()
+                .plates
+                .get(&plate_node.0)
+                .is_some_and(|compiled_plate| compiled_plate.nodes.contains(&node.0));
+            compiled_member != plate.bounds.contains_point(proposed)
+        });
+        if changes_membership
+            && graph_change_requires_confirmation(
+                &mut commands,
+                Some(results),
+                Some(event.pointer_location.position),
+            )
+        {
+            return;
+        }
     }
     println!("Dragged a node");
     {

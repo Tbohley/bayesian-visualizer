@@ -260,6 +260,7 @@ fn on_pick_param(
 
     mut random_nodes: Query<&mut RandomNode>,
     mut compute_nodes: Query<&mut ComputeNode>,
+    inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
 ) {
     event.propagate(false);
     let target = event.original_event_target();
@@ -270,6 +271,13 @@ fn on_pick_param(
         return;
     };
     let (selected_entity, _selected) = single.into_inner();
+    if crate::sidebar::global::graph_change_requires_confirmation(
+        &mut commands,
+        inference_results.as_deref(),
+        Some(event.pointer_location.position),
+    ) {
+        return;
+    }
     // Try RandomNode params first.
     if let Ok(mut random_node) = random_nodes.get_mut(selected_entity) {
         if let Some(param) = random_node.params.get_mut(item.param_num) {

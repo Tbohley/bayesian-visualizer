@@ -26,6 +26,7 @@ use sidebar::compute_menu::on_open_operation_menu;
 use sidebar::global::invalidate_compilation_on_graph_change;
 use sidebar::global::load_global_sidebar;
 use sidebar::global::on_open_node_type_menu;
+use sidebar::global::on_request_graph_change_confirmation;
 use sidebar::global::set_inference_controls_enabled;
 use sidebar::global::set_posterior_sample_enabled;
 use sidebar::global::update_random_seed_placeholder;
@@ -105,6 +106,7 @@ fn main() {
         .add_observer(on_open_node_type_menu)
         .add_observer(on_open_preset_menu)
         .add_observer(on_request_preset_confirmation)
+        .add_observer(on_request_graph_change_confirmation)
         .add_observer(on_load_preset)
         .add_observer(on_trigger_close_menus)
         .add_observer(on_open_operation_menu)
@@ -118,6 +120,7 @@ fn main() {
         .add_observer(compile)
         .add_observer(set_inference_controls_enabled)
         .add_observer(set_posterior_sample_enabled)
+        .add_observer(delete_selected_node)
         .add_observer(sample_popup)
         .add_observer(reload_sidebar)
         .add_observer(open_histogram_panel)
@@ -128,6 +131,7 @@ fn main() {
             Update,
             (
             on_enter_clicked,
+            delete_selected_node_on_backspace,
             refresh_links_for_resized_random_nodes,
             refresh_reduced_view,
             apply_typed_histogram_bin_count,

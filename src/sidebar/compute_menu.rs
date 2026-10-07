@@ -147,12 +147,20 @@ fn on_select_operation(
     selected: Option<Single<(Entity, &Selected)>>,
     mut compute_vars: Query<(&mut ComputeNode, &Selected)>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
+    inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
 ){
     let target = event.original_event_target();
     if let Some(single) = selected{
         let (entity, _selected_comp) = single.into_inner();
 
         if let Ok(item) = menu_items.get(target) {
+            if crate::sidebar::global::graph_change_requires_confirmation(
+                &mut commands,
+                inference_results.as_deref(),
+                Some(event.pointer_location.position),
+            ) {
+                return;
+            }
             //set operation/label of compute node
             println!("Selected operation {}", item.0);
             let (mut compute_var, _selected_comp) = compute_vars.get_mut(entity).unwrap();

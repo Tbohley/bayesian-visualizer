@@ -4,7 +4,7 @@ use crate::bayesian_core::*;
 use crate::constants::*;
 use crate::data_vis::{
     CloseHistogramPanel, HistogramSubject, HistogramView,
-    JointDistributionView, OpenHistogramPanel, OpenJointDistributionView, PlateIndexScopes,
+    JointDistributionView, OpenHistogramPanel, OpenJointDistributionView, PlateIndexSelections,
     SampleSelections,
 };
 use crate::graph::*;
@@ -90,7 +90,7 @@ pub fn compile(
     commands.remove_resource::<InferenceResultResource>();
     commands.remove_resource::<InferenceStatusResource>();
     commands.remove_resource::<SampleSelections>();
-    commands.remove_resource::<PlateIndexScopes>();
+    commands.remove_resource::<PlateIndexSelections>();
     commands.trigger(CloseHistogramPanel);
     commands.trigger(SetPosteriorSampleEnabled(false));
     let graph = compile_ir(
@@ -303,6 +303,7 @@ pub fn run_inference(
     seed_text: Single<&EditableText, With<RandomSeedTextbox>>,
     sample_text: Single<&EditableText, With<NumberOfSamplesTextbox>>,
     warmup_text: Single<&EditableText, With<NumberOfWarmupTextbox>>,
+    random_nodes: Query<(&GraphNode, Has<ObservedNode>), With<RandomNode>>,
 ) {
     if let Some(job) = inference_job {
         if !job.control.cancel_requested.swap(true, Ordering::Relaxed) {
@@ -362,8 +363,13 @@ pub fn run_inference(
     };
 
     println!("Running inference: seed={seed}, samples={n_samples}, warmup={n_warmup}");
+    let auto_histogram_node = random_nodes
+        .iter()
+        .filter_map(|(node, observed)| (!observed).then_some(node.0))
+        .min();
     commands.remove_resource::<InferenceResultResource>();
     commands.remove_resource::<SampleSelections>();
+    commands.remove_resource::<PlateIndexSelections>();
     commands.insert_resource(InferenceStatusResource {
         state: InferenceResultState::Running,
         requested_samples: n_samples,
@@ -423,6 +429,7 @@ pub fn run_inference(
             seed,
             requested_samples: n_samples,
             requested_warmup: n_warmup,
+            auto_histogram_node,
         });
     }
 
@@ -448,6 +455,7 @@ pub fn run_inference(
             seed,
             requested_samples: n_samples,
             requested_warmup: n_warmup,
+            auto_histogram_node,
         });
     }
 }
@@ -469,10 +477,18 @@ fn reopen_selected_histogram(
     commands: &mut Commands,
     selected: &Query<&GraphNode, With<Selected>>,
     view: Option<&HistogramView>,
+    auto_histogram_node: Option<u32>,
 ) {
     if let Some(view) = view {
         commands.trigger(OpenHistogramPanel {
             subject: view.subject,
+            clear_toasts: false,
+        });
+        return;
+    }
+    if let Some(node_id) = auto_histogram_node {
+        commands.trigger(OpenHistogramPanel {
+            subject: HistogramSubject::Node(node_id),
             clear_toasts: false,
         });
         return;
@@ -621,7 +637,12 @@ pub fn poll_inference_job(
             append_live_draws(&mut results, pending);
             commands.insert_resource(InferenceResultResource(results));
         }
-        reopen_selected_histogram(&mut commands, &selected, view.as_ref().map(|view| **view));
+        reopen_selected_histogram(
+            &mut commands,
+            &selected,
+            view.as_ref().map(|view| **view),
+            job.auto_histogram_node,
+        );
         reopen_joint_distribution(&mut commands, joint_view);
     }
 
@@ -635,6 +656,7 @@ pub fn poll_inference_job(
         commands.remove_resource::<InferenceResultResource>();
         commands.remove_resource::<InferenceStatusResource>();
         commands.remove_resource::<SampleSelections>();
+        commands.remove_resource::<PlateIndexSelections>();
         commands.trigger(CloseHistogramPanel);
         commands.trigger(SetPosteriorSampleEnabled(false));
         return;
@@ -656,7 +678,12 @@ pub fn poll_inference_job(
                 requested_samples: job.requested_samples,
             });
             commands.trigger(SetPosteriorSampleEnabled(true));
-            reopen_selected_histogram(&mut commands, &selected, view.as_ref().map(|view| **view));
+            reopen_selected_histogram(
+                &mut commands,
+                &selected,
+                view.as_ref().map(|view| **view),
+                job.auto_histogram_node,
+            );
             reopen_joint_distribution(&mut commands, joint_view);
             let message = if state == InferenceResultState::Cancelled {
                 format!(
@@ -677,6 +704,7 @@ pub fn poll_inference_job(
             commands.remove_resource::<InferenceResultResource>();
             commands.remove_resource::<InferenceStatusResource>();
             commands.remove_resource::<SampleSelections>();
+            commands.remove_resource::<PlateIndexSelections>();
             commands.trigger(CloseHistogramPanel);
             commands.trigger(SetPosteriorSampleEnabled(false));
             let message = if outcome.cancelled {
@@ -706,6 +734,7 @@ pub fn poll_inference_job(
                     &mut commands,
                     &selected,
                     view.as_ref().map(|view| **view),
+                    job.auto_histogram_node,
                 );
                 reopen_joint_distribution(&mut commands, joint_view);
             }

@@ -3,9 +3,8 @@ use crate::bayesian_core::GraphIR;
 use crate::bevy_to_fugue::*;
 use crate::constants::*;
 use crate::data_vis::{
-    CloseHistogramPanel, HistogramSelectionControls, HistogramSelectionStatus, PlateIndexScopes,
-    SampleSelections, deselect_histogram_indices, deselect_histogram_results,
-    deselect_histogram_selection,
+    CloseHistogramPanel, HistogramSelectionControls, HistogramSelectionStatus,
+    PlateIndexSelections, SampleSelections, deselect_histogram_selection,
 };
 use crate::nodes::*;
 use bevy::{input_focus::InputFocus, prelude::*, text::EditableText, ui::InteractionDisabled};
@@ -14,6 +13,153 @@ use std::sync::atomic::Ordering;
 
 const DISABLED_CONTROL_COLOR: Color = Color::srgb(0.35, 0.35, 0.35);
 const DISABLED_TEXT_COLOR: Color = Color::srgb(0.65, 0.65, 0.65);
+
+const GRAPH_CHANGE_WARNING: &str = "Changing the graph will remove all results from the last inference run and require recompilation.";
+
+#[derive(Event)]
+pub struct RequestGraphChangeConfirmation {
+    pub pos: Option<Vec2>,
+}
+
+#[derive(Component)]
+pub(crate) struct GraphChangeConfirmation;
+
+#[derive(Component)]
+enum GraphChangeConfirmationChoice {
+    Confirm,
+    Cancel,
+}
+
+/// Returns `true` when a completed or partially completed inference must be
+/// acknowledged before the requested edit can be made.
+pub fn graph_change_requires_confirmation(
+    commands: &mut Commands,
+    inference_results: Option<&InferenceResultResource>,
+    pos: Option<Vec2>,
+) -> bool {
+    if inference_results.is_none() {
+        return false;
+    }
+    commands.trigger(RequestGraphChangeConfirmation { pos });
+    true
+}
+
+pub fn on_request_graph_change_confirmation(
+    event: On<RequestGraphChangeConfirmation>,
+    mut commands: Commands,
+    existing: Query<(), With<GraphChangeConfirmation>>,
+) {
+    if !existing.is_empty() {
+        return;
+    }
+    commands.trigger(CloseContextMenus);
+
+    let mut node = Node {
+        position_type: PositionType::Absolute,
+        flex_direction: FlexDirection::Column,
+        width: px(390.0),
+        padding: px(16.0).all(),
+        row_gap: px(10.0),
+        border: px(1.0).all(),
+        border_radius: BorderRadius::all(px(8.0)),
+        ..default()
+    };
+    if let Some(pos) = event.pos {
+        node.left = px(pos.x);
+        node.top = px(pos.y);
+    } else {
+        node.left = percent(50.0);
+        node.top = percent(38.0);
+    }
+
+    let confirmation = commands
+        .spawn((
+            Name::new("graph change confirmation"),
+            GraphChangeConfirmation,
+            ZIndex(1000),
+            node,
+            BorderColor::all(Color::srgb(0.22, 0.48, 0.78)),
+            BackgroundColor(Color::linear_rgb(0.07, 0.08, 0.11)),
+        ))
+        .observe(on_confirm_graph_change)
+        .id();
+
+    commands.entity(confirmation).with_children(|parent| {
+        parent.spawn((
+            Pickable::IGNORE,
+            Text::new("Are you sure?"),
+            TextFont {
+                font_size: FontSize::Px(18.0),
+                ..text_font()
+            },
+            TextColor(Color::WHITE),
+        ));
+        parent.spawn((
+            Pickable::IGNORE,
+            Text::new(GRAPH_CHANGE_WARNING),
+            text_font(),
+            TextColor(Color::srgb(0.82, 0.85, 0.90)),
+        ));
+        parent.spawn((
+            GraphChangeConfirmationChoice::Confirm,
+            menu_item("Change graph"),
+        ));
+        parent.spawn((
+            GraphChangeConfirmationChoice::Cancel,
+            menu_item("Keep results"),
+        ));
+    });
+}
+
+fn on_confirm_graph_change(
+    mut event: On<Pointer<Press>>,
+    mut commands: Commands,
+    choices: Query<&GraphChangeConfirmationChoice>,
+    confirmations: Query<Entity, With<GraphChangeConfirmation>>,
+    inference_job: Option<Res<InferenceJob>>,
+) {
+    let Ok(choice) = choices.get(event.original_event_target()) else {
+        return;
+    };
+    event.propagate(false);
+    for entity in &confirmations {
+        commands.entity(entity).despawn();
+    }
+
+    if matches!(choice, GraphChangeConfirmationChoice::Cancel) {
+        return;
+    }
+    if let Some(job) = inference_job {
+        job.control.discard_result.store(true, Ordering::Relaxed);
+        job.control.cancel_requested.store(true, Ordering::Relaxed);
+    }
+    commands.remove_resource::<GraphIRResource>();
+    commands.remove_resource::<InferenceResultResource>();
+    commands.remove_resource::<InferenceStatusResource>();
+    commands.remove_resource::<SampleSelections>();
+    commands.remove_resource::<PlateIndexSelections>();
+    commands.trigger(SetInferenceControlsEnabled(false));
+    commands.trigger(SetPosteriorSampleEnabled(false));
+    commands.trigger(CloseHistogramPanel);
+}
+
+fn menu_item(text: &str) -> impl Bundle {
+    (
+        Button,
+        Node {
+            padding: px(7.0).all(),
+            border_radius: BorderRadius::all(px(4.0)),
+            ..default()
+        },
+        BackgroundColor(BUTTON_COLOR),
+        children![(
+            Pickable::IGNORE,
+            Text::new(text.to_string()),
+            text_font(),
+            TextColor(Color::WHITE),
+        )],
+    )
+}
 
 #[derive(Component)]
 struct NodeTypeButtonLabel;
@@ -446,57 +592,13 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
         ))
         .observe(deselect_histogram_selection)
         .id();
-    let selective_clear_buttons = commands
-        .spawn(Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            column_gap: px(6.0),
-            ..default()
-        })
-        .id();
-    let indices_only_button = spawn_selective_clear_button(&mut commands, "Indices only");
-    commands
-        .entity(indices_only_button)
-        .observe(deselect_histogram_indices);
-    let results_only_button = spawn_selective_clear_button(&mut commands, "Results only");
-    commands
-        .entity(results_only_button)
-        .observe(deselect_histogram_results);
-    commands
-        .entity(selective_clear_buttons)
-        .add_children(&[indices_only_button, results_only_button]);
     commands
         .entity(selection_controls)
-        .add_children(&[selection_status, deselect_button, selective_clear_buttons]);
+        .add_children(&[selection_status, deselect_button]);
     commands
         .entity(global_sidebar_entity)
         .add_child(selection_controls);
     //TODO: context menu for selecting which type of node to create
-}
-
-fn spawn_selective_clear_button(commands: &mut Commands, label: &'static str) -> Entity {
-    commands
-        .spawn((
-            Button,
-            Node {
-                flex_grow: 1.0,
-                height: px(24.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::MAX,
-                ..default()
-            },
-            BackgroundColor(BUTTON_COLOR),
-            children![(
-                Pickable::IGNORE,
-                Text::new(label),
-                TextFont {
-                    font_size: FontSize::Px(11.0),
-                    ..text_font()
-                },
-                TextColor(Color::WHITE),
-            )],
-        ))
-        .id()
 }
 
 fn inference_textbox(
@@ -750,7 +852,7 @@ pub fn invalidate_compilation_on_graph_change(
         commands.remove_resource::<InferenceResultResource>();
         commands.remove_resource::<InferenceStatusResource>();
         commands.remove_resource::<SampleSelections>();
-        commands.remove_resource::<PlateIndexScopes>();
+        commands.remove_resource::<PlateIndexSelections>();
         commands.trigger(SetInferenceControlsEnabled(false));
         commands.trigger(SetPosteriorSampleEnabled(false));
         commands.trigger(CloseHistogramPanel);

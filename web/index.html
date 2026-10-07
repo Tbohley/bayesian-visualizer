@@ -5,15 +5,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#17191f" />
     <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700&amp;display=swap"
+      rel="stylesheet"
+    />
     <title>Bayesian Visualizer</title>
     <style>
       html,
       body {
         width: 100%;
-        height: 100%;
+        min-height: 100%;
         margin: 0;
-        overflow: hidden;
         background: #17191f;
+      }
+
+      body {
+        overflow-x: hidden;
+        color: #e4e7ec;
+        font-family: "Fira Sans", system-ui, sans-serif;
+      }
+
+      .site-header {
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        height: 44px;
+        padding: 0 18px;
+        border-bottom: 1px solid #30333b;
+        background: #111319;
+        font-size: 0.875rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+
+      .visualizer-viewport {
+        position: relative;
+        width: 100%;
+        height: calc(100vh - 44px);
+        height: calc(100svh - 44px);
+        min-height: 32rem;
       }
 
       #bayesian-visualizer {
@@ -24,7 +56,7 @@
       }
 
       #loading {
-        position: fixed;
+        position: absolute;
         inset: 0;
         display: grid;
         place-items: center;
@@ -32,11 +64,266 @@
         font: 500 1rem/1.4 system-ui, sans-serif;
         pointer-events: none;
       }
+
+      article {
+        box-sizing: border-box;
+        position: relative;
+        padding: 5rem 1.5rem 6rem;
+        background: #f7f8fa;
+        color: #202734;
+      }
+
+      article::before {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        width: min(46rem, calc(100% - 3rem));
+        height: 1px;
+        background: #b7cee3;
+        content: "";
+        transform: translateX(-50%);
+      }
+
+      .article-column {
+        position: relative;
+        width: min(42rem, 100%);
+        margin: 0 auto;
+      }
+
+      .eyebrow {
+        margin: 0 0 0.65rem;
+        color: #286a9e;
+        font-size: 0.92rem;
+        font-weight: 500;
+      }
+
+      .article-column h1 {
+        margin: 0;
+        color: #202734;
+        font-size: 1.2rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        line-height: 1.5;
+      }
+
+      .lede {
+        margin: 1.25rem 0 1rem;
+        color: #3f4958;
+        font-size: 1rem;
+        line-height: 1.7;
+      }
+
+      .lede strong,
+      .article-column a,
+      .accent {
+        color: #1769aa;
+        font-weight: 600;
+      }
+
+      .intro {
+        margin: 0 0 2.25rem;
+        color: #3f4958;
+        font-size: 1rem;
+        line-height: 1.7;
+      }
+
+      .guide {
+        display: grid;
+        gap: 1rem;
+      }
+
+      details {
+        border: 1px solid #ccd6e0;
+        border-radius: 5px;
+        background: #fff;
+      }
+
+      details[open] {
+        border-color: #9bb7d0;
+      }
+
+      summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem 1.1rem;
+        color: #285f8d;
+        cursor: pointer;
+        font-size: 1rem;
+        font-weight: 600;
+        list-style: none;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary::after {
+        width: 0.55rem;
+        height: 0.55rem;
+        margin-left: 1rem;
+        border-right: 1.5px solid #3379ad;
+        border-bottom: 1.5px solid #3379ad;
+        content: "";
+        transform: rotate(45deg) translateY(-2px);
+        transition: transform 160ms ease;
+      }
+
+      details[open] summary::after {
+        transform: rotate(225deg) translate(-2px, -2px);
+      }
+
+      .dropdown-body {
+        padding: 0 1.1rem 1.2rem;
+        border-top: 1px solid #e5e9ee;
+      }
+
+      .dropdown-body ul {
+        margin: 1.1rem 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .dropdown-body li {
+        position: relative;
+        margin: 0;
+        padding: 0 0 0.9rem 1.15rem;
+        color: #3f4958;
+        font-size: 1rem;
+        line-height: 1.7;
+      }
+
+      .dropdown-body li:last-child {
+        padding-bottom: 0;
+      }
+
+      .dropdown-body li::before {
+        position: absolute;
+        top: 0.69em;
+        left: 0;
+        width: 0.32rem;
+        height: 0.32rem;
+        border-radius: 50%;
+        background: #397eaf;
+        content: "";
+      }
+
+      .article-note {
+        margin: 2.25rem 0 0;
+        padding-left: 1rem;
+        border-left: 2px solid #6d9fc5;
+        color: #3f4958;
+        font-size: 1rem;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 38rem) {
+        article {
+          padding-top: 3.5rem;
+          padding-right: 1rem;
+          padding-left: 1rem;
+        }
+
+        summary {
+          padding: 1.1rem;
+        }
+
+        .dropdown-body {
+          padding-right: 1.1rem;
+          padding-left: 1.1rem;
+        }
+      }
     </style>
   </head>
   <body>
-    <canvas id="bayesian-visualizer" tabindex="0"></canvas>
-    <div id="loading" role="status">Loading Bayesian Visualizer…</div>
+    <header class="site-header">Bayesian Visualizer</header>
+    <main>
+      <section class="visualizer-viewport" aria-label="Bayesian graph editor">
+        <canvas id="bayesian-visualizer" tabindex="0"></canvas>
+        <div id="loading" role="status">Loading Bayesian Visualizer…</div>
+      </section>
+      <article aria-labelledby="guide-title">
+        <div class="article-column">
+          <p class="eyebrow">Bayesian Visualizer</p>
+          <h1 id="guide-title">A visual workspace for probabilistic programming</h1>
+          <p class="lede">
+            Construct, validate, and analyze probabilistic models in an interactive graph editor.
+          </p>
+          <p class="intro">
+            Build a model from the canvas or begin with one of the included presets. Compilation
+            checks the graph for incomplete parameters and structural errors. Once the model is
+            valid, run inference with the sampling settings appropriate to your analysis.
+          </p>
+
+          <div class="guide">
+            <details>
+              <summary>Construction</summary>
+              <div class="dropdown-body">
+                <ul>
+                  <li>
+                    Click anywhere on the canvas to add a node. Select the node to edit its
+                    properties in the sidebar.
+                  </li>
+                  <li>
+                    Choose the type of node to place from the left sidebar. Nodes may represent
+                    scalar values, deterministic calculations, or random distributions.
+                  </li>
+                  <li>
+                    Hold <span class="accent">Shift</span> and select two nodes to connect them.
+                    The resulting link can be assigned to a parameter of the receiving node.
+                  </li>
+                  <li>
+                    Click and drag across the canvas to create a plate. New plates contain ten
+                    indices by default and begin without an associated dataset.
+                  </li>
+                  <li>
+                    Select a plate, or its square label in the lower-left corner, to configure its
+                    extent and associate a dataset.
+                  </li>
+                  <li>
+                    Map random nodes to dataset columns from the plate sidebar to define observation
+                    sites. During inference, these observations condition the model on the supplied
+                    data.
+                  </li>
+                </ul>
+              </div>
+            </details>
+
+            <details>
+              <summary>Analysis</summary>
+              <div class="dropdown-body">
+                <ul>
+                  <li>
+                    Once warmup is complete, posterior samples appear in node histograms as they are
+                    generated. You may stop a run early when the model has converged sufficiently
+                    for your analysis.
+                  </li>
+                  <li>
+                    Drag across a histogram to brush a subset of samples. The selection remains
+                    active until it is cleared from the left sidebar.
+                  </li>
+                  <li>
+                    Open another node histogram to locate the selected samples in a different
+                    marginal distribution. Additional brushes are added to the current selection.
+                  </li>
+                  <li>
+                    With one histogram open, hold <span class="accent">Shift</span> and select a
+                    second node to inspect their joint distribution. Draw a closed region in the
+                    joint view to refine the active sample selection.
+                  </li>
+                </ul>
+              </div>
+            </details>
+          </div>
+
+          <p class="article-note">
+            For a quick introduction, load a preset, compile the graph, and run inference. The
+            histogram of an unobserved variable will open automatically when posterior sampling
+            begins.
+          </p>
+        </div>
+      </article>
+    </main>
     <script type="module">
       import init from "./bayesian_visualizer.js";
 

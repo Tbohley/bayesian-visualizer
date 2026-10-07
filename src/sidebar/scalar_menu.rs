@@ -112,6 +112,7 @@ pub fn on_enter_clicked(
     selected_plate: Option<Single<(Entity, &mut Plate, &Selected)>>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
     mut commands: Commands,
+    inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
 ) {
     if !keyboard_input.just_pressed(KeyCode::Enter) {
         return;
@@ -119,6 +120,18 @@ pub fn on_enter_clicked(
     let Some(focused_entity) = input_focus.get() else {
         return;
     }; 
+
+    if (node_name_textboxes.contains(focused_entity)
+        || scalar_textboxes.contains(focused_entity)
+        || plate_textboxes.contains(focused_entity))
+        && crate::sidebar::global::graph_change_requires_confirmation(
+            &mut commands,
+            inference_results.as_deref(),
+            None,
+        )
+    {
+        return;
+    }
 
     if let Ok(text_input) = node_name_textboxes.get(focused_entity) {
         let entity = selected_random

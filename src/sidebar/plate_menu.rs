@@ -233,6 +233,7 @@ fn on_select_dataset(
     selected: Option<Single<Entity, With<Selected>>>,
     mut plates: Query<&mut Plate>,
     datasets: Res<Datasets>,
+    inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
 ) {
     let Some(selected) = selected else {
         return;
@@ -243,6 +244,13 @@ fn on_select_dataset(
     let Ok(mut plate) = plates.get_mut(*selected) else {
         return;
     };
+    if crate::sidebar::global::graph_change_requires_confirmation(
+        &mut commands,
+        inference_results.as_deref(),
+        Some(event.pointer_location.position),
+    ) {
+        return;
+    }
 
     if item.0 == "No dataset" {
         plate.data.name = item.0.clone();
@@ -316,6 +324,7 @@ fn on_select_plate_mapping(
     selected: Option<Single<Entity, With<Selected>>>,
     mut plates: Query<&mut Plate>,
     mapping_menus: Query<&PlateMappingMenu>,
+    inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
 ) {
     let Some(selected) = selected else {
         return;
@@ -332,6 +341,14 @@ fn on_select_plate_mapping(
     let Some(mapping) = plate.mapping.get_mut(&mapping_menu.node) else {
         return;
     };
+
+    if crate::sidebar::global::graph_change_requires_confirmation(
+        &mut commands,
+        inference_results.as_deref(),
+        Some(event.pointer_location.position),
+    ) {
+        return;
+    }
 
     *mapping = item.0.clone();
     commands.trigger(CloseContextMenus);

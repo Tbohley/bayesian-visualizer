@@ -74,6 +74,9 @@ pub struct InferenceJob {
     pub seed: u64,
     pub requested_samples: usize,
     pub requested_warmup: usize,
+    /// Lowest-ID unobserved random node at launch, used for the automatic
+    /// live histogram when the user has not opened a result view themselves.
+    pub auto_histogram_node: Option<u32>,
 }
 
 #[derive(Event)]

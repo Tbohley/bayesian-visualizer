@@ -2,6 +2,7 @@ pub mod compute_node;
 pub mod random_node;
 pub mod scalar_node;
 use crate::bevy_to_fugue::InferenceResultResource;
+use crate::sidebar::global::graph_change_requires_confirmation;
 use crate::constants::*;
 use crate::data_vis::{
     CloseHistogramPanel, HistogramView, OpenHistogramPanel,
@@ -112,7 +113,11 @@ pub fn set_node_name(
     >,
     mut labels: Query<(&ChildOf, &mut Text2d), With<NodeLabel>>,
     plates: Query<&Plate, Without<PlateDraft>>,
+    inference_results: Option<Res<InferenceResultResource>>,
 ) {
+    if graph_change_requires_confirmation(&mut commands, inference_results.as_deref(), None) {
+        return;
+    }
     let name = event
         .name
         .chars()
@@ -310,6 +315,7 @@ pub fn on_background_click(
     selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
     mut unfinished_links: Query<Entity, With<UnfinishedLink>>,
     plate_drafts: Query<&Plate, With<PlateDraft>>,
+    inference_results: Option<Res<InferenceResultResource>>,
 ) {
     commands.trigger(CloseHistogramPanel);
     // Bevy emits Click before DragEnd when a drag is released. Do not treat
@@ -339,6 +345,13 @@ pub fn on_background_click(
         return;
     }
     if reduced_view.active {
+        return;
+    }
+    if graph_change_requires_confirmation(
+        &mut commands,
+        inference_results.as_deref(),
+        Some(event.pointer_location.position),
+    ) {
         return;
     }
     let mut node_num = 1;
@@ -388,6 +401,13 @@ pub fn on_node_click(
     if !reduced_view.active
         && let Ok((unfinished_ent, mut ends)) = unfinished_link.single_mut()
     {
+        if graph_change_requires_confirmation(
+            &mut commands,
+            inference_results.as_deref(),
+            Some(event.pointer_location.position),
+        ) {
+            return;
+        }
         commands.entity(unfinished_ent).remove::<UnfinishedLink>();
 
         //if user tries to create a link from a node to itself

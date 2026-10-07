@@ -11,6 +11,7 @@ use crate::nodes::*;
 use bevy::color::palettes::css::BLACK;
 use bevy::color::palettes::css::DARK_GREY;
 use bevy::color::palettes::tailwind::SLATE_300;
+use bevy::input_focus::InputFocus;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::text::{EditableText, TextCursorStyle};
@@ -68,6 +69,9 @@ pub struct RandomSeedPlaceholder;
 
 #[derive(Event)]
 pub struct SetInferenceControlsEnabled(pub bool);
+
+#[derive(Event)]
+pub struct DeleteSelectedNode;
 
 #[derive(Event)]
 pub struct SetPosteriorSampleEnabled(pub bool);
@@ -427,34 +431,67 @@ pub fn reload_sidebar(
                 text_font(),
                 TextColor(Color::WHITE),
             )],
-            )).observe(  //delete button functionality
-                |
-                _event: On<Pointer<Click>>,
-                selected: Single<(Entity, &mut Selected, &mut GraphNode)>,
-                mut commands: Commands,
-                mut finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
-                mut unfinished_link: Query<(Entity, &mut GraphLink), With<UnfinishedLink>>,
-                |{
-                    let (node, _selected, _graphnode) = selected.into_inner();
-                        commands.entity(node).despawn();
-
-                        //despawn connected links
-                        for (link_entity, link_component) in finished_links.iter_mut() {
-                            if node == link_component.from || link_component.to == Some(node) {
-                                commands.entity(link_entity).despawn();
-                            }
-                        }
-                        //despawn unfinished connected link
-                        if let Ok((unfinished_ent, ends)) = unfinished_link.single_mut() {
-                            if node == ends.from {
-                                commands.entity(unfinished_ent).despawn();
-                            }
-                        }
-                        commands.trigger(ReloadSidebar);
-                }
-            ).id();
+            ))
+            .observe(
+                |_event: On<Pointer<Click>>, mut commands: Commands| {
+                    commands.trigger(DeleteSelectedNode);
+                },
+            )
+            .id();
             commands.entity(sidebar_entity).add_child(delete_button);
     }
+}
+
+pub fn delete_selected_node_on_backspace(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    input_focus: Res<InputFocus>,
+    editable_text: Query<(), With<EditableText>>,
+    mut commands: Commands,
+) {
+    if !keyboard_input.just_pressed(KeyCode::Backspace) {
+        return;
+    }
+    if input_focus
+        .get()
+        .is_some_and(|focused| editable_text.get(focused).is_ok())
+    {
+        return;
+    }
+    commands.trigger(DeleteSelectedNode);
+}
+
+pub fn delete_selected_node(
+    _event: On<DeleteSelectedNode>,
+    selected: Option<Single<Entity, (With<Selected>, With<GraphNode>)>>,
+    finished_links: Query<(Entity, &GraphLink), Without<UnfinishedLink>>,
+    unfinished_links: Query<(Entity, &GraphLink), With<UnfinishedLink>>,
+    mut commands: Commands,
+    inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
+) {
+    let Some(selected) = selected else {
+        return;
+    };
+    if global::graph_change_requires_confirmation(
+        &mut commands,
+        inference_results.as_deref(),
+        None,
+    ) {
+        return;
+    }
+    let node = *selected;
+    commands.entity(node).despawn();
+
+    for (link_entity, link) in &finished_links {
+        if node == link.from || link.to == Some(node) {
+            commands.entity(link_entity).despawn();
+        }
+    }
+    for (link_entity, link) in &unfinished_links {
+        if node == link.from {
+            commands.entity(link_entity).despawn();
+        }
+    }
+    commands.trigger(ReloadSidebar);
 }
 
 //close all context menus

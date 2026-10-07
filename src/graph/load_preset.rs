@@ -7,7 +7,7 @@ use crate::bevy_to_fugue::{
 };
 use crate::constants::*;
 use crate::data_vis::{
-    CloseHistogramPanel, InferenceHistogramPanel, PlateIndexScopes, SampleSelections,
+    CloseHistogramPanel, InferenceHistogramPanel, PlateIndexSelections, SampleSelections,
 };
 use crate::nodes::*;
 use crate::sidebar::{
@@ -371,7 +371,7 @@ fn clear_editable_graph(
     commands.remove_resource::<InferenceResultResource>();
     commands.remove_resource::<InferenceStatusResource>();
     commands.remove_resource::<SampleSelections>();
-    commands.remove_resource::<PlateIndexScopes>();
+    commands.remove_resource::<PlateIndexSelections>();
     commands.trigger(SetInferenceControlsEnabled(false));
     commands.trigger(SetPosteriorSampleEnabled(false));
     commands.trigger(CloseHistogramPanel);

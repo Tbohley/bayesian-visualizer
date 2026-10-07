@@ -169,13 +169,21 @@ fn on_select_distribution(
     menu_items: Query<&ContextMenuItem>,
     mut commands: Commands,
     selected: Option<Single<(Entity, &Selected)>>,
-    mut random_vars: Query<(&mut RandomNode, &Selected)>
+    mut random_vars: Query<(&mut RandomNode, &Selected)>,
+    inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
 ){
     let target = event.original_event_target();
     if let Some(single) = selected{
         let (entity, _selected_comp) = single.into_inner();
 
         if let Ok(item) = menu_items.get(target) {
+            if crate::sidebar::global::graph_change_requires_confirmation(
+                &mut commands,
+                inference_results.as_deref(),
+                Some(event.pointer_location.position),
+            ) {
+                return;
+            }
             //set distribution of node to new dist... or maybe on apply?
             println!("Selected distribution {}", item.0);
             let (mut random_var, _selected_comp) = random_vars.get_mut(entity).unwrap();

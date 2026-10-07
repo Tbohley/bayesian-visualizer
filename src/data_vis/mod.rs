@@ -24,7 +24,7 @@ pub const DEFAULT_HISTOGRAM_BINS: usize = 20;
 pub const MAX_HISTOGRAM_BINS: usize = 200;
 pub const HISTOGRAM_PANEL_HEIGHT: f32 = 260.0;
 const SELECTED_SAMPLE_COLOR: Color = Color::srgb(0.35, 0.55, 0.95);
-const SELECTED_HISTOGRAM_COLOR: Color = Color::srgb(0.2, 0.7, 0.35);
+pub const LINKED_SELECTION_COLOR: Color = Color::srgb(0.2, 0.7, 0.35);
 
 #[derive(Event)]
 pub struct OpenHistogramPanel {
@@ -49,14 +49,14 @@ pub enum HistogramSubject {
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlateIndexScopes {
-    /// Inclusive, sorted, disjoint ranges for each active plate filter.
+pub struct PlateIndexSelections {
+    /// Inclusive, sorted, disjoint ranges for each plate's linked selection.
     pub ranges_by_plate: HashMap<u32, Vec<(usize, usize)>>,
 }
 
-impl PlateIndexScopes {
+impl PlateIndexSelections {
     pub fn contains(&self, plate_id: u32, index: usize) -> bool {
-        self.ranges_by_plate.get(&plate_id).is_none_or(|ranges| {
+        self.ranges_by_plate.get(&plate_id).is_some_and(|ranges| {
             ranges
                 .iter()
                 .any(|&(start, end)| index >= start && index <= end)
@@ -81,11 +81,16 @@ impl PlateIndexScopes {
     }
 
     pub fn selected_count(&self, plate_id: u32, extent: usize) -> usize {
-        self.ranges_by_plate
-            .get(&plate_id)
-            .map_or(extent, |ranges| {
-                ranges.iter().map(|&(start, end)| end - start + 1).sum()
-            })
+        self.ranges_by_plate.get(&plate_id).map_or(0, |ranges| {
+            ranges
+                .iter()
+                .map(|&(start, end)| {
+                    let start = start.min(extent);
+                    let end = end.min(extent.saturating_sub(1));
+                    end.saturating_sub(start) + usize::from(start < extent)
+                })
+                .sum()
+        })
     }
 
     pub fn toggle(&mut self, plate_id: u32, index: usize) {
@@ -114,7 +119,11 @@ impl PlateIndexScopes {
                 }
             }
         }
-        self.ranges_by_plate.insert(plate_id, updated);
+        if updated.is_empty() {
+            self.ranges_by_plate.remove(&plate_id);
+        } else {
+            self.ranges_by_plate.insert(plate_id, updated);
+        }
     }
 }
 
@@ -243,7 +252,7 @@ pub struct HistogramSelectionControls;
 pub struct HistogramSelectionStatus;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HistogramScope {
+pub enum HistogramPopulation {
     Instance(Vec<usize>),
     Pooled { instance_count: usize },
 }
@@ -460,11 +469,11 @@ fn histogram_samples(instances: &[NodeInstanceSamples]) -> (Vec<HistogramSample>
 
 fn displayed_instance_samples(
     instances: &[NodeInstanceSamples],
-) -> (NodeInstanceSamples, HistogramScope) {
+) -> (NodeInstanceSamples, HistogramPopulation) {
     if instances.len() == 1 {
         (
             instances[0].clone(),
-            HistogramScope::Instance(instances[0].indices.clone()),
+            HistogramPopulation::Instance(instances[0].indices.clone()),
         )
     } else {
         // A posterior draw contributes one point for every concrete plate
@@ -474,32 +483,14 @@ fn displayed_instance_samples(
                 indices: Vec::new(),
                 samples: pool_instance_samples(instances),
             },
-            HistogramScope::Pooled {
+            HistogramPopulation::Pooled {
                 instance_count: instances.len(),
             },
         )
     }
 }
 
-fn scoped_instances(
-    instances: &[NodeInstanceSamples],
-    plate_ids: &[u32],
-    scopes: Option<&PlateIndexScopes>,
-) -> Vec<NodeInstanceSamples> {
-    instances
-        .iter()
-        .filter(|instance| {
-            scopes.is_none_or(|scopes| {
-                plate_ids.iter().enumerate().all(|(position, &plate_id)| {
-                    scopes.contains(plate_id, instance.indices[position])
-                })
-            })
-        })
-        .cloned()
-        .collect()
-}
-
-fn format_scope_ranges(ranges: &[(usize, usize)]) -> String {
+fn format_selection_ranges(ranges: &[(usize, usize)]) -> String {
     const DISPLAY_LIMIT: usize = 6;
     let mut display = ranges
         .iter()
@@ -588,25 +579,45 @@ fn selection_weights(
     result
 }
 
+fn plate_instance_is_selected(
+    target_plate_ids: &[u32],
+    target_path: &[usize],
+    plate_selections: Option<&PlateIndexSelections>,
+) -> bool {
+    plate_selections.is_some_and(|selections| {
+        target_plate_ids
+            .iter()
+            .enumerate()
+            .any(|(position, &plate_id)| {
+                target_path
+                    .get(position)
+                    .is_some_and(|&index| selections.contains(plate_id, index))
+            })
+    })
+}
+
 fn linked_samples_for_selections(
     instances: &[NodeInstanceSamples],
-    selections: &SampleSelections,
+    selections: Option<&SampleSelections>,
+    plate_selections: Option<&PlateIndexSelections>,
     target_plate_ids: &[u32],
 ) -> Vec<WeightedSample> {
     type SelectionGroup = (Vec<u32>, Vec<Vec<usize>>);
     let mut groups = HashMap::<SelectionGroup, HashMap<Vec<usize>, HashSet<usize>>>::new();
-    for selection in &selections.entries {
-        let draws = groups
-            .entry((
-                selection.context_plate_ids.clone(),
-                selection.context_instance_paths.clone(),
-            ))
-            .or_default();
-        for (path, selected_draws) in &selection.draws_by_instance {
-            draws
-                .entry(path.clone())
-                .or_default()
-                .extend(selected_draws);
+    if let Some(selections) = selections {
+        for selection in &selections.entries {
+            let draws = groups
+                .entry((
+                    selection.context_plate_ids.clone(),
+                    selection.context_instance_paths.clone(),
+                ))
+                .or_default();
+            for (path, selected_draws) in &selection.draws_by_instance {
+                draws
+                    .entry(path.clone())
+                    .or_default()
+                    .extend(selected_draws);
+            }
         }
     }
 
@@ -623,6 +634,13 @@ fn linked_samples_for_selections(
                 .entry(key)
                 .and_modify(|current| *current = current.max(weight))
                 .or_insert(weight);
+        }
+    }
+    for instance in instances {
+        if plate_instance_is_selected(target_plate_ids, &instance.indices, plate_selections) {
+            for sample in &instance.samples {
+                weights.insert((instance.indices.clone(), sample.draw_index), 1.0);
+            }
         }
     }
     instances
@@ -662,6 +680,34 @@ fn project_context_path(
 fn unweighted_samples(samples: &[PosteriorSample]) -> Vec<WeightedSample> {
     samples
         .iter()
+        .map(|sample| WeightedSample {
+            value: sample.value,
+            weight: 1.0,
+        })
+        .collect()
+}
+
+fn observed_samples(values: &[f64]) -> Vec<PosteriorSample> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(row, &value)| PosteriorSample {
+            draw_index: row,
+            value,
+        })
+        .collect()
+}
+
+fn linked_observed_samples(
+    samples: &[PosteriorSample],
+    owner_plate_id: u32,
+    plate_selections: Option<&PlateIndexSelections>,
+) -> Vec<WeightedSample> {
+    samples
+        .iter()
+        .filter(|sample| {
+            plate_instance_is_selected(&[owner_plate_id], &[sample.draw_index], plate_selections)
+        })
         .map(|sample| WeightedSample {
             value: sample.value,
             weight: 1.0,
@@ -772,17 +818,20 @@ fn sample_is_selected(
     context_path: &[usize],
     draw_index: usize,
     selections: Option<&SampleSelections>,
+    plate_selections: Option<&PlateIndexSelections>,
 ) -> bool {
-    selections.is_some_and(|selections| {
-        selections.entries.iter().any(|selection| {
-            let shared = shared_plate_positions(&selection.context_plate_ids, context_plate_ids);
-            let target_key = project_context_path(context_path, &shared, false);
-            selection.draws_by_instance.iter().any(|(path, draws)| {
-                draws.contains(&draw_index)
-                    && project_context_path(path, &shared, true) == target_key
+    plate_instance_is_selected(context_plate_ids, context_path, plate_selections)
+        || selections.is_some_and(|selections| {
+            selections.entries.iter().any(|selection| {
+                let shared =
+                    shared_plate_positions(&selection.context_plate_ids, context_plate_ids);
+                let target_key = project_context_path(context_path, &shared, false);
+                selection.draws_by_instance.iter().any(|(path, draws)| {
+                    draws.contains(&draw_index)
+                        && project_context_path(path, &shared, true) == target_key
+                })
             })
         })
-    })
 }
 
 pub fn open_histogram_panel(
@@ -792,7 +841,7 @@ pub fn open_histogram_panel(
     graph: Option<Res<GraphIRResource>>,
     inference_status: Option<Res<InferenceStatusResource>>,
     selections: Option<Res<SampleSelections>>,
-    scopes: Option<Res<PlateIndexScopes>>,
+    plate_selections: Option<Res<PlateIndexSelections>>,
     bin_count_setting: Res<HistogramBinCount>,
     old_panels: Query<Entity, With<InferenceHistogramPanel>>,
     graph_nodes: Query<(
@@ -814,7 +863,7 @@ pub fn open_histogram_panel(
         open_plate_index_panel(
             &mut commands,
             graph.as_deref(),
-            scopes.as_deref(),
+            plate_selections.as_deref(),
             plate_id,
             requested_bin_count,
         );
@@ -825,7 +874,7 @@ pub fn open_histogram_panel(
         open_observed_data_panel(
             &mut commands,
             graph.as_deref(),
-            scopes.as_deref(),
+            plate_selections.as_deref(),
             node_id,
             &label,
             requested_bin_count,
@@ -869,21 +918,16 @@ pub fn open_histogram_panel(
     };
     let node_label = graph_node_label(node_id, &graph_nodes, &node_labels);
 
-    let instances = scoped_instances(&instances, &plate_ids, scopes.as_deref());
-    if instances.is_empty() {
-        commands.trigger(ErrorToast {
-            text: format!("The active index scope excludes every instance of {node_label}."),
-            color: ERR_COLOR,
-        });
-        return;
-    }
-    let (full_samples, scope) = displayed_instance_samples(&instances);
+    let (full_samples, population) = displayed_instance_samples(&instances);
     let (plot_samples, instance_paths) = histogram_samples(&instances);
     let full_weighted_samples = unweighted_samples(&full_samples.samples);
-    let highlighted_samples = selections
-        .as_ref()
-        .filter(|selections| !selections.entries.is_empty())
-        .map(|selections| linked_samples_for_selections(&instances, selections, &plate_ids));
+    let highlighted_samples = linked_samples_for_selections(
+        &instances,
+        selections.as_deref(),
+        plate_selections.as_deref(),
+        &plate_ids,
+    );
+    let highlighted_samples = (!highlighted_samples.is_empty()).then_some(highlighted_samples);
     let displayed_sample_count = highlighted_samples
         .as_deref()
         .map_or(full_samples.samples.len() as f64, effective_count);
@@ -926,25 +970,11 @@ pub fn open_histogram_panel(
         ),
         _ => format!("Posterior samples - {node_label}"),
     };
-    let scope_heading = plate_ids
-        .iter()
-        .map(|plate_id| {
-            let extent = graph.as_ref().unwrap().0.graph().plates[plate_id].n;
-            match scopes
-                .as_deref()
-                .and_then(|scope| scope.ranges_by_plate.get(plate_id))
-            {
-                Some(ranges) => format!("plate {plate_id}: {}", format_scope_ranges(ranges)),
-                None => format!("plate {plate_id}: all {extent} indices"),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" x ");
-    let heading = if scope_heading.is_empty() {
+    let heading = if plate_ids.is_empty() {
         heading
     } else {
         format!(
-            "{heading}\nIndex scope: {scope_heading}\n{} instances x {} draws",
+            "{heading}\n{} instances x {} draws",
             instances.len(),
             results.0.n_samples
         )
@@ -963,12 +993,15 @@ pub fn open_histogram_panel(
         &full_samples.samples,
         highlighted_samples.as_deref(),
         selections.as_deref(),
+        plate_selections.as_deref(),
+        &plate_ids,
+        graph.as_deref(),
     );
     let stats = spawn_stats(
         &mut commands,
         &node_label,
         &full_weighted_samples,
-        &scope,
+        &population,
         probability_line,
         bin_count,
     );
@@ -989,13 +1022,13 @@ pub fn open_histogram_panel(
 fn open_plate_index_panel(
     commands: &mut Commands,
     graph: Option<&GraphIRResource>,
-    scopes: Option<&PlateIndexScopes>,
+    selections: Option<&PlateIndexSelections>,
     plate_id: u32,
     requested_bins: usize,
 ) {
     let Some(plate) = graph.and_then(|graph| graph.0.graph().plates.get(&plate_id)) else {
         commands.trigger(ErrorToast {
-            text: format!("Compile the graph before opening plate {plate_id}'s index scope."),
+            text: format!("Compile the graph before opening plate {plate_id}'s index selection."),
             color: ERR_COLOR,
         });
         return;
@@ -1014,13 +1047,18 @@ fn open_plate_index_panel(
         .collect::<Vec<_>>();
     let histogram = build_weighted_histogram(&weighted, bin_count, domain)
         .expect("validated positive plate extent makes a valid index histogram");
-    let highlighted_histogram = scopes
-        .and_then(|scopes| scopes.ranges_by_plate.get(&plate_id).map(|_| scopes))
-        .map(|scopes| {
+    let highlighted_histogram = selections
+        .and_then(|selections| {
+            selections
+                .ranges_by_plate
+                .get(&plate_id)
+                .map(|_| selections)
+        })
+        .map(|selections| {
             let selected = weighted
                 .iter()
                 .enumerate()
-                .filter(|(index, _)| scopes.contains(plate_id, *index))
+                .filter(|(index, _)| selections.contains(plate_id, *index))
                 .map(|(_, sample)| sample.clone())
                 .collect::<Vec<_>>();
             build_weighted_histogram(&selected, bin_count, domain)
@@ -1034,12 +1072,12 @@ fn open_plate_index_panel(
         })
         .collect::<Vec<_>>();
     let paths = (0..extent).map(|index| vec![index]).collect::<Vec<_>>();
-    let selected = scopes.map_or(extent, |scopes| scopes.selected_count(plate_id, extent));
-    let ranges = scopes
-        .and_then(|scopes| scopes.ranges_by_plate.get(&plate_id))
+    let selected = selections.map_or(0, |selections| selections.selected_count(plate_id, extent));
+    let ranges = selections
+        .and_then(|selections| selections.ranges_by_plate.get(&plate_id))
         .map_or_else(
-            || format!("0-{}", extent - 1),
-            |ranges| format_scope_ranges(ranges),
+            || "none".to_string(),
+            |ranges| format_selection_ranges(ranges),
         );
     let percent_selected = selected as f64 * 100.0 / extent as f64;
 
@@ -1059,10 +1097,10 @@ fn open_plate_index_panel(
                 ..default()
             },
             children![
-                (Text::new("Index scope"), TextColor(Color::WHITE), text_font()),
-                (Text::new(format!("{selected} / {extent} indices ({percent_selected:.1}%)")), TextColor(Color::WHITE), text_font()),
-                (Text::new(format!("Active: {ranges}")), TextColor(Color::srgb(0.72, 0.74, 0.80)), text_font()),
-                (Text::new("Drag to select whole indices. Index scopes filter distributions; they are not linked sample selections."), TextColor(Color::srgb(0.72, 0.74, 0.80)), TextFont { font_size: FontSize::Px(10.0), ..text_font() }),
+                (Text::new("Linked index selection"), TextColor(Color::WHITE), text_font()),
+                (Text::new(format!("{selected} of {extent} indices selected ({percent_selected:.1}%)")), TextColor(Color::WHITE), text_font()),
+                (Text::new(format!("Selected: {ranges}")), TextColor(Color::srgb(0.72, 0.74, 0.80)), text_font()),
+                (Text::new("Drag to select whole indices and highlight matching instances across views."), TextColor(Color::srgb(0.72, 0.74, 0.80)), TextFont { font_size: FontSize::Px(10.0), ..text_font() }),
             ],
         ))
         .id();
@@ -1083,7 +1121,7 @@ fn open_plate_index_panel(
 fn open_observed_data_panel(
     commands: &mut Commands,
     graph: Option<&GraphIRResource>,
-    scopes: Option<&PlateIndexScopes>,
+    plate_selections: Option<&PlateIndexSelections>,
     node_id: u32,
     node_label: &str,
     requested_bins: usize,
@@ -1112,22 +1150,7 @@ fn open_observed_data_panel(
         });
         return;
     };
-    let raw = values
-        .iter()
-        .enumerate()
-        .filter(|(row, _)| scopes.is_none_or(|scopes| scopes.contains(owner_id, *row)))
-        .map(|(row, &value)| PosteriorSample {
-            draw_index: row,
-            value,
-        })
-        .collect::<Vec<_>>();
-    if raw.is_empty() {
-        commands.trigger(ErrorToast {
-            text: "The active owner-plate scope excludes every observed row.".into(),
-            color: ERR_COLOR,
-        });
-        return;
-    }
+    let raw = observed_samples(values);
     let bin_count = requested_bins.clamp(1, MAX_HISTOGRAM_BINS);
     let histogram = match build_histogram(&raw, bin_count) {
         Ok(value) => value,
@@ -1140,6 +1163,12 @@ fn open_observed_data_panel(
         }
     };
     let weighted = unweighted_samples(&raw);
+    let highlighted = linked_observed_samples(&raw, owner_id, plate_selections);
+    let highlighted = (!highlighted.is_empty()).then_some(highlighted);
+    let highlighted_histogram = highlighted.as_deref().map(|samples| {
+        build_weighted_histogram(samples, bin_count, histogram.domain)
+            .expect("selected observed rows share the full observed-data domain")
+    });
     let samples = raw
         .iter()
         .enumerate()
@@ -1177,16 +1206,23 @@ fn open_observed_data_panel(
         commands,
         node_label,
         &weighted,
-        &HistogramScope::Pooled {
+        &HistogramPopulation::Pooled {
             instance_count: raw.len(),
         },
-        Some(format!("{} source rows in current scope", raw.len())),
+        Some(match highlighted.as_deref() {
+            Some(selected) => format!(
+                "{} of {} source rows highlighted",
+                selected.len(),
+                raw.len()
+            ),
+            None => format!("{} source rows", raw.len()),
+        }),
         bin_count,
     );
     let chart = spawn_chart(
         commands,
         &histogram,
-        None,
+        highlighted_histogram.as_ref(),
         &samples,
         &paths,
         &[owner_id],
@@ -1275,7 +1311,7 @@ pub fn open_joint_distribution_view(
     results: Option<Res<InferenceResultResource>>,
     graph: Option<Res<GraphIRResource>>,
     selections: Option<Res<SampleSelections>>,
-    scopes: Option<Res<PlateIndexScopes>>,
+    plate_selections: Option<Res<PlateIndexSelections>>,
     bin_count_setting: Res<HistogramBinCount>,
     old_sidebars: Query<Entity, With<LocalSidebar>>,
     old_joint_indicators: Query<Entity, With<JointSelectedIndicator>>,
@@ -1313,8 +1349,6 @@ pub fn open_joint_distribution_view(
     let Ok(y_instances) = results.0.samples_for_node(event.y_node_id) else {
         return;
     };
-    let x_instances = scoped_instances(&x_instances, &x_plate_ids, scopes.as_deref());
-    let y_instances = scoped_instances(&y_instances, &y_plate_ids, scopes.as_deref());
     let (points, context_plate_ids, context_instance_paths) =
         build_joint_samples(&x_instances, &x_plate_ids, &y_instances, &y_plate_ids);
     if points.is_empty() {
@@ -1459,6 +1493,7 @@ pub fn open_joint_distribution_view(
         y_histogram.domain,
         bins,
         selections.as_deref(),
+        plate_selections.as_deref(),
     );
     let right = commands
         .spawn(Node {
@@ -1468,12 +1503,8 @@ pub fn open_joint_distribution_view(
             ..default()
         })
         .id();
-    let right_hist = spawn_marginal_histogram(
-        &mut commands,
-        &y_histogram,
-        true,
-        SELECTED_SAMPLE_COLOR,
-    );
+    let right_hist =
+        spawn_marginal_histogram(&mut commands, &y_histogram, true, SELECTED_SAMPLE_COLOR);
     commands.entity(right).add_child(right_hist);
     commands.entity(body).add_children(&[heatmap, right]);
 
@@ -1502,9 +1533,12 @@ pub fn open_joint_distribution_view(
         .id();
     commands.entity(y_label_row).add_child(y_label);
     let mut sidebar_children = vec![heading, hint, x_label, top_hist, body, y_label_row];
-    if let Some(selections) = selections
-        .as_deref()
-        .filter(|selections| !selections.entries.is_empty())
+    if selections
+        .as_ref()
+        .is_some_and(|selections| !selections.entries.is_empty())
+        || plate_selections
+            .as_ref()
+            .is_some_and(|selections| !selections.ranges_by_plate.is_empty())
     {
         let selected = points
             .iter()
@@ -1513,7 +1547,8 @@ pub fn open_joint_distribution_view(
                     &context_plate_ids,
                     &context_instance_paths[point.context_instance],
                     point.draw_index,
-                    Some(selections),
+                    selections.as_deref(),
+                    plate_selections.as_deref(),
                 )
             })
             .count();
@@ -1643,6 +1678,7 @@ fn spawn_joint_heatmap(
     y_domain: HistogramDomain,
     bins: usize,
     selections: Option<&SampleSelections>,
+    plate_selections: Option<&PlateIndexSelections>,
 ) -> Entity {
     let mut counts = vec![0usize; bins * bins];
     let mut selected_counts = vec![0usize; bins * bins];
@@ -1656,6 +1692,7 @@ fn spawn_joint_heatmap(
             &context_instance_paths[point.context_instance],
             point.draw_index,
             selections,
+            plate_selections,
         ) {
             selected_counts[index] += 1;
         }
@@ -1827,7 +1864,7 @@ fn spawn_stats(
     commands: &mut Commands,
     node_label: &str,
     samples: &[WeightedSample],
-    scope: &HistogramScope,
+    population: &HistogramPopulation,
     probability_line: Option<String>,
     bin_count: usize,
 ) -> Entity {
@@ -1841,9 +1878,9 @@ fn spawn_stats(
         })
         .id();
 
-    let instance_note = match scope {
-        HistogramScope::Instance(indices) => format_instance_label(node_label, indices),
-        HistogramScope::Pooled { instance_count } => {
+    let instance_note = match population {
+        HistogramPopulation::Instance(indices) => format_instance_label(node_label, indices),
+        HistogramPopulation::Pooled { instance_count } => {
             format!("{node_label} ({instance_count} pooled instances)")
         }
     };
@@ -1947,8 +1984,10 @@ fn histogram_selection_probability_line(
     full_samples: &[PosteriorSample],
     selected_samples: Option<&[WeightedSample]>,
     selections: Option<&SampleSelections>,
+    plate_selections: Option<&PlateIndexSelections>,
+    plate_ids: &[u32],
+    graph: Option<&GraphIRResource>,
 ) -> Option<String> {
-    let selections = selections.filter(|selections| !selections.entries.is_empty())?;
     let selected_samples = selected_samples?;
     let total = full_samples.len() as f64;
     if total == 0.0 {
@@ -1956,17 +1995,39 @@ fn histogram_selection_probability_line(
     }
     let selected = effective_count(selected_samples);
     let probability = (selected / total).clamp(0.0, 1.0);
-    let detailed_bounds = match selections.entries.as_slice() {
-        [selection] => selection.source.histogram_range_for(node_id),
-        _ => None,
+    let detailed_bounds = if plate_selections.is_none_or(|plates| plates.ranges_by_plate.is_empty())
+    {
+        match selections.map(|selections| selections.entries.as_slice()) {
+            Some([selection]) => selection.source.histogram_range_for(node_id),
+            _ => None,
+        }
+    } else {
+        None
     };
     let Some((lower, upper)) = detailed_bounds else {
-        return Some(format!(
+        let mut line = format!(
             "Linked selection: {} of {} instance-draws ({:.1}%)",
             format_count(selected),
             format_count(total),
             probability * 100.0,
-        ));
+        );
+        if let (Some(plate_selections), Some(graph)) = (plate_selections, graph) {
+            let spans = plate_ids
+                .iter()
+                .filter_map(|plate_id| {
+                    plate_selections.ranges_by_plate.get(plate_id)?;
+                    let extent = graph.0.graph().plates.get(plate_id)?.n;
+                    Some(format!(
+                        "{} of {extent} plate {plate_id} indices",
+                        plate_selections.selected_count(*plate_id, extent)
+                    ))
+                })
+                .collect::<Vec<_>>();
+            if !spans.is_empty() {
+                line.push_str(&format!("; spanning {}", spans.join(", ")));
+            }
+        }
+        return Some(line);
     };
     let data_min = full_samples
         .iter()
@@ -2100,31 +2161,13 @@ pub fn deselect_histogram_selection(
     joint_view: Option<Single<&JointDistributionView>>,
 ) {
     event.propagate(false);
-    commands.remove_resource::<SampleSelections>();
-    commands.remove_resource::<PlateIndexScopes>();
+    clear_linked_selection_resources(&mut commands);
     refresh_selection_views(&mut commands, view, joint_view);
 }
 
-pub fn deselect_histogram_indices(
-    mut event: On<Pointer<Click>>,
-    mut commands: Commands,
-    view: Option<Single<&HistogramView>>,
-    joint_view: Option<Single<&JointDistributionView>>,
-) {
-    event.propagate(false);
-    commands.remove_resource::<PlateIndexScopes>();
-    refresh_selection_views(&mut commands, view, joint_view);
-}
-
-pub fn deselect_histogram_results(
-    mut event: On<Pointer<Click>>,
-    mut commands: Commands,
-    view: Option<Single<&HistogramView>>,
-    joint_view: Option<Single<&JointDistributionView>>,
-) {
-    event.propagate(false);
+fn clear_linked_selection_resources(commands: &mut Commands) {
     commands.remove_resource::<SampleSelections>();
-    refresh_selection_views(&mut commands, view, joint_view);
+    commands.remove_resource::<PlateIndexSelections>();
 }
 
 fn refresh_selection_views(
@@ -2145,7 +2188,7 @@ fn refresh_selection_views(
 
 pub fn update_histogram_selection_controls(
     selections: Option<Res<SampleSelections>>,
-    scopes: Option<Res<PlateIndexScopes>>,
+    plate_selections: Option<Res<PlateIndexSelections>>,
     view: Option<Single<&HistogramView>>,
     mut controls: Query<&mut Node, With<HistogramSelectionControls>>,
     mut statuses: Query<&mut Text, With<HistogramSelectionStatus>>,
@@ -2156,10 +2199,10 @@ pub fn update_histogram_selection_controls(
     let selection_count = selections
         .as_ref()
         .map_or(0, |selections| selections.entries.len());
-    let scope_count = scopes
+    let plate_selection_count = plate_selections
         .as_ref()
-        .map_or(0, |scopes| scopes.ranges_by_plate.len());
-    if selection_count == 0 && scope_count == 0 {
+        .map_or(0, |selections| selections.ranges_by_plate.len());
+    if selection_count == 0 && plate_selection_count == 0 {
         controls.display = Display::None;
         return;
     }
@@ -2174,10 +2217,10 @@ pub fn update_histogram_selection_controls(
     };
     if let Ok(mut status) = statuses.single_mut() {
         status.0 = format!(
-            "{} samples {suffix}; {selection_count} linked selection{}; {scope_count} index scope{}",
+            "{} samples {suffix}; {selection_count} value/joint selection{}; {plate_selection_count} plate-index selection{}",
             format_count(count),
             if selection_count == 1 { "" } else { "s" },
-            if scope_count == 1 { "" } else { "s" },
+            if plate_selection_count == 1 { "" } else { "s" },
         );
     }
 }
@@ -2297,14 +2340,19 @@ fn spawn_chart(
         .id();
     let legend_text = match subject {
         HistogramSubject::Node(_) if highlighted_histogram.is_some() => {
-            "Blue: all samples in current scope | Green: matched by linked selection"
+            "Blue: All samples | Green: Matched by linked selection"
         }
-        HistogramSubject::Node(_) => "Blue: All samples in current scope",
+        HistogramSubject::Node(_) => "Blue: All samples",
         HistogramSubject::PlateIndex(_) if highlighted_histogram.is_some() => {
-            "Blue: available indices | Green: current index scope"
+            "Blue: all indices | Green: linked index selection"
         }
-        HistogramSubject::PlateIndex(_) => "Uniform plate indices | Drag to add an index scope",
-        HistogramSubject::ObservedData(_) => "Mapped source rows in the current owner-plate scope",
+        HistogramSubject::PlateIndex(_) => {
+            "Uniform plate indices | Drag to add a linked index selection"
+        }
+        HistogramSubject::ObservedData(_) if highlighted_histogram.is_some() => {
+            "Blue: all source rows | Green: matched owner-plate rows"
+        }
+        HistogramSubject::ObservedData(_) => "All mapped source rows",
     };
     let legend = commands
         .spawn((
@@ -2494,7 +2542,7 @@ fn spawn_chart(
                         },
                         ..default()
                     },
-                    BackgroundColor(SELECTED_HISTOGRAM_COLOR),
+                    BackgroundColor(LINKED_SELECTION_COLOR),
                     ZIndex(2),
                 ))
                 .id();
@@ -2511,10 +2559,9 @@ fn spawn_chart(
         })
         .id();
     let axis_labels = match subject {
-        HistogramSubject::PlateIndex(_) => [
-            "0".to_string(),
-            samples.len().saturating_sub(1).to_string(),
-        ],
+        HistogramSubject::PlateIndex(_) => {
+            ["0".to_string(), samples.len().saturating_sub(1).to_string()]
+        }
         _ => [
             format!("{:.4}", histogram.domain.min),
             format!("{:.4}", histogram.domain.max),
@@ -2879,7 +2926,7 @@ fn toggle_plate_index(
     mut event: On<Pointer<Click>>,
     ui_scale: Res<UiScale>,
     mut commands: Commands,
-    mut scopes: Option<ResMut<PlateIndexScopes>>,
+    mut selections: Option<ResMut<PlateIndexSelections>>,
     plots: Query<(
         &HistogramPlot,
         Option<&HistogramBrushStart>,
@@ -2914,14 +2961,16 @@ fn toggle_plate_index(
     let index = (value + 0.5)
         .floor()
         .clamp(0.0, plot.samples.len().saturating_sub(1) as f64) as usize;
-    if let Some(scopes) = scopes.as_mut() {
-        scopes.toggle(plate_id, index);
+    if let Some(selections) = selections.as_mut() {
+        selections.toggle(plate_id, index);
     } else {
-        let mut new_scopes = PlateIndexScopes::default();
-        new_scopes.toggle(plate_id, index);
-        commands.insert_resource(new_scopes);
+        let mut new_selections = PlateIndexSelections::default();
+        new_selections.toggle(plate_id, index);
+        commands.insert_resource(new_selections);
     }
-    commands.entity(event.entity).remove::<HistogramBrushStart>();
+    commands
+        .entity(event.entity)
+        .remove::<HistogramBrushStart>();
     reopen_histogram(&mut commands, &view);
     reopen_joint_if_open(&mut commands, joint.map(|joint| *joint));
 }
@@ -3038,7 +3087,7 @@ fn finish_histogram_brush(
     ui_scale: Res<UiScale>,
     mut commands: Commands,
     mut selections: Option<ResMut<SampleSelections>>,
-    mut scopes: Option<ResMut<PlateIndexScopes>>,
+    mut plate_selections: Option<ResMut<PlateIndexSelections>>,
     plots: Query<(
         &HistogramPlot,
         &HistogramBrushStart,
@@ -3084,18 +3133,15 @@ fn finish_histogram_brush(
     let upper = plot.domain.value_at_plot_x(upper_fraction * width, width);
     if let HistogramSubject::PlateIndex(plate_id) = plot.subject {
         let extent = plot.samples.len();
-        let start = (lower + 0.5)
-            .floor()
-            .clamp(0.0, extent.saturating_sub(1) as f64) as usize;
-        let end = (upper + 0.5)
-            .floor()
-            .clamp(0.0, extent.saturating_sub(1) as f64) as usize;
-        if let Some(scopes) = scopes.as_mut() {
-            scopes.union(plate_id, start, end);
+        let Some((start, end)) = snapped_plate_index_range(lower, upper, extent) else {
+            return;
+        };
+        if let Some(selections) = plate_selections.as_mut() {
+            selections.union(plate_id, start, end);
         } else {
-            let mut new_scopes = PlateIndexScopes::default();
-            new_scopes.union(plate_id, start, end);
-            commands.insert_resource(new_scopes);
+            let mut new_selections = PlateIndexSelections::default();
+            new_selections.union(plate_id, start, end);
+            commands.insert_resource(new_selections);
         }
         reopen_histogram(&mut commands, &view);
         if let Some(joint) = joint_view {
@@ -3141,6 +3187,18 @@ fn finish_histogram_brush(
             y_node_id: joint.y_node_id,
         });
     }
+}
+
+fn snapped_plate_index_range(lower: f64, upper: f64, extent: usize) -> Option<(usize, usize)> {
+    if extent == 0 {
+        return None;
+    }
+    let snap = |value: f64| {
+        (value + 0.5)
+            .floor()
+            .clamp(0.0, extent.saturating_sub(1) as f64) as usize
+    };
+    Some((snap(lower.min(upper)), snap(lower.max(upper))))
 }
 
 fn format_instance_label(node_label: &str, indices: &[usize]) -> String {
@@ -3360,7 +3418,7 @@ mod tests {
             ],
         };
 
-        let linked = linked_samples_for_selections(&instances, &selections, &[]);
+        let linked = linked_samples_for_selections(&instances, Some(&selections), None, &[]);
 
         assert_eq!(effective_count(&linked), 3.0);
         assert_eq!(
@@ -3389,7 +3447,7 @@ mod tests {
             entries: vec![make_selection(vec![0]), make_selection(vec![1])],
         };
 
-        let linked = linked_samples_for_selections(&target, &selections, &[]);
+        let linked = linked_samples_for_selections(&target, Some(&selections), None, &[]);
 
         assert_eq!(effective_count(&linked), 1.0);
     }
@@ -3422,9 +3480,11 @@ mod tests {
         assert_eq!(plate_ids, vec![7]);
         assert_eq!(paths, vec![vec![0], vec![1]]);
         assert_eq!(points.len(), 3);
-        assert!(points
-            .iter()
-            .any(|point| point.x == 10.0 && point.y == 30.0));
+        assert!(
+            points
+                .iter()
+                .any(|point| point.x == 10.0 && point.y == 30.0)
+        );
     }
 
     #[test]
@@ -3542,99 +3602,299 @@ mod tests {
     }
 
     #[test]
-    fn plate_scope_brushes_union_and_normalize_ranges() {
-        let mut scopes = PlateIndexScopes::default();
-        scopes.union(7, 3, 5);
-        scopes.union(7, 8, 8);
-        scopes.union(7, 6, 7);
-        assert_eq!(scopes.ranges_by_plate[&7], vec![(3, 8)]);
-        assert!(scopes.contains(7, 4));
-        assert!(!scopes.contains(7, 2));
-        assert_eq!(scopes.selected_count(7, 20), 6);
+    fn plate_index_brush_snaps_to_complete_indices() {
+        assert_eq!(snapped_plate_index_range(-0.49, 2.49, 5), Some((0, 2)));
+        assert_eq!(snapped_plate_index_range(3.51, 1.51, 5), Some((2, 4)));
+        assert_eq!(snapped_plate_index_range(0.0, 1.0, 0), None);
+    }
+
+    #[test]
+    fn plate_index_brushes_union_and_normalize_ranges() {
+        let mut selections = PlateIndexSelections::default();
+        selections.union(7, 3, 5);
+        selections.union(7, 8, 8);
+        selections.union(7, 6, 7);
+        assert_eq!(selections.ranges_by_plate[&7], vec![(3, 8)]);
+        assert!(selections.contains(7, 4));
+        assert!(!selections.contains(7, 2));
+        assert_eq!(selections.selected_count(7, 20), 6);
     }
 
     #[test]
     fn plate_index_clicks_toggle_individual_indices() {
-        let mut scopes = PlateIndexScopes::default();
-        scopes.toggle(7, 3);
-        scopes.toggle(7, 5);
-        scopes.toggle(7, 4);
-        assert_eq!(scopes.ranges_by_plate[&7], vec![(3, 5)]);
+        let mut selections = PlateIndexSelections::default();
+        selections.toggle(7, 3);
+        selections.toggle(7, 5);
+        selections.toggle(7, 4);
+        assert_eq!(selections.ranges_by_plate[&7], vec![(3, 5)]);
 
-        scopes.toggle(7, 4);
-        assert_eq!(scopes.ranges_by_plate[&7], vec![(3, 3), (5, 5)]);
-        scopes.toggle(7, 3);
-        scopes.toggle(7, 5);
-        assert!(scopes.ranges_by_plate[&7].is_empty());
-        assert!(!scopes.contains(7, 3));
+        selections.toggle(7, 4);
+        assert_eq!(selections.ranges_by_plate[&7], vec![(3, 3), (5, 5)]);
+        selections.toggle(7, 3);
+        selections.toggle(7, 5);
+        assert!(!selections.ranges_by_plate.contains_key(&7));
+        assert!(!selections.contains(7, 3));
     }
 
     #[test]
-    fn long_scope_labels_truncate_without_losing_ranges() {
-        let ranges = (0..8).map(|index| (index * 2, index * 2)).collect::<Vec<_>>();
-        let label = format_scope_ranges(&ranges);
+    fn long_selection_labels_truncate_without_losing_ranges() {
+        let ranges = (0..8)
+            .map(|index| (index * 2, index * 2))
+            .collect::<Vec<_>>();
+        let label = format_selection_ranges(&ranges);
         assert_eq!(label, "0, 2, 4, 6, 8, 10, ... (+2 ranges)");
         assert_eq!(ranges.len(), 8);
     }
 
     #[test]
-    fn different_plate_scopes_intersect_only_on_member_dimensions() {
+    fn plate_selection_keeps_the_full_base_and_highlights_every_matching_draw() {
         let instances = (0..2)
             .flat_map(|i| {
                 (0..3).map(move |j| NodeInstanceSamples {
                     indices: vec![i, j],
-                    samples: vec![sample(0, (i * 10 + j) as f64)],
+                    samples: vec![
+                        sample(0, (i * 10 + j) as f64),
+                        sample(1, (i * 10 + j) as f64 + 0.5),
+                    ],
                 })
             })
             .collect::<Vec<_>>();
-        let mut scopes = PlateIndexScopes::default();
-        scopes.union(10, 1, 1);
-        scopes.union(20, 2, 2);
-        scopes.union(99, 0, 0);
+        let mut selections = PlateIndexSelections::default();
+        selections.union(10, 1, 1);
 
-        let filtered = scoped_instances(&instances, &[10, 20], Some(&scopes));
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].indices, vec![1, 2]);
-        assert_eq!(scoped_instances(&instances, &[10, 20], None).len(), 6);
-        let root = vec![NodeInstanceSamples {
-            indices: vec![],
-            samples: vec![sample(0, 1.0)],
-        }];
-        assert_eq!(scoped_instances(&root, &[], Some(&scopes)), root);
+        let base = pool_instance_samples(&instances);
+        let linked = linked_samples_for_selections(&instances, None, Some(&selections), &[10, 20]);
+
+        assert_eq!(base.len(), 12);
+        assert_eq!(linked.len(), 6);
+        assert!(linked.iter().all(|sample| sample.value >= 10.0));
     }
 
     #[test]
-    fn linked_selection_is_applied_after_plate_scope_filtering() {
-        let instances = vec![
+    fn plate_selection_is_a_no_op_for_root_and_unrelated_nodes() {
+        let mut selections = PlateIndexSelections::default();
+        selections.union(10, 1, 1);
+        let root = vec![NodeInstanceSamples {
+            indices: Vec::new(),
+            samples: vec![sample(0, 1.0)],
+        }];
+        let sibling = vec![NodeInstanceSamples {
+            indices: vec![1],
+            samples: vec![sample(0, 2.0)],
+        }];
+
+        assert!(linked_samples_for_selections(&root, None, Some(&selections), &[]).is_empty());
+        assert!(linked_samples_for_selections(&sibling, None, Some(&selections), &[20]).is_empty());
+    }
+
+    #[test]
+    fn selections_on_different_plates_use_or_semantics() {
+        let instances = (0..2)
+            .flat_map(|p| {
+                (0..2).map(move |q| NodeInstanceSamples {
+                    indices: vec![p, q],
+                    samples: vec![sample(0, (p * 10 + q) as f64)],
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut selections = PlateIndexSelections::default();
+        selections.union(10, 1, 1);
+        selections.union(20, 1, 1);
+
+        let linked = linked_samples_for_selections(&instances, None, Some(&selections), &[10, 20]);
+        assert_eq!(
+            linked.iter().map(|sample| sample.value).collect::<Vec<_>>(),
+            vec![1.0, 10.0, 11.0]
+        );
+    }
+
+    #[test]
+    fn plate_value_and_joint_selections_share_union_semantics() {
+        let instances = (0..2)
+            .flat_map(|p| {
+                (0..2).map(move |q| NodeInstanceSamples {
+                    indices: vec![p, q],
+                    samples: vec![
+                        sample(0, (p * 10 + q) as f64),
+                        sample(1, 100.0 + (p * 10 + q) as f64),
+                    ],
+                })
+            })
+            .collect::<Vec<_>>();
+        let make_selection = |source, path, draw| SampleSelection {
+            source,
+            context_plate_ids: vec![10, 20],
+            context_instance_paths: instances
+                .iter()
+                .map(|instance| instance.indices.clone())
+                .collect(),
+            draws_by_instance: HashMap::from([(path, HashSet::from([draw]))]),
+        };
+        let sample_selections = SampleSelections {
+            entries: vec![
+                make_selection(
+                    SelectionSource::Histogram {
+                        node_id: 1,
+                        lower: 0.0,
+                        upper: 1.0,
+                    },
+                    vec![0, 0],
+                    0,
+                ),
+                make_selection(
+                    SelectionSource::Joint {
+                        x_node_id: 1,
+                        y_node_id: 2,
+                        polygon: Vec::new(),
+                    },
+                    vec![0, 1],
+                    1,
+                ),
+            ],
+        };
+        let mut plate_selections = PlateIndexSelections::default();
+        plate_selections.union(10, 1, 1);
+
+        let linked = linked_samples_for_selections(
+            &instances,
+            Some(&sample_selections),
+            Some(&plate_selections),
+            &[10, 20],
+        );
+        assert_eq!(linked.len(), 6);
+        assert!(linked.iter().any(|sample| sample.value == 0.0));
+        assert!(linked.iter().any(|sample| sample.value == 101.0));
+        assert!(linked.iter().any(|sample| sample.value == 110.0));
+        assert!(linked.iter().any(|sample| sample.value == 111.0));
+    }
+
+    #[test]
+    fn new_live_draws_for_selected_instances_are_linked_without_draw_storage() {
+        let mut instances = vec![NodeInstanceSamples {
+            indices: vec![1],
+            samples: vec![sample(0, 1.0)],
+        }];
+        let mut selections = PlateIndexSelections::default();
+        selections.union(10, 1, 1);
+        assert_eq!(
+            linked_samples_for_selections(&instances, None, Some(&selections), &[10]).len(),
+            1
+        );
+
+        instances[0].samples.push(sample(1, 2.0));
+        assert_eq!(
+            linked_samples_for_selections(&instances, None, Some(&selections), &[10]).len(),
+            2
+        );
+        assert_eq!(selections.ranges_by_plate[&10], vec![(1, 1)]);
+    }
+
+    #[test]
+    fn joint_base_is_complete_and_plate_highlights_use_union_context() {
+        let x = vec![
             NodeInstanceSamples {
-                indices: vec![0],
+                indices: vec![0, 0],
                 samples: vec![sample(0, 1.0)],
             },
             NodeInstanceSamples {
-                indices: vec![1],
+                indices: vec![1, 0],
                 samples: vec![sample(0, 2.0)],
             },
         ];
-        let mut scopes = PlateIndexScopes::default();
-        scopes.union(10, 1, 1);
-        let scoped = scoped_instances(&instances, &[10], Some(&scopes));
-        let selection = SampleSelection {
-            source: SelectionSource::Histogram {
-                node_id: 1,
-                lower: 0.0,
-                upper: 3.0,
+        let y = vec![
+            NodeInstanceSamples {
+                indices: vec![0, 0],
+                samples: vec![sample(0, 10.0)],
             },
-            context_plate_ids: vec![10],
-            context_instance_paths: vec![vec![0], vec![1]],
-            draws_by_instance: HashMap::from([
-                (vec![0], HashSet::from([0])),
-                (vec![1], HashSet::from([0])),
-            ]),
-        };
-        let linked = linked_samples(&scoped, &selection, &[10]);
+            NodeInstanceSamples {
+                indices: vec![0, 1],
+                samples: vec![sample(0, 20.0)],
+            },
+        ];
+        let (points, plate_ids, paths) = build_joint_samples(&x, &[10, 20], &y, &[20, 30]);
+        let mut selections = PlateIndexSelections::default();
+        selections.union(30, 1, 1);
+
+        assert_eq!(points.len(), 4);
+        assert_eq!(plate_ids, vec![10, 20, 30]);
         assert_eq!(
-            linked.iter().map(|sample| sample.value).collect::<Vec<_>>(),
-            vec![2.0]
+            points
+                .iter()
+                .filter(|point| sample_is_selected(
+                    &plate_ids,
+                    &paths[point.context_instance],
+                    point.draw_index,
+                    None,
+                    Some(&selections),
+                ))
+                .count(),
+            2
         );
+    }
+
+    #[test]
+    fn raw_observations_stay_one_per_owner_row_and_ignore_broadcast_only_selections() {
+        let raw = observed_samples(&[1.0, 2.0, 3.0]);
+        let mut selections = PlateIndexSelections::default();
+        selections.union(20, 0, 2);
+        assert_eq!(raw.len(), 3);
+        assert!(linked_observed_samples(&raw, 10, Some(&selections)).is_empty());
+
+        selections.union(10, 1, 1);
+        let linked = linked_observed_samples(&raw, 10, Some(&selections));
+        assert_eq!(
+            linked,
+            vec![WeightedSample {
+                value: 2.0,
+                weight: 1.0
+            }]
+        );
+        assert_eq!(raw.len(), 3);
+    }
+
+    #[test]
+    fn clearing_linked_selections_removes_plate_and_posterior_resources() {
+        use bevy::ecs::world::CommandQueue;
+
+        let mut world = World::new();
+        world.insert_resource(SampleSelections {
+            entries: vec![SampleSelection {
+                source: SelectionSource::Histogram {
+                    node_id: 1,
+                    lower: 0.0,
+                    upper: 1.0,
+                },
+                context_plate_ids: Vec::new(),
+                context_instance_paths: vec![Vec::new()],
+                draws_by_instance: HashMap::from([(Vec::new(), HashSet::from([0]))]),
+            }],
+        });
+        let mut plate_selections = PlateIndexSelections::default();
+        plate_selections.union(10, 0, 1);
+        world.insert_resource(plate_selections);
+        let mut queue = CommandQueue::default();
+        let mut commands = Commands::new(&mut queue, &world);
+        clear_linked_selection_resources(&mut commands);
+        queue.apply(&mut world);
+
+        assert!(!world.contains_resource::<SampleSelections>());
+        assert!(!world.contains_resource::<PlateIndexSelections>());
+    }
+
+    #[test]
+    fn selecting_all_indices_builds_a_full_linked_layer() {
+        let instances = (0..3)
+            .map(|index| NodeInstanceSamples {
+                indices: vec![index],
+                samples: vec![sample(0, index as f64), sample(1, index as f64 + 0.5)],
+            })
+            .collect::<Vec<_>>();
+        let mut selections = PlateIndexSelections::default();
+        selections.union(10, 0, 2);
+        let linked = linked_samples_for_selections(&instances, None, Some(&selections), &[10]);
+
+        assert_eq!(effective_count(&linked), 6.0);
+        assert_eq!(linked.len(), pool_instance_samples(&instances).len());
+        assert_eq!(selections.selected_count(10, 3), 3);
     }
 }

@@ -1,11 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     Plate, PlateBorder, PlateBounds, PlateDraft, PlateIndexHandle, PlateIndexLabel, Selected,
 };
 use crate::bevy_to_fugue::{GraphIRResource, InferenceStatusResource};
 use crate::constants::*;
-use crate::data_vis::{HistogramSubject, OpenHistogramPanel};
+use crate::data_vis::{
+    HistogramSubject, LINKED_SELECTION_COLOR, OpenHistogramPanel, PlateIndexSelections,
+};
 use crate::nodes::{GraphNode, RandomNode, ScalarNode, SelectedIndicator};
 use crate::sidebar::ReloadSidebar;
 use bevy::prelude::*;
@@ -54,8 +56,16 @@ pub fn on_plate_drag_start(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
 ) {
     if reduced_view.active {
+        return;
+    }
+    if crate::sidebar::global::graph_change_requires_confirmation(
+        &mut commands,
+        inference_results.as_deref(),
+        Some(event.pointer_location.position),
+    ) {
         return;
     }
     let Some(position) = event.hit.position else {
@@ -224,18 +234,37 @@ pub fn update_plate_handle_colors(
     selected: Query<Entity, (With<Plate>, With<Selected>)>,
     added_handles: Query<(), Added<PlateIndexHandle>>,
     mut handles: Query<(&ChildOf, &mut Sprite), With<PlateIndexHandle>>,
-    mut previous: Local<Option<Entity>>,
+    plates: Query<&GraphNode, With<Plate>>,
+    plate_selections: Option<Res<PlateIndexSelections>>,
+    mut previous_selected: Local<Option<Entity>>,
+    mut previous_active: Local<HashSet<u32>>,
+    mut had_selection_resource: Local<bool>,
 ) {
     let selected = selected.iter().next();
-    if *previous == selected && added_handles.is_empty() {
+    let has_selection_resource = plate_selections.is_some();
+    let selections_changed = *had_selection_resource != has_selection_resource
+        || plate_selections
+            .as_ref()
+            .is_some_and(|selections| selections.is_changed());
+    if *previous_selected == selected && !selections_changed && added_handles.is_empty() {
         return;
     }
-    *previous = selected;
+    *previous_selected = selected;
+    *had_selection_resource = has_selection_resource;
+    previous_active.clear();
+    if let Some(selections) = plate_selections {
+        previous_active.extend(selections.ranges_by_plate.keys().copied());
+    }
     for (parent, mut sprite) in &mut handles {
-        sprite.color = if selected == Some(parent.parent()) {
-            Color::srgb(0.18, 0.38, 0.75)
-        } else {
-            PLATE_COLOR
+        let plate = parent.parent();
+        let has_selection = plates
+            .get(plate)
+            .is_ok_and(|id| previous_active.contains(&id.0));
+        sprite.color = match (selected == Some(plate), has_selection) {
+            (true, true) => Color::srgb(0.10, 0.58, 0.62),
+            (true, false) => Color::srgb(0.18, 0.38, 0.75),
+            (false, true) => LINKED_SELECTION_COLOR,
+            (false, false) => PLATE_COLOR,
         };
     }
 }
@@ -311,15 +340,49 @@ fn add_plate_borders(
 fn on_completed_plate_drag(
     event: On<Pointer<Drag>>,
     reduced_view: Res<super::ReducedView>,
-    mut plates: Query<(&mut Plate, &mut Transform), Without<PlateDraft>>,
+    mut commands: Commands,
+    mut plates: Query<(&GraphNode, &mut Plate, &mut Transform), Without<PlateDraft>>,
+    inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
+    graph_resource: Option<Res<crate::bevy_to_fugue::GraphIRResource>>,
+    nodes: Query<(&GraphNode, &Transform), (Without<Plate>, Without<PlateDraft>)>,
 ) {
     if reduced_view.active {
         return;
     }
-    let Ok((mut plate, mut transform)) = plates.get_mut(event.event_target()) else {
+    let Ok((plate_node, mut plate, mut transform)) = plates.get_mut(event.event_target()) else {
         return;
     };
     let delta = Vec2::new(event.delta.x, -event.delta.y);
+
+    if let (Some(results), Some(compiled)) =
+        (inference_results.as_deref(), graph_resource.as_deref())
+    {
+        let mut proposed_bounds = plate.bounds;
+        proposed_bounds.translate(delta);
+        let mut proposed_nodes = nodes
+            .iter()
+            .filter(|(_, transform)| {
+                proposed_bounds.contains_point(transform.translation.truncate())
+            })
+            .map(|(node, _)| node.0)
+            .collect::<Vec<_>>();
+        proposed_nodes.sort_unstable();
+        let changes_membership = compiled
+            .0
+            .graph()
+            .plates
+            .get(&plate_node.0)
+            .is_none_or(|compiled_plate| compiled_plate.nodes != proposed_nodes);
+        if changes_membership
+            && crate::sidebar::global::graph_change_requires_confirmation(
+                &mut commands,
+                Some(results),
+                Some(event.pointer_location.position),
+            )
+        {
+            return;
+        }
+    }
 
     plate.origin += delta;
     plate.bounds.translate(delta);
