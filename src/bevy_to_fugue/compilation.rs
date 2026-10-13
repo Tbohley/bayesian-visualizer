@@ -1,11 +1,12 @@
 use super::*;
+#[cfg(target_arch = "wasm32")]
+use crate::bayesian_core::InferenceStep;
 use crate::bayesian_core::graph_checks::ModelResult;
 use crate::bayesian_core::*;
 use crate::constants::*;
 use crate::data_vis::{
-    CloseHistogramPanel, HistogramSubject, HistogramView,
-    JointDistributionView, OpenHistogramPanel, OpenJointDistributionView, PlateIndexSelections,
-    SampleSelections,
+    CloseHistogramPanel, HistogramSubject, HistogramView, JointDistributionView,
+    OpenHistogramPanel, OpenJointDistributionView, PlateIndexSelections, SampleSelections,
 };
 use crate::graph::*;
 use crate::nodes::*;
@@ -17,19 +18,17 @@ use crate::sidebar::{
     InferenceRunButtonLabel, NumberOfSamplesTextbox, NumberOfWarmupTextbox, RandomSeedTextbox,
 };
 use crate::ui::{ErrorToast, ShowCompilationErrorMarkers};
+#[cfg(target_arch = "wasm32")]
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::tasks::{AsyncComputeTaskPool, futures::check_ready};
-#[cfg(target_arch = "wasm32")]
-use bevy::platform::time::Instant;
 use bevy::text::EditableText;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, atomic::Ordering};
 #[cfg(target_arch = "wasm32")]
 use std::time::Duration;
-#[cfg(target_arch = "wasm32")]
-use crate::bayesian_core::InferenceStep;
 
 fn node_ids_in_compilation_error(error: &str) -> Vec<u32> {
     let mut ids = HashSet::new();
@@ -172,12 +171,12 @@ pub fn global_sample(
     node_ids: Query<(Entity, &GraphNode, &Transform)>,
     graph_resource: Option<Res<GraphIRResource>>,
     old_samples: Query<(Entity, &SamplePopup)>,
-){
-    for samp in old_samples.iter(){
+) {
+    for samp in old_samples.iter() {
         commands.entity(samp.0).despawn();
     }
     let Some(compiled) = graph_resource else {
-        commands.trigger(ErrorToast{
+        commands.trigger(ErrorToast {
             text: "Graph not compiled.".to_string(),
             color: ERR_COLOR,
         });
@@ -189,7 +188,7 @@ pub fn global_sample(
     let vals = match sample_res {
         Ok(values) => values,
         Err(error) => {
-            commands.trigger(ErrorToast{
+            commands.trigger(ErrorToast {
                 text: format!("Sampling error: {error}"),
                 color: ERR_COLOR,
             });
@@ -268,8 +267,8 @@ fn display_sample(
     for node_id in order {
         let (_, _, transform) = node_ids
             .iter()
-        .find(|(_, node, _)| node.0 == node_id)
-        .expect("node not found");
+            .find(|(_, node, _)| node.0 == node_id)
+            .expect("node not found");
         let value = values
             .get(&node_id)
             .expect("sampled node val doesn't exist");
@@ -282,7 +281,7 @@ fn display_sample(
             ),
         };
 
-        commands.trigger(SampleDisplay{
+        commands.trigger(SampleDisplay {
             pos: Vec2 {
                 x: transform.translation.x,
                 y: transform.translation.y,
@@ -552,10 +551,9 @@ pub fn poll_inference_job(
                 Ok(InferenceStep::WarmupComplete {
                     negative_infinite_variables,
                 }) => {
-                    job.control.warmup_negative_infinity.store(
-                        !negative_infinite_variables.is_empty(),
-                        Ordering::Relaxed,
-                    );
+                    job.control
+                        .warmup_negative_infinity
+                        .store(!negative_infinite_variables.is_empty(), Ordering::Relaxed);
                     *job.control
                         .warmup_negative_infinity_variables
                         .lock()
@@ -831,31 +829,31 @@ pub fn sample_popup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-){
+) {
     commands
         .spawn((
-        Mesh2d(meshes.add(Rectangle::new(100., 30.))),
-        MeshMaterial2d(materials.add(ColorMaterial::from_color(SAMPLE_COLOR))),
-        SamplePopup {
-            timer: Timer::from_seconds(15.0, TimerMode::Once),
-            console_output: event.console_output.clone(),
-        },
-        Pickable {
-            should_block_lower: true,
-            is_hoverable: true,
-        },
-        Transform::from_xyz(event.pos.x, event.pos.y + 50., 99.),
-        children![(
-            Pickable::IGNORE,
-            Text2d::new(event.val.clone()),
-            TextColor(Color::WHITE),
-            TextFont {
-                font_size: FontSize::Px(14.),
-                ..text_font()
+            Mesh2d(meshes.add(Rectangle::new(100., 30.))),
+            MeshMaterial2d(materials.add(ColorMaterial::from_color(SAMPLE_COLOR))),
+            SamplePopup {
+                timer: Timer::from_seconds(15.0, TimerMode::Once),
+                console_output: event.console_output.clone(),
             },
-        )],
-    ))
-    .observe(print_plate_sample);
+            Pickable {
+                should_block_lower: true,
+                is_hoverable: true,
+            },
+            Transform::from_xyz(event.pos.x, event.pos.y + 50., 99.),
+            children![(
+                Pickable::IGNORE,
+                Text2d::new(event.val.clone()),
+                TextColor(Color::WHITE),
+                TextFont {
+                    font_size: FontSize::Px(14.),
+                    ..text_font()
+                },
+            )],
+        ))
+        .observe(print_plate_sample);
 }
 
 fn first_scalar(value: &ModelResult) -> Option<f64> {
@@ -899,75 +897,77 @@ pub fn compile_ir(
 ) -> Result<GraphIR, String> {
     let mut graph = GraphIR::new();
 
-    let param_to_ir = |param: &ParamValue| -> Result<ParamIR, String> {
-        let entity = param
-            .1
-            .ok_or_else(|| "A node has unspecified parameters!".to_string())?;
+    let param_to_ir = |param: &ParamValue| -> Result<ParamIR, ()> {
+        // The sidebar presents both an empty parameter and a stale reference to
+        // a deleted entity as "Pick a node", so compilation should report both
+        // as the same user-facing validation error.
+        let entity = param.1.ok_or(())?;
+        let node_id = node_ids.get(entity).map_err(|_| ())?.1.0;
 
-        let node_id = node_ids
-            .get(entity)
-            .map_err(|_| "Parameter references a missing node!".to_string())?
-            .1
-            .0;
-    
         Ok(ParamIR { from_node: node_id })
     };
 
-    for (entity, rand) in rand_nodes.into_iter(){
+    for (entity, rand) in rand_nodes.into_iter() {
         let node = node_ids
             .get(entity)
-        .map_err(|_| "Node is missing its GraphNode ID")?
-        .1;
+            .map_err(|_| "Node is missing its GraphNode ID")?
+            .1;
         let params = rand
             .params
             .iter()
             .map(|param| {
-                param_to_ir(param).map_err(|error| format!("node {}: {error}", node.0))
+                param_to_ir(param).map_err(|()| {
+                    format!(
+                        "node {} has an unassigned parameter!",
+                        random_node_label(rand, node.0)
+                    )
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         graph.nodes.insert(
             node.0,
             NodeIR::Random {
-            id: node.0,
-            label: rand.name.clone(),
-            dist_type: rand.dist_type.clone(),
-            params: params,
+                id: node.0,
+                label: rand.name.clone(),
+                dist_type: rand.dist_type.clone(),
+                params: params,
             },
         );
     }
 
-    for (entity, compute) in compute_nodes.into_iter(){
+    for (entity, compute) in compute_nodes.into_iter() {
         let node = node_ids
             .get(entity)
-        .map_err(|_| "Node is missing its GraphNode ID")?
-        .1;
+            .map_err(|_| "Node is missing its GraphNode ID")?
+            .1;
         let params = compute
             .params
             .iter()
             .map(|param| {
-                param_to_ir(param).map_err(|error| format!("node {}: {error}", node.0))
+                param_to_ir(param)
+                    .map_err(|()| format!("node {} has an unassigned parameter!", compute.label()))
             })
             .collect::<Result<Vec<_>, _>>()?;
         graph.nodes.insert(
             node.0,
             NodeIR::Compute {
-            id: node.0,
-            operation: compute.operation,
-            params: params,
+                id: node.0,
+                operation: compute.operation,
+                params: params,
             },
         );
     }
 
-    for (entity, scalar) in scalar_nodes.into_iter(){
+    for (entity, scalar) in scalar_nodes.into_iter() {
         let node = node_ids
             .get(entity)
-        .map_err(|_| "Node is missing its GraphNode ID")?
-        .1;
+            .map_err(|_| "Node is missing its GraphNode ID")?
+            .1;
         graph.nodes.insert(
             node.0,
             NodeIR::Scalar {
-            id: node.0,
-            value: scalar.val,
+                id: node.0,
+                value: scalar.val,
             },
         );
     }

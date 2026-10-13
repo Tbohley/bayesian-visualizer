@@ -1,0 +1,160 @@
+/*
+ * Structural responsive rules for content created by the visual page editor.
+ * This stays separate from editor-managed inline CSS so saving index.html
+ * cannot accidentally erase these safeguards.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+/* Keep the non-editable Bevy shell stable when the visual editor rewrites
+   its inline CSS. Leave a small article preview below the fold. */
+.visualizer-viewport {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - 80px);
+  height: calc(100svh - 80px);
+  min-height: min(32rem, calc(100svh - 80px));
+  background: #fff;
+}
+
+#bayesian-visualizer {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+#loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #202734;
+  font: 500 1rem/1.4 system-ui, sans-serif;
+  pointer-events: none;
+}
+
+#loading.device-message {
+  padding: 2rem;
+  text-align: center;
+}
+
+article {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+article *,
+.site-header * {
+  min-width: 0;
+}
+
+article img,
+article video,
+article iframe,
+article svg,
+article canvas {
+  display: block;
+  max-width: 100% !important;
+}
+
+article img,
+article video,
+article canvas {
+  height: auto !important;
+  aspect-ratio: auto !important;
+  object-fit: contain;
+}
+
+article video,
+article iframe {
+  width: 100%;
+}
+
+.responsive-row,
+#i98uew {
+  display: flex;
+  align-items: stretch;
+  gap: 1rem;
+  width: 100%;
+  max-width: 100%;
+}
+
+.responsive-row > *,
+#i98uew > * {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Replaced media must not stretch to the height of adjacent flex content. */
+.responsive-row > img,
+.responsive-row > picture,
+.responsive-row > video,
+#i98uew > img,
+#i98uew > picture,
+#i98uew > video {
+  align-self: flex-start;
+  /* Keep media inside its allotted column instead of letting its intrinsic
+     width cover adjacent text. Equal flex columns also remain editable. */
+  flex: 1 1 0;
+  width: 100% !important;
+  min-width: 0;
+  height: auto !important;
+  aspect-ratio: auto !important;
+  object-fit: contain;
+}
+
+.responsive-row > .column-wide {
+  flex-grow: 2;
+}
+
+.responsive-media {
+  align-items: center;
+  gap: 2rem;
+}
+
+.responsive-media > img {
+  width: 50%;
+}
+
+@media (max-width: 38rem) {
+  article {
+    overflow-wrap: anywhere;
+  }
+
+  article img,
+  article video,
+  article iframe,
+  article svg,
+  article canvas {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  .responsive-row,
+  #i98uew,
+  article [style*="display: flex"],
+  article [style*="display:flex"] {
+    flex-direction: column !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .responsive-row > *,
+  #i98uew > *,
+  .responsive-media > img {
+    width: 100% !important;
+    flex-basis: auto !important;
+  }
+}

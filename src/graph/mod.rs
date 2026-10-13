@@ -12,8 +12,8 @@ pub use reduced_view::*;
 use bevy::prelude::*;
 
 //on links between nodes
-#[derive(Component)]    
-pub struct GraphLink{
+#[derive(Component)]
+pub struct GraphLink {
     pub from: Entity,
     pub to: Option<Entity>,
 }
@@ -33,7 +33,7 @@ pub struct PlateBounds {
 }
 
 #[derive(Clone, Debug)]
-pub struct Dataset{
+pub struct Dataset {
     pub name: String,
     pub n: usize,
     pub data: HashMap<String, Vec<f64>>,

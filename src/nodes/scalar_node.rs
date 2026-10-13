@@ -78,21 +78,21 @@ pub fn replace_node_label(
         }
     }
 
-        commands.entity(node_entity).with_child((
-            NodeLabel,
-            Text2d::new(label_text.clone()),
-            TextColor(NODE_NAME_COLOR),
-            TextFont {
-                font_size: match &label_text.len() {
-                    n if *n > 1 => px(NODE_LABEL_FONT_SIZE_SMALL).into(),
-                    _ => px(NODE_LABEL_FONT_SIZE).into(),
-                },
-                ..text_font()
+    commands.entity(node_entity).with_child((
+        NodeLabel,
+        Text2d::new(label_text.clone()),
+        TextColor(NODE_NAME_COLOR),
+        TextFont {
+            font_size: match &label_text.len() {
+                n if *n > 1 => px(NODE_LABEL_FONT_SIZE_SMALL).into(),
+                _ => px(NODE_LABEL_FONT_SIZE).into(),
             },
-            Pickable::IGNORE,
-            Transform::from_xyz(0.0, 0.0, 2.0),
-        ));
-    }
+            ..text_font()
+        },
+        Pickable::IGNORE,
+        Transform::from_xyz(0.0, 0.0, 2.0),
+    ));
+}
 
 pub fn replace_scalar_label(
     commands: &mut Commands,

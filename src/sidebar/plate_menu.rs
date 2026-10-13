@@ -1,4 +1,7 @@
-use std::{collections::{HashMap, HashSet}, error::Error};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+};
 
 use super::*;
 
@@ -25,7 +28,7 @@ impl Dataset {
     }
 }
 
-impl Plate{
+impl Plate {
     pub fn build(
         &mut self,
         commands: &mut Commands,
@@ -73,43 +76,43 @@ impl Plate{
             TextColor(NODE_NAME_COLOR),
         ));
 
-    //spawn context menu
+        //spawn context menu
         let context_menu = commands
             .spawn((
-        Name::new("dataset_context_menu"),
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(4).bottom(),
-            ..default()
-        },
-        BorderColor::all(Color::BLACK),
-        BackgroundColor(Color::BLACK),
-        children![(
-            Pickable::IGNORE,
-            Text::new(self.data.name.clone()),
-            text_font(),
-            TextColor(Color::WHITE),
-            TextShadow::default(),
-        )],
+                Name::new("dataset_context_menu"),
+                Button,
+                Node {
+                    width: px(SIDEBAR_WIDTH * 0.75),
+                    height: px(30),
+                    border: UiRect::all(px(5)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border_radius: BorderRadius::MAX,
+                    margin: px(4).bottom(),
+                    ..default()
+                },
+                BorderColor::all(Color::BLACK),
+                BackgroundColor(Color::BLACK),
+                children![(
+                    Pickable::IGNORE,
+                    Text::new(self.data.name.clone()),
+                    text_font(),
+                    TextColor(Color::WHITE),
+                    TextShadow::default(),
+                )],
             ))
             .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
-        event.propagate(false);
-        println!("Clicked context menu");
-        debug!("click: {}", event.pointer_location.position);
+                event.propagate(false);
+                println!("Clicked context menu");
+                debug!("click: {}", event.pointer_location.position);
 
-        commands.trigger(OpenDatasetMenu {
-            pos: event.pointer_location.position,
-        });
+                commands.trigger(OpenDatasetMenu {
+                    pos: event.pointer_location.position,
+                });
             })
             .id();
-    commands.entity(sidebar_entity).add_child(context_menu);
-    commands.entity(sidebar_entity).with_child(divider());
+        commands.entity(sidebar_entity).add_child(context_menu);
+        commands.entity(sidebar_entity).with_child(divider());
 
         if self.data.data.is_empty() {
             let extent = commands
@@ -181,17 +184,17 @@ impl Plate{
             let mapping_menu = selector_button(commands, "plate_mapping_context_menu", &mapping)
                 .observe(
                     move |mut event: On<Pointer<Press>>, mut commands: Commands| {
-                    event.propagate(false);
-                    commands.trigger(OpenPlateMappingMenu {
-                        pos: event.pointer_location.position,
-                        node: entity,
-                    });
+                        event.propagate(false);
+                        commands.trigger(OpenPlateMappingMenu {
+                            pos: event.pointer_location.position,
+                            node: entity,
+                        });
                     },
                 )
                 .id();
             commands.entity(sidebar_entity).add_child(mapping_menu);
         }
-        
+
         commands.entity(sidebar_entity).with_child(divider());
     }
 }

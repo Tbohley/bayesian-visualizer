@@ -496,15 +496,15 @@ fn spawn_preset(
         endpoint_shapes.insert(
             entity,
             match node {
-            PresetNode::Random { id, name, .. } => {
-                let label = name.map(str::to_string).unwrap_or_else(|| id.to_string());
-                EndpointShape::horizontal_capsule(
-                    RANDOM_NODE_RAD,
-                    random_node_straight_length(&label),
-                )
-            }
-            PresetNode::Compute { .. } => EndpointShape::circle(COMPUTE_NODE_RAD),
-            PresetNode::Scalar { .. } => EndpointShape::circle(SCALAR_NODE_RAD),
+                PresetNode::Random { id, name, .. } => {
+                    let label = name.map(str::to_string).unwrap_or_else(|| id.to_string());
+                    EndpointShape::horizontal_capsule(
+                        RANDOM_NODE_RAD,
+                        random_node_straight_length(&label),
+                    )
+                }
+                PresetNode::Compute { .. } => EndpointShape::circle(COMPUTE_NODE_RAD),
+                PresetNode::Scalar { .. } => EndpointShape::circle(SCALAR_NODE_RAD),
             },
         );
     }

@@ -1,10 +1,10 @@
 use super::graph_checks::{ModelResult, ModelValues};
 use super::model_compilation::CompiledGraph;
 use fugue::{
-    adaptive_single_site_mh, Address, Choice, ChoiceValue, DiminishingAdaptation, Distribution,
-    Handler, PriorHandler, SafeReplayHandler, ScoreGivenTrace, Trace,
+    Address, Choice, ChoiceValue, DiminishingAdaptation, Distribution, Handler, PriorHandler,
+    SafeReplayHandler, ScoreGivenTrace, Trace, adaptive_single_site_mh,
 };
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, rngs::StdRng};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// All retained posterior executions and their Fugue traces.
@@ -31,9 +31,16 @@ pub struct ControlledInferenceResult {
 /// which lets single-threaded hosts (notably browsers) return to their event
 /// loop between MCMC transitions.
 pub enum InferenceStep {
-    Warmup { completed: usize },
-    WarmupComplete { negative_infinite_variables: Vec<String> },
-    Sample { draw_index: usize, values: ModelValues },
+    Warmup {
+        completed: usize,
+    },
+    WarmupComplete {
+        negative_infinite_variables: Vec<String>,
+    },
+    Sample {
+        draw_index: usize,
+        values: ModelValues,
+    },
     Complete(ControlledInferenceResult),
 }
 
@@ -92,7 +99,10 @@ impl AddressedScoreGivenTrace {
 
 impl Handler for AddressedScoreGivenTrace {
     fn on_sample_f64(&mut self, addr: &Address, dist: &dyn Distribution<f64>) -> f64 {
-        let value = self.base.get_f64(addr).expect("missing f64 sample in warmup trace");
+        let value = self
+            .base
+            .get_f64(addr)
+            .expect("missing f64 sample in warmup trace");
         let logp = dist.log_prob(&value);
         self.trace.log_prior += logp;
         self.record(addr, ChoiceValue::F64(value), logp);
@@ -204,18 +214,14 @@ impl CompiledGraph {
         mut on_warmup_complete: impl FnMut(Vec<String>),
         mut on_sample: impl FnMut(usize, &ModelValues),
     ) -> Result<ControlledInferenceResult, String> {
-        let mut runner = self
-            .clone()
-            .inference_runner(seed, n_samples, n_warmup)?;
+        let mut runner = self.clone().inference_runner(seed, n_samples, n_warmup)?;
         loop {
             match runner.step(should_cancel())? {
                 InferenceStep::Warmup { completed } => on_warmup(completed),
                 InferenceStep::WarmupComplete {
                     negative_infinite_variables,
                 } => on_warmup_complete(negative_infinite_variables),
-                InferenceStep::Sample { draw_index, values } => {
-                    on_sample(draw_index, &values)
-                }
+                InferenceStep::Sample { draw_index, values } => on_sample(draw_index, &values),
                 InferenceStep::Complete(outcome) => return Ok(outcome),
             }
         }
@@ -525,9 +531,7 @@ mod tests {
 
     #[test]
     fn incremental_runner_stops_at_every_cooperative_boundary() {
-        let mut runner = simple_random_graph()
-            .inference_runner(42, 2, 2)
-            .unwrap();
+        let mut runner = simple_random_graph().inference_runner(42, 2, 2).unwrap();
 
         assert!(matches!(
             runner.step(false).unwrap(),

@@ -1,14 +1,18 @@
-use bevy::{asset::RenderAssetUsages, mesh::{Indices, PrimitiveTopology}, prelude::*};
-use crate::graph::{Plate, UnfinishedLink};
-use crate::data_vis::HistogramView;
-use crate::nodes::GraphNode;
 use crate::ERR_BORDER_COLOR;
+use crate::data_vis::HistogramView;
+use crate::graph::{Plate, UnfinishedLink};
+use crate::nodes::GraphNode;
 use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage};
+use bevy::{
+    asset::RenderAssetUsages,
+    mesh::{Indices, PrimitiveTopology},
+    prelude::*,
+};
 
 #[derive(Event)]
 pub struct ErrorToast {
     pub text: String,
-    pub color: Color
+    pub color: Color,
 }
 
 #[derive(Event)]
@@ -72,14 +76,15 @@ fn set_cursor_image(
     commands: &mut Commands,
     window_entity: Entity,
     cursor_assets: &CursorAssets,
-    state: GraphCursorState
+    state: GraphCursorState,
 ) {
-    commands.entity(window_entity).insert(CursorIcon::Custom(
-        CustomCursor::Image(CustomCursorImage {
+    commands
+        .entity(window_entity)
+        .insert(CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
             handle: match state {
                 GraphCursorState::ShiftHeld => cursor_assets.shift_held.clone(),
                 GraphCursorState::FinishLink => cursor_assets.finish_link.clone(),
-                GraphCursorState::Default => cursor_assets.shift_held.clone()
+                GraphCursorState::Default => cursor_assets.shift_held.clone(),
             },
             texture_atlas: None,
             flip_x: false,
@@ -88,10 +93,9 @@ fn set_cursor_image(
             hotspot: match state {
                 GraphCursorState::ShiftHeld => (16, 1),
                 GraphCursorState::FinishLink => (16, 11),
-                _ => (0, 0)
+                _ => (0, 0),
             },
-        }),
-    ));
+        })));
 }
 
 pub fn update_graph_cursor(
@@ -120,7 +124,7 @@ pub fn update_graph_cursor(
                 &mut commands,
                 *window,
                 &asset_server,
-                GraphCursorState::ShiftHeld
+                GraphCursorState::ShiftHeld,
             );
         }
         GraphCursorState::FinishLink => {
@@ -128,12 +132,11 @@ pub fn update_graph_cursor(
                 &mut commands,
                 *window,
                 &asset_server,
-                GraphCursorState::FinishLink
+                GraphCursorState::FinishLink,
             );
         }
     }
 }
-
 
 pub fn selection_indicator(inner_radius: f32) -> Mesh {
     let outer_radius = inner_radius + 6.0;
@@ -157,8 +160,8 @@ pub fn selection_indicator(inner_radius: f32) -> Mesh {
 
         for i in 0..segments_per_arc {
             let i = i as u32;
-            let inner_cur  = base + i * 2;
-            let outer_cur  = base + i * 2 + 1;
+            let inner_cur = base + i * 2;
+            let outer_cur = base + i * 2 + 1;
             let inner_next = base + i * 2 + 2;
             let outer_next = base + i * 2 + 3;
             indices.extend_from_slice(&[inner_cur, outer_cur, inner_next]);
@@ -250,29 +253,19 @@ fn capsule_perimeter_point(
     } else if distance < straight + arc {
         let progress = (distance - straight) / arc;
         let angle = std::f32::consts::FRAC_PI_2 - progress * std::f32::consts::PI;
-        Vec2::new(
-            half_straight + radius * angle.cos(),
-            radius * angle.sin(),
-        )
+        Vec2::new(half_straight + radius * angle.cos(), radius * angle.sin())
     } else if distance < 2.0 * straight + arc {
         let progress = (distance - straight - arc) / straight.max(f32::EPSILON);
         Vec2::new(half_straight - progress * straight, -radius)
     } else {
         let progress = (distance - 2.0 * straight - arc) / arc;
         let angle = -std::f32::consts::FRAC_PI_2 - progress * std::f32::consts::PI;
-        Vec2::new(
-            -half_straight + radius * angle.cos(),
-            radius * angle.sin(),
-        )
+        Vec2::new(-half_straight + radius * angle.cos(), radius * angle.sin())
     };
     [point.x, point.y, 0.0]
 }
 
-
-pub fn throw_err(
-    event: On<ErrorToast>,
-    mut commands: Commands,
-) {
+pub fn throw_err(event: On<ErrorToast>, mut commands: Commands) {
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,

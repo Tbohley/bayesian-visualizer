@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use bevy::prelude::*;
 use super::*;
-use crate::nodes::{*};
+use crate::nodes::*;
+use bevy::prelude::*;
 
 //fn get_ents_and_labels
 /*
@@ -28,12 +28,7 @@ pub fn get_ents_and_labels(
 
                 Some((
                     link.from,
-                    node_expression(
-                        link.from,
-                        node_data,
-                        &mut visiting,
-                        false,
-                    ),
+                    node_expression(link.from, node_data, &mut visiting, false),
                 ))
             } else {
                 None
@@ -76,9 +71,7 @@ pub fn build_link_param_selector(
     param_num: usize,
     sidebar_entity: &Entity,
 ) {
-    let param = params
-        .get(param_num)
-        .expect("invalid param_num");
+    let param = params.get(param_num).expect("invalid param_num");
 
     let param_name = param.0;
     let param_entity = param.1;
@@ -92,76 +85,78 @@ pub fn build_link_param_selector(
         })
         .unwrap_or_else(|| "Pick a link".to_string());
 
-    let context_root = commands.spawn((
-        Node {
-            width: percent(100.),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(4.),
-            margin: px(8.).bottom(),
-            ..default()
-        },
-        Name::new(format!("param_row_{}", param_name)),
-        children![
-            (
+    let context_root = commands
+        .spawn((
+            Node {
+                width: percent(100.),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(4.),
+                margin: px(8.).bottom(),
+                ..default()
+            },
+            Name::new(format!("param_row_{}", param_name)),
+            children![(
                 Text::new(param_name),
                 text_font(),
                 TextColor(NODE_NAME_COLOR),
             )],
-    )).id();
+        ))
+        .id();
 
-    let button = commands.spawn((
-        Name::new(format!("param_{}_context_menu", param_name)),
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(60),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            ..default()
-        },
-        BorderColor::all(Color::BLACK),
-        BackgroundColor(Color::BLACK),
-        children![(
-            Pickable::IGNORE,
-            Text::new(param_label),
-            text_font(),
-            TextColor(Color::WHITE),
-            TextShadow::default(),
-        )],
-    ))
-    .observe(move |mut event: On<Pointer<Press>>, mut commands: Commands| {
-        event.propagate(false);
+    let button = commands
+        .spawn((
+            Name::new(format!("param_{}_context_menu", param_name)),
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(60),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            BorderColor::all(Color::BLACK),
+            BackgroundColor(Color::BLACK),
+            children![(
+                Pickable::IGNORE,
+                Text::new(param_label),
+                text_font(),
+                TextColor(Color::WHITE),
+                TextShadow::default(),
+            )],
+        ))
+        .observe(
+            move |mut event: On<Pointer<Press>>, mut commands: Commands| {
+                event.propagate(false);
 
-        commands.trigger(OpenParamLinkMenu {
-            pos: event.pointer_location.position,
-            param_num,
-        });
-    })
-    .id();
+                commands.trigger(OpenParamLinkMenu {
+                    pos: event.pointer_location.position,
+                    param_num,
+                });
+            },
+        )
+        .id();
     commands.entity(context_root).add_child(button);
 
     commands.entity(*sidebar_entity).add_child(context_root);
 }
 
-
 pub fn on_open_param_link_menu(
     event: On<OpenParamLinkMenu>,
     mut commands: Commands,
-    node_data: Query<(Option<&RandomNode>, Option<&ScalarNode>, Option<&ComputeNode>)>,
+    node_data: Query<(
+        Option<&RandomNode>,
+        Option<&ScalarNode>,
+        Option<&ComputeNode>,
+    )>,
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     plates: Query<&Plate>,
     selected: Single<(Entity, &Selected, &GraphNode)>,
 ) {
     let (node, _selected_comp, _graphnode) = selected.into_inner();
 
-    let mut link_labels = get_ents_and_labels(
-        &mut commands,
-        &node_data,
-        &finished_links,
-        node,
-    );
+    let mut link_labels = get_ents_and_labels(&mut commands, &node_data, &finished_links, node);
     let observed_columns = plates
         .iter()
         .flat_map(|plate| plate.mapping.iter())
@@ -211,24 +206,16 @@ pub fn on_open_param_link_menu(
         return;
     }
     for (ent, text) in link_labels.iter() {
-        let child = param_context_item(
-            text.clone(),
-            *ent,
-            event.param_num,
-        );
+        let child = param_context_item(text.clone(), *ent, event.param_num);
 
         commands.entity(menu).with_child(child);
     }
 }
 
-pub fn param_context_item(
-    text: String,
-    entity: Entity,
-    param_num: usize,
-) -> impl Bundle {
+pub fn param_context_item(text: String, entity: Entity, param_num: usize) -> impl Bundle {
     (
         Name::new(format!("item-{text}")),
-        ParamMenuItem{
+        ParamMenuItem {
             label: text.clone(),
             entity,
             param_num,
@@ -283,11 +270,7 @@ fn on_pick_param(
         if let Some(param) = random_node.params.get_mut(item.param_num) {
             param.1 = Some(item.entity);
 
-            println!(
-                "Set RandomNode param '{}' to {}",
-                param.0,
-                item.label,
-            );
+            println!("Set RandomNode param '{}' to {}", param.0, item.label,);
 
             commands.trigger(CloseContextMenus);
             commands.trigger(ReloadSidebar);
@@ -300,11 +283,7 @@ fn on_pick_param(
     if let Ok(mut compute_node) = compute_nodes.get_mut(selected_entity) {
         if let Some(param) = compute_node.params.get_mut(item.param_num) {
             param.1 = Some(item.entity);
-            println!(
-                "Set ComputeNode param '{}' to {}",
-                param.0,
-                item.label,
-            );
+            println!("Set ComputeNode param '{}' to {}", param.0, item.label,);
             commands.trigger(CloseContextMenus);
             commands.trigger(ReloadSidebar);
             return;
@@ -319,7 +298,6 @@ fn on_pick_param(
 //and both work exactly the same regardless of if it's a compute or random node being selected.
 
 //except thats not how systems work you dumbass, and now this is spaghetti. bruh. oh well. if it works.
-
 
 //helpers
 fn node_expression(
@@ -343,12 +321,7 @@ fn node_expression(
             } else if let Some(scalar_node) = scalar_node {
                 scalar_label(scalar_node)
             } else if let Some(compute_node) = compute_node {
-                compute_expression(
-                    compute_node,
-                    node_data,
-                    visiting,
-                    nested_inside_operation,
-                )
+                compute_expression(compute_node, node_data, visiting, nested_inside_operation)
             } else {
                 "?".to_string()
             }
@@ -362,10 +335,7 @@ fn node_expression(
 }
 
 fn random_short_label(random_node: &RandomNode) -> String {
-    random_node
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("var"))
+    random_node.name.clone().unwrap_or_else(|| format!("var"))
 }
 
 fn scalar_label(scalar_node: &ScalarNode) -> String {
@@ -394,7 +364,7 @@ fn compute_expression(
     nested_inside_operation: bool,
 ) -> String {
     let expression = match &compute_node.operation {
-        Operation::Add => infix_expression(compute_node," + ",node_data,visiting),
+        Operation::Add => infix_expression(compute_node, " + ", node_data, visiting),
         Operation::Subtract => infix_expression(compute_node, " - ", node_data, visiting),
         Operation::Multiply => infix_expression(compute_node, " * ", node_data, visiting),
         Operation::Divide => infix_expression(compute_node, " / ", node_data, visiting),
@@ -428,8 +398,8 @@ fn infix_expression(
     )>,
     visiting: &mut HashSet<Entity>,
 ) -> String {
-    let left = infix_arg_expression(compute_node,0,node_data, visiting,);
-    let right = infix_arg_expression(compute_node,1,node_data, visiting,);
+    let left = infix_arg_expression(compute_node, 0, node_data, visiting);
+    let right = infix_arg_expression(compute_node, 1, node_data, visiting);
     format!("{left}{operator}{right}")
 }
 

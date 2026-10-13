@@ -1,19 +1,16 @@
 pub mod compilation;
-use bevy::prelude::*;
-#[cfg(not(target_arch = "wasm32"))]
-use bevy::tasks::Task;
-use crate::bayesian_core::{
-    graph_checks::ModelValues, CompiledGraph, InferenceResult,
-};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::bayesian_core::ControlledInferenceResult;
 #[cfg(target_arch = "wasm32")]
 use crate::bayesian_core::InferenceRunner;
+use crate::bayesian_core::{CompiledGraph, InferenceResult, graph_checks::ModelValues};
+use bevy::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+use bevy::tasks::Task;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicUsize},
 };
-
 
 #[derive(Resource)]
 pub struct GraphIRResource(pub CompiledGraph);
@@ -83,14 +80,14 @@ pub struct InferenceJob {
 pub struct TriggerCompilation;
 
 #[derive(Event)]
-pub struct SampleDisplay{
+pub struct SampleDisplay {
     pos: Vec2,
     val: String,
     console_output: Option<String>,
 }
 
 #[derive(Component)]
-pub struct SamplePopup{
+pub struct SamplePopup {
     pub timer: Timer,
     pub console_output: Option<String>,
 }

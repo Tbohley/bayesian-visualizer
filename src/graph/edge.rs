@@ -1,15 +1,14 @@
+use crate::bevy_to_fugue::{GraphIRResource, InferenceResultResource};
 use crate::constants::*;
 use crate::graph::*;
 use crate::nodes::{
-    ComputeNode, GraphNode, RandomNode, ScalarNode, random_node_label,
-    random_node_straight_length,
+    ComputeNode, GraphNode, RandomNode, ScalarNode, random_node_label, random_node_straight_length,
 };
+use crate::sidebar::global::graph_change_requires_confirmation;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::Indices;
 use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
-use crate::bevy_to_fugue::{GraphIRResource, InferenceResultResource};
-use crate::sidebar::global::graph_change_requires_confirmation;
 
 //update arrow transforms connecting to dragged node
 pub fn on_node_drag(
@@ -90,7 +89,8 @@ pub fn on_node_drag(
                 &mut meshes,
                 from_shape,
                 to_shape,
-            ).unwrap();
+            )
+            .unwrap();
             if let Ok(mut link_transform) = transforms.get_mut(link_entity) {
                 if let Ok(mut link_mesh) = mesh_query.get_mut(link_entity) {
                     *link_transform = new_transform;
@@ -138,13 +138,7 @@ pub fn refresh_links_for_resized_random_nodes(
             &scalar_nodes,
             &node_ids,
         );
-        let to_shape = endpoint_shape(
-            to,
-            &random_nodes,
-            &compute_nodes,
-            &scalar_nodes,
-            &node_ids,
-        );
+        let to_shape = endpoint_shape(to, &random_nodes, &compute_nodes, &scalar_nodes, &node_ids);
         let (translation, rotation, length) = link_geometry(
             from_transform.translation,
             to_transform.translation,
@@ -217,12 +211,7 @@ pub fn spawn_link_visual<B: Bundle>(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
 ) -> Entity {
-    let (translation, rotation, length) = link_geometry(
-        from_pos,
-        to_pos,
-        from_shape,
-        to_shape,
-    );
+    let (translation, rotation, length) = link_geometry(from_pos, to_pos, from_shape, to_shape);
     commands
         .spawn((
             marker,
@@ -250,12 +239,7 @@ pub fn link_transform_helper(
     let from_pos = transforms.get(link.from).ok()?.translation;
     let to_pos = transforms.get(to).ok()?.translation;
 
-    let (translation, rotation, length) = link_geometry(
-        from_pos,
-        to_pos,
-        from_shape,
-        to_shape,
-    );
+    let (translation, rotation, length) = link_geometry(from_pos, to_pos, from_shape, to_shape);
 
     Some((
         (Transform {
@@ -307,8 +291,7 @@ impl EndpointShape {
         // Otherwise intersect the circle centered at the relevant end of the
         // capsule's straight section.
         let discriminant =
-            (self.radius * self.radius - half_straight.powi(2) * direction.y.powi(2))
-                .max(0.0);
+            (self.radius * self.radius - half_straight.powi(2) * direction.y.powi(2)).max(0.0);
         half_straight * direction.x.abs() + discriminant.sqrt()
     }
 }
@@ -326,10 +309,7 @@ pub fn endpoint_shape(
         EndpointShape::circle(COMPUTE_NODE_RAD)
     } else if let (Ok(random), Ok(node_id)) = (random_nodes.get(entity), node_ids.get(entity)) {
         let label = random_node_label(random, node_id.0);
-        EndpointShape::horizontal_capsule(
-            RANDOM_NODE_RAD,
-            random_node_straight_length(&label),
-        )
+        EndpointShape::horizontal_capsule(RANDOM_NODE_RAD, random_node_straight_length(&label))
     } else {
         EndpointShape::circle(RANDOM_NODE_RAD)
     }

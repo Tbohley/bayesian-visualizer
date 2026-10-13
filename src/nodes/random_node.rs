@@ -94,11 +94,7 @@ pub fn random_selection_mesh(label: &str) -> Mesh {
 
 /// Length of the straight middle section of a random node's capsule.
 pub fn random_node_straight_length(label: &str) -> f32 {
-    label
-        .chars()
-        .count()
-        .saturating_sub(1) as f32
-        * RANDOM_NODE_NAME_ADVANCE
+    label.chars().count().saturating_sub(1) as f32 * RANDOM_NODE_NAME_ADVANCE
 }
 
 //store parameters for distributions plus a valid default value

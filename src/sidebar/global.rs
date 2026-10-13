@@ -165,70 +165,70 @@ fn menu_item(text: &str) -> impl Bundle {
 struct NodeTypeButtonLabel;
 
 pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &GlobalSidebar)>) {
-    for (sidebar_entity, _comp) in global.iter(){
+    for (sidebar_entity, _comp) in global.iter() {
         commands.entity(sidebar_entity).despawn();
     }
     let global_sidebar_entity = commands
         .spawn((
-        GlobalSidebar,
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(0.),
-            top: px(0.),
-            width: px(SIDEBAR_WIDTH),
-            height: percent(100.),
-            flex_direction: FlexDirection::Column,
-            padding: px(16).all(),
-            ..default()
-        },
+            GlobalSidebar,
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0.),
+                top: px(0.),
+                width: px(SIDEBAR_WIDTH),
+                height: percent(100.),
+                flex_direction: FlexDirection::Column,
+                padding: px(16).all(),
+                ..default()
+            },
             BackgroundColor(DARK_GREY.into()),
         ))
         .observe(
-        //sidebar observes clicks to close distribution context menu
-        |_: On<Pointer<Press>>, mut commands: Commands| {
-            commands.trigger(CloseContextMenus);
+            //sidebar observes clicks to close distribution context menu
+            |_: On<Pointer<Press>>, mut commands: Commands| {
+                commands.trigger(CloseContextMenus);
             },
         )
         .id();
     commands.entity(global_sidebar_entity).with_child((
-            Text::new("Bayesian Visualizer"),
-            text_font(),
-            Node {
-                margin: px(16).bottom(),
-                ..default()
-            },
-            TextColor(NODE_NAME_COLOR),
-        ));
+        Text::new("Bayesian Visualizer"),
+        text_font(),
+        Node {
+            margin: px(16).bottom(),
+            ..default()
+        },
+        TextColor(NODE_NAME_COLOR),
+    ));
 
     let load_preset_button = commands
         .spawn((
-        Name::new("load_preset_button"),
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(4).bottom(),
-            ..default()
-        },
-        BorderColor::all(BUTTON_COLOR),
-        BackgroundColor(BUTTON_COLOR),
-        children![(
-            Pickable::IGNORE,
-            Text::new("Load preset"),
-            text_font(),
-            TextColor(Color::WHITE),
-            TextShadow::default(),
-        )],
+            Name::new("load_preset_button"),
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                margin: px(4).bottom(),
+                ..default()
+            },
+            BorderColor::all(BUTTON_COLOR),
+            BackgroundColor(BUTTON_COLOR),
+            children![(
+                Pickable::IGNORE,
+                Text::new("Load preset"),
+                text_font(),
+                TextColor(Color::WHITE),
+                TextShadow::default(),
+            )],
         ))
         .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
-        event.propagate(false);
-        commands.trigger(OpenPresetMenu {
-            pos: event.pointer_location.position,
-        });
+            event.propagate(false);
+            commands.trigger(OpenPresetMenu {
+                pos: event.pointer_location.position,
+            });
         })
         .id();
     commands
@@ -237,32 +237,32 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
 
     let reduced_view_button = commands
         .spawn((
-        Name::new("reduced_view_button"),
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(4).bottom(),
-            ..default()
-        },
-        BorderColor::all(BUTTON_COLOR),
-        BackgroundColor(BUTTON_COLOR),
-        children![(
-            ReducedViewButtonLabel,
-            Pickable::IGNORE,
-            Text::new("Reduced view"),
-            text_font(),
-            TextColor(Color::WHITE),
-            TextShadow::default(),
-        )],
+            Name::new("reduced_view_button"),
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                margin: px(4).bottom(),
+                ..default()
+            },
+            BorderColor::all(BUTTON_COLOR),
+            BackgroundColor(BUTTON_COLOR),
+            children![(
+                ReducedViewButtonLabel,
+                Pickable::IGNORE,
+                Text::new("Reduced view"),
+                text_font(),
+                TextColor(Color::WHITE),
+                TextShadow::default(),
+            )],
         ))
         .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
-        event.propagate(false);
-        commands.trigger(ToggleReducedView);
+            event.propagate(false);
+            commands.trigger(ToggleReducedView);
         })
         .id();
     commands
@@ -283,62 +283,62 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
 
     let nodemode_menu = commands
         .spawn((
-        Name::new("node_mode_context_menu"),
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(4).bottom(),
-            ..default()
-        },
-        BorderColor::all(Color::BLACK),
-        BackgroundColor(Color::BLACK),
-        children![(
-            NodeTypeButtonLabel,
-            Pickable::IGNORE,
-            Text::new("Random"),
-            text_font(),
-            TextColor(Color::WHITE),
-            TextShadow::default(),
-        )],
+            Name::new("node_mode_context_menu"),
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                margin: px(4).bottom(),
+                ..default()
+            },
+            BorderColor::all(Color::BLACK),
+            BackgroundColor(Color::BLACK),
+            children![(
+                NodeTypeButtonLabel,
+                Pickable::IGNORE,
+                Text::new("Random"),
+                text_font(),
+                TextColor(Color::WHITE),
+                TextShadow::default(),
+            )],
         ))
         .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
-        event.propagate(false);
-        println!("Clicked context menu");
-        debug!("click: {}", event.pointer_location.position);
-        commands.trigger(OpenNodeTypeMenu {
-            pos: event.pointer_location.position,
-        });
+            event.propagate(false);
+            println!("Clicked context menu");
+            debug!("click: {}", event.pointer_location.position);
+            commands.trigger(OpenNodeTypeMenu {
+                pos: event.pointer_location.position,
+            });
         })
         .id();
 
     let compile_button = commands
         .spawn((
-        Name::new("compile_button"),
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(4).bottom(),
-            ..default()
-        },
-        BorderColor::all(BUTTON_COLOR),
-        BackgroundColor(BUTTON_COLOR),
-        children![(
-            Pickable::IGNORE,
-            Text::new("Compile"),
-            text_font(),
-            TextColor(Color::WHITE),
-            TextShadow::default(),
-        )],
+            Name::new("compile_button"),
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                margin: px(4).bottom(),
+                ..default()
+            },
+            BorderColor::all(BUTTON_COLOR),
+            BackgroundColor(BUTTON_COLOR),
+            children![(
+                Pickable::IGNORE,
+                Text::new("Compile"),
+                text_font(),
+                TextColor(Color::WHITE),
+                TextShadow::default(),
+            )],
         ))
         .observe(|_event: On<Pointer<Press>>, mut commands: Commands| {
             commands.trigger(TriggerCompilation)
@@ -347,58 +347,58 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
 
     let sample_button = commands
         .spawn((
-        Name::new("sample_button"),
-        RequiresCompilation,
-        InteractionDisabled,
-        Pickable::IGNORE,
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(4).bottom(),
-            ..default()
-        },
-        BorderColor::all(DISABLED_CONTROL_COLOR),
-        BackgroundColor(DISABLED_CONTROL_COLOR),
-        children![(
+            Name::new("sample_button"),
+            RequiresCompilation,
+            InteractionDisabled,
             Pickable::IGNORE,
-            Text::new("Basic sample"),
-            text_font(),
-            TextColor(DISABLED_TEXT_COLOR),
-        )],
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                margin: px(4).bottom(),
+                ..default()
+            },
+            BorderColor::all(DISABLED_CONTROL_COLOR),
+            BackgroundColor(DISABLED_CONTROL_COLOR),
+            children![(
+                Pickable::IGNORE,
+                Text::new("Basic sample"),
+                text_font(),
+                TextColor(DISABLED_TEXT_COLOR),
+            )],
         ))
         .observe(compilation::global_sample)
         .id();
 
     let posterior_sample_button = commands
         .spawn((
-        Name::new("posterior_sample_button"),
-        RequiresInference,
-        InteractionDisabled,
-        Pickable::IGNORE,
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(4).bottom(),
-            ..default()
-        },
-        BorderColor::all(DISABLED_CONTROL_COLOR),
-        BackgroundColor(DISABLED_CONTROL_COLOR),
-        children![(
+            Name::new("posterior_sample_button"),
+            RequiresInference,
+            InteractionDisabled,
             Pickable::IGNORE,
-            Text::new("Post sample"),
-            text_font(),
-            TextColor(DISABLED_TEXT_COLOR),
-        )],
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                margin: px(4).bottom(),
+                ..default()
+            },
+            BorderColor::all(DISABLED_CONTROL_COLOR),
+            BackgroundColor(DISABLED_CONTROL_COLOR),
+            children![(
+                Pickable::IGNORE,
+                Text::new("Post sample"),
+                text_font(),
+                TextColor(DISABLED_TEXT_COLOR),
+            )],
         ))
         .observe(compilation::posterior_sample)
         .id();
@@ -461,30 +461,30 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
 
     let inference_button = commands
         .spawn((
-        Name::new("run_inference_button"),
-        RequiresCompilation,
-        InteractionDisabled,
-        Pickable::IGNORE,
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(4).bottom(),
-            ..default()
-        },
-        BorderColor::all(DISABLED_CONTROL_COLOR),
-        BackgroundColor(DISABLED_CONTROL_COLOR),
-        children![(
-            InferenceRunButtonLabel,
+            Name::new("run_inference_button"),
+            RequiresCompilation,
+            InteractionDisabled,
             Pickable::IGNORE,
-            Text::new("Run inference"),
-            text_font(),
-            TextColor(DISABLED_TEXT_COLOR),
-        )],
+            Button,
+            Node {
+                width: px(SIDEBAR_WIDTH * 0.75),
+                height: px(30),
+                border: UiRect::all(px(5)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: BorderRadius::MAX,
+                margin: px(4).bottom(),
+                ..default()
+            },
+            BorderColor::all(DISABLED_CONTROL_COLOR),
+            BackgroundColor(DISABLED_CONTROL_COLOR),
+            children![(
+                InferenceRunButtonLabel,
+                Pickable::IGNORE,
+                Text::new("Run inference"),
+                text_font(),
+                TextColor(DISABLED_TEXT_COLOR),
+            )],
         ))
         .observe(compilation::run_inference)
         .id();
@@ -609,25 +609,25 @@ fn inference_textbox(
 ) -> Entity {
     let textbox = commands
         .spawn((
-        RequiresCompilation,
-        InferenceTextbox { tab_index },
-        InteractionDisabled,
-        Pickable::IGNORE,
-        Node {
-            width: px(120.),
-            min_height: px(25.),
-            border: px(2).all(),
-            padding: px(4).all(),
-            ..default()
-        },
-        BorderColor::from(DISABLED_CONTROL_COLOR),
-        BackgroundColor(DISABLED_CONTROL_COLOR),
-        EditableText::new(value),
-        text_font(),
-        TextColor(DISABLED_TEXT_COLOR),
-        TextLayout::no_wrap(),
-        TextCursorStyle::default(),
-        Name::new(format!("{name}_textbox")),
+            RequiresCompilation,
+            InferenceTextbox { tab_index },
+            InteractionDisabled,
+            Pickable::IGNORE,
+            Node {
+                width: px(120.),
+                min_height: px(25.),
+                border: px(2).all(),
+                padding: px(4).all(),
+                ..default()
+            },
+            BorderColor::from(DISABLED_CONTROL_COLOR),
+            BackgroundColor(DISABLED_CONTROL_COLOR),
+            EditableText::new(value),
+            text_font(),
+            TextColor(DISABLED_TEXT_COLOR),
+            TextLayout::no_wrap(),
+            TextCursorStyle::default(),
+            Name::new(format!("{name}_textbox")),
         ))
         .id();
     if name == "random_seed" {
@@ -644,14 +644,14 @@ fn add_inference_field(
 ) {
     let field = commands
         .spawn((
-        Node {
-            width: percent(100.),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(4.),
-            margin: px(8.).bottom(),
-            ..default()
-        },
-        Name::new(format!("{label}_box")),
+            Node {
+                width: percent(100.),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(4.),
+                margin: px(8.).bottom(),
+                ..default()
+            },
+            Name::new(format!("{label}_box")),
         ))
         .id();
     commands.entity(sidebar).add_child(field);
@@ -668,11 +668,11 @@ pub fn set_inference_controls_enabled(
     mut input_focus: ResMut<InputFocus>,
     mut controls: Query<
         (
-        Entity,
-        &mut BackgroundColor,
-        &mut BorderColor,
-        Option<&InferenceTextbox>,
-        Option<&Children>,
+            Entity,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Option<&InferenceTextbox>,
+            Option<&Children>,
         ),
         With<RequiresCompilation>,
     >,
@@ -745,10 +745,10 @@ pub fn set_posterior_sample_enabled(
     mut commands: Commands,
     mut controls: Query<
         (
-        Entity,
-        &mut BackgroundColor,
-        &mut BorderColor,
-        Option<&Children>,
+            Entity,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            Option<&Children>,
         ),
         With<RequiresInference>,
     >,
@@ -821,10 +821,10 @@ pub fn invalidate_compilation_on_graph_change(
     changed_positions: Query<
         (),
         (
-        Changed<Transform>,
-        With<GraphNode>,
-        Without<Plate>,
-        Without<PlateDraft>,
+            Changed<Transform>,
+            With<GraphNode>,
+            Without<Plate>,
+            Without<PlateDraft>,
         ),
     >,
     node_positions: Query<(&GraphNode, &Transform), (Without<Plate>, Without<PlateDraft>)>,
@@ -839,7 +839,12 @@ pub fn invalidate_compilation_on_graph_change(
     let membership_changed = !changed_positions.is_empty()
         && node_plate_membership_changed(graph_resource.0.graph(), &node_positions, &plates);
     let plate_changed = !changed_plates.is_empty()
-        && plate_execution_metadata_changed(graph_resource.0.graph(), &node_positions, &plates, &graph_nodes);
+        && plate_execution_metadata_changed(
+            graph_resource.0.graph(),
+            &node_positions,
+            &plates,
+            &graph_nodes,
+        );
     let graph_changed =
         !changed_graph.is_empty() || membership_changed || plate_changed || graph_node_removed;
 
@@ -937,8 +942,7 @@ fn plate_execution_metadata_changed(
         let mut contained = current
             .iter()
             .filter(|(candidate, candidate_plate)| {
-                candidate.0 != plate_node.0
-                    && plate.bounds.contains_bounds(candidate_plate.bounds)
+                candidate.0 != plate_node.0 && plate.bounds.contains_bounds(candidate_plate.bounds)
             })
             .map(|(candidate, _)| candidate.0)
             .collect::<Vec<_>>();
@@ -957,7 +961,7 @@ fn on_set_node_mode(
     mut commands: Commands,
     node_mode: Single<&mut NodeMode>,
     mut button_label: Single<&mut Text, With<NodeTypeButtonLabel>>,
-){
+) {
     let target = event.original_event_target();
 
     if let Ok(item) = menu_items.get(target) {

@@ -5,11 +5,9 @@ mod inference;
 mod model_compilation;
 mod plate_validation;
 
-pub use inference::{
-    InferenceResult, NodeInstanceSamples, PosteriorSample,
-};
 #[cfg(not(target_arch = "wasm32"))]
 pub use inference::ControlledInferenceResult;
+pub use inference::{InferenceResult, NodeInstanceSamples, PosteriorSample};
 #[cfg(target_arch = "wasm32")]
 pub use inference::{InferenceRunner, InferenceStep};
 pub use model_compilation::CompiledGraph;
@@ -18,11 +16,11 @@ pub(crate) use plate_validation::shared_dimension_positions;
 #[derive(Clone)]
 /// Intermediate representation of the complete probabilistic graph and its plates.
 pub struct GraphIR {
-    pub nodes: HashMap<u32, NodeIR>,  // keyed by GraphNode id
+    pub nodes: HashMap<u32, NodeIR>, // keyed by GraphNode id
     pub plates: HashMap<u32, PlateIR>,
 }
 
-impl GraphIR{
+impl GraphIR {
     /// Creates an empty graph intermediate representation with no nodes, edges, or plates.
     pub fn new() -> Self {
         Self {

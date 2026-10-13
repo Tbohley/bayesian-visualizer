@@ -9,8 +9,8 @@ mod nodes;
 mod sidebar;
 mod ui;
 use crate::data_vis::{
-    HistogramBinCount, apply_typed_histogram_bin_count, close_histogram_panel, open_histogram_panel,
-    open_joint_distribution_view, update_histogram_selection_controls,
+    HistogramBinCount, apply_typed_histogram_bin_count, close_histogram_panel,
+    open_histogram_panel, open_joint_distribution_view, update_histogram_selection_controls,
 };
 use crate::graph::*;
 use crate::nodes::*;
@@ -35,7 +35,7 @@ use sidebar::plate_menu::{on_open_dataset_menu, on_open_plate_mapping_menu};
 use sidebar::random_menu::on_open_distribution_menu;
 use sidebar::scalar_menu::on_enter_clicked;
 
-fn setup (
+fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
@@ -46,15 +46,15 @@ fn setup (
     //spawn clickable background
     commands
         .spawn((
-        Canvas,
-        Mesh2d(meshes.add(Rectangle::new(CANVAS_WIDTH, CANVAS_HEIGHT))),
-        MeshMaterial2d(materials.add(CANVAS_COLOR)),
+            Canvas,
+            Mesh2d(meshes.add(Rectangle::new(CANVAS_WIDTH, CANVAS_HEIGHT))),
+            MeshMaterial2d(materials.add(CANVAS_COLOR)),
             NodeMode(NodeType::Random),
-    ))
-    .observe(on_background_click)
-    .observe(on_plate_drag_start)
-    .observe(on_plate_drag)
-    .observe(on_plate_drag_end);
+        ))
+        .observe(on_background_click)
+        .observe(on_plate_drag_start)
+        .observe(on_plate_drag)
+        .observe(on_plate_drag_end);
 
     //load custom cursor resources
     commands.insert_resource(CursorAssets {
@@ -130,23 +130,23 @@ fn main() {
         .add_systems(
             Update,
             (
-            on_enter_clicked,
-            delete_selected_node_on_backspace,
-            refresh_links_for_resized_random_nodes,
-            refresh_reduced_view,
-            apply_typed_histogram_bin_count,
-            update_histogram_selection_controls,
-            poll_inference_job,
-            update_inference_progress,
-            invalidate_compilation_on_graph_change,
+                on_enter_clicked,
+                delete_selected_node_on_backspace,
+                refresh_links_for_resized_random_nodes,
+                refresh_reduced_view,
+                apply_typed_histogram_bin_count,
+                update_histogram_selection_controls,
+                poll_inference_job,
+                update_inference_progress,
+                invalidate_compilation_on_graph_change,
                 relabel_plates,
                 update_plate_handle_colors,
-            update_random_seed_placeholder,
-            tick_error_toasts, 
-            tick_compilation_error_markers,
-            tick_sample_popups,
-            click_error_toasts,
-            update_node_observation_colors,
+                update_random_seed_placeholder,
+                tick_error_toasts,
+                tick_compilation_error_markers,
+                tick_sample_popups,
+                click_error_toasts,
+                update_node_observation_colors,
                 update_graph_cursor,
             ),
         )
@@ -178,7 +178,7 @@ Plates, parameters
 -----------------Goals for 7/10-----------------
 
 Node sidebar{
-    random vs parameter                     
+    random vs parameter
     dist. params{
         change distribution button          DONE
         apply changes button
@@ -193,14 +193,14 @@ Global sidebar{
     drag n drop construction
     dummy node/param/plate?
     update button{
-        plate logic and implementation      
+        plate logic and implementation
     }
 }
 
 
 
 Single click allows node name editing,
-eventually will be -> popup with 
+eventually will be -> popup with
 distribution/property editing               DONE
 
 Various distribution options
@@ -221,7 +221,7 @@ Abs() operation
 -----------------Optional/stretch goals-----------------
 
 Ghost arrow after shift-clicking a node
-that tracks cursor until end node clicked   
+that tracks cursor until end node clicked
 
 Different color schemes
 
@@ -235,7 +235,7 @@ Make arrows touch non-random nodes
 
 -------------------Bug tracker------------------
 
-Deletion of a node in an UnfinishedLink     
+Deletion of a node in an UnfinishedLink
 leads to panic                             FIXED
 
 Smashing keys on rename interacts with

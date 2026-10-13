@@ -45,12 +45,12 @@ impl GraphIR {
             }
             for &node_id in plate.mapping.keys() {
                 if let Some(previous) = observation_owners.insert(node_id, plate_id) {
-                return Err(format!(
+                    return Err(format!(
                         "node {node_id} is observed by both plate {previous} and plate {plate_id}; exactly one observation owner is allowed"
-                ));
+                    ));
+                }
             }
-            }
-            }
+        }
 
         Ok(NormalizedPlates {
             node_paths,
@@ -72,7 +72,7 @@ impl GraphIR {
                             "node {consumer_id} references missing node {}",
                             param.from_node
                         )
-            })?;
+                    })?;
                 projection_positions(producer_dims, consumer_dims).map_err(|_| {
                     format!(
                         "invalid scalar plate dependency from node {} in scope {} to node {consumer_id} in scope {}: producer dimensions must be a subset of consumer dimensions",
@@ -81,24 +81,24 @@ impl GraphIR {
                         format_scope(consumer_dims),
                     )
             })?;
-                }
+            }
         }
         Ok(())
-                }
-            }
+    }
+}
 
 fn validate_plate(graph: &GraphIR, plate_id: u32, plate: &PlateIR) -> Result<(), String> {
     if plate.id != plate_id {
-                    return Err(format!(
+        return Err(format!(
             "plate map key {plate_id} does not match its stored ID {}",
             plate.id
-                    ));
-                }
+        ));
+    }
     if plate.n == 0 {
-                    return Err(format!(
+        return Err(format!(
             "plate {plate_id} extent must be a positive integer"
-                    ));
-                }
+        ));
+    }
     ensure_unique(&plate.nodes, |node_id| {
         format!("plate {plate_id} lists node {node_id} more than once")
     })?;
@@ -108,27 +108,27 @@ fn validate_plate(graph: &GraphIR, plate_id: u32, plate: &PlateIR) -> Result<(),
     for &node_id in &plate.nodes {
         if !graph.nodes.contains_key(&node_id) {
             return Err(format!("plate {plate_id} contains missing node {node_id}"));
-                }
-            }
-            for &child_id in &plate.plates {
-                if child_id == plate_id {
-                    return Err(format!("plate {plate_id} cannot contain itself"));
-                }
+        }
+    }
+    for &child_id in &plate.plates {
+        if child_id == plate_id {
+            return Err(format!("plate {plate_id} cannot contain itself"));
+        }
         if !graph.plates.contains_key(&child_id) {
-                    return Err(format!(
+            return Err(format!(
                 "plate {plate_id} contains missing plate {child_id}"
-                    ));
-                }
+            ));
+        }
     }
     for (column, values) in &plate.data {
         if values.len() != plate.n {
-                    return Err(format!(
+            return Err(format!(
                 "plate {plate_id} column {column:?} has {} rows, expected {}",
                 values.len(),
                 plate.n
-                    ));
-                }
-            }
+            ));
+        }
+    }
     for (&node_id, column) in &plate.mapping {
         if !plate.nodes.contains(&node_id) {
             return Err(format!(
@@ -144,10 +144,10 @@ fn validate_plate(graph: &GraphIR, plate_id: u32, plate: &PlateIR) -> Result<(),
             return Err(format!(
                 "plate {plate_id} cannot map dataset column {column:?} to compute node {node_id}"
             ));
-    }
-            }
-            Ok(())
         }
+    }
+    Ok(())
+}
 
 /// Returns consumer coordinate positions for producer dimensions.
 pub(crate) fn projection_positions(
@@ -159,8 +159,8 @@ pub(crate) fn projection_positions(
         Ok(shared.into_iter().map(|(_, consumer)| consumer).collect())
     } else {
         Err(())
-        }
     }
+}
 
 /// Positional correspondence for every stable plate identity shared by two dimension lists.
 pub(crate) fn shared_dimension_positions(left: &[u32], right: &[u32]) -> Vec<(usize, usize)> {

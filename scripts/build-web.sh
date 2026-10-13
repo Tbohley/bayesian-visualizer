@@ -14,6 +14,7 @@ wasm-bindgen \
   --no-typescript
 
 cp web/index.html "${dist_dir}/index.html"
+cp web/responsive.css "${dist_dir}/responsive.css"
 cp assets/cursors/finish_link.png "${dist_dir}/assets/cursors/finish_link.png"
 cp assets/cursors/shift_held.png "${dist_dir}/assets/cursors/shift_held.png"
 touch "${dist_dir}/.nojekyll"

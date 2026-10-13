@@ -116,8 +116,8 @@ impl CompiledGraph {
                 compiled_params(node_params(&node), &plate_ids, &self.normalized.node_paths)?;
             for indices in cartesian_indices(&extents) {
                 let data_value = observation_value(
-            &self.graph,
-            &self.normalized,
+                    &self.graph,
+                    &self.normalized,
                     node_id,
                     &plate_ids,
                     &indices,
@@ -128,8 +128,8 @@ impl CompiledGraph {
                     plate_ids.clone(),
                     indices,
                     data_value,
-            mode,
-            model,
+                    mode,
+                    model,
                 );
             }
         }
@@ -163,13 +163,13 @@ fn observation_value(
     })?;
     let row = indices[position];
     owner
-                        .data
-                        .get(column)
-                        .and_then(|values| values.get(row))
+        .data
+        .get(column)
+        .and_then(|values| values.get(row))
         .copied()
         .map(Some)
         .ok_or_else(|| format!("plate {owner_id} column {column:?} has no value at row {row}"))
-    }
+}
 
 fn cartesian_indices(extents: &[usize]) -> Vec<Vec<usize>> {
     let mut paths = vec![Vec::new()];

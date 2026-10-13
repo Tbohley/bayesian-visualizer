@@ -5,10 +5,10 @@ use super::{
 use crate::nodes::replace_node_label;
 use bevy::prelude::*;
 
-impl SidebarContent for ComputeNode{
+impl SidebarContent for ComputeNode {
     fn build(
-        &self, 
-        mut commands: &mut Commands, 
+        &self,
+        mut commands: &mut Commands,
         sidebar_entity: Entity,
         node_data: &Query<(
             Option<&RandomNode>,
@@ -19,7 +19,7 @@ impl SidebarContent for ComputeNode{
         node: Entity,
         _observed: bool,
         observed_columns: &std::collections::HashMap<Entity, String>,
-    ){
+    ) {
         commands.entity(sidebar_entity).with_child(divider());
         available_links(
             &mut commands,
@@ -42,43 +42,43 @@ impl SidebarContent for ComputeNode{
         ));
         let context_menu = commands
             .spawn((
-            Name::new("operation_context_menu"),
-            Button,
-            Node {
-                margin: px(4).bottom(),
-                width: px(SIDEBAR_WIDTH * 0.75),
-                height: px(30),
-                border: UiRect::all(px(5)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::MAX,
-                ..default()
-            },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::BLACK),
-            children![(
-                Pickable::IGNORE,
-                Text::new(format!("{:?}", self.operation)),
-                text_font(),
-                TextColor(Color::WHITE),
-                TextShadow::default(),
-            )],
+                Name::new("operation_context_menu"),
+                Button,
+                Node {
+                    margin: px(4).bottom(),
+                    width: px(SIDEBAR_WIDTH * 0.75),
+                    height: px(30),
+                    border: UiRect::all(px(5)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    border_radius: BorderRadius::MAX,
+                    ..default()
+                },
+                BorderColor::all(Color::BLACK),
+                BackgroundColor(Color::BLACK),
+                children![(
+                    Pickable::IGNORE,
+                    Text::new(format!("{:?}", self.operation)),
+                    text_font(),
+                    TextColor(Color::WHITE),
+                    TextShadow::default(),
+                )],
             ))
             .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
-            event.propagate(false);
-            println!("Clicked context menu");
-            debug!("click: {}", event.pointer_location.position);
+                event.propagate(false);
+                println!("Clicked context menu");
+                debug!("click: {}", event.pointer_location.position);
 
-            commands.trigger(OpenOperationMenu {
-                pos: event.pointer_location.position,
-            });
+                commands.trigger(OpenOperationMenu {
+                    pos: event.pointer_location.position,
+                });
             })
             .id();
         commands.entity(sidebar_entity).add_child(context_menu);
         commands.entity(sidebar_entity).with_child(divider());
         let mut link_labels = get_ents_and_labels(commands, node_data, &finished_links, node);
         apply_observed_scalar_labels(&mut link_labels, node_data, observed_columns);
-        for (i, _param) in self.params.iter().enumerate() {        
+        for (i, _param) in self.params.iter().enumerate() {
             build_link_param_selector(
                 commands,
                 link_labels.clone(),
@@ -148,9 +148,9 @@ fn on_select_operation(
     mut compute_vars: Query<(&mut ComputeNode, &Selected)>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
     inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
-){
+) {
     let target = event.original_event_target();
-    if let Some(single) = selected{
+    if let Some(single) = selected {
         let (entity, _selected_comp) = single.into_inner();
 
         if let Ok(item) = menu_items.get(target) {
@@ -184,7 +184,7 @@ fn on_select_operation(
                 operation_symbol(&compute_var.operation),
                 &labels,
             );
-            
+
             commands.trigger(CloseContextMenus);
             commands.trigger(ReloadSidebar);
         }

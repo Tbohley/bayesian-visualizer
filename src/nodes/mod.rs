@@ -2,13 +2,12 @@ pub mod compute_node;
 pub mod random_node;
 pub mod scalar_node;
 use crate::bevy_to_fugue::InferenceResultResource;
-use crate::sidebar::global::graph_change_requires_confirmation;
 use crate::constants::*;
 use crate::data_vis::{
-    CloseHistogramPanel, HistogramView, OpenHistogramPanel,
-    OpenJointDistributionView,
+    CloseHistogramPanel, HistogramView, OpenHistogramPanel, OpenJointDistributionView,
 };
 use crate::graph::*;
+use crate::sidebar::global::graph_change_requires_confirmation;
 use crate::sidebar::*;
 use crate::ui::*;
 use bevy::prelude::*;
@@ -26,7 +25,7 @@ pub struct NodeLabel;
 #[derive(Component)]
 pub struct NodeInterior;
 
-pub enum NodeType{
+pub enum NodeType {
     Random,
     Compute,
     Scalar,
@@ -36,7 +35,7 @@ pub enum NodeType{
 pub struct NodeMode(pub NodeType);
 
 #[derive(Debug, Clone, Copy)]
-pub enum Operation{
+pub enum Operation {
     Add,
     Subtract,
     Multiply,
@@ -49,7 +48,7 @@ pub enum Operation{
 }
 
 #[derive(Debug, Clone)]
-pub struct ParamValue (pub &'static str, pub Option<Entity>);          //TODO: change from f64 to GraphLink
+pub struct ParamValue(pub &'static str, pub Option<Entity>); //TODO: change from f64 to GraphLink
 
 #[derive(Event)]
 pub struct AutofillNextParam {
@@ -172,35 +171,35 @@ pub fn scalar_display_label(
         .name
         .clone()
         .or_else(|| {
-        plates.iter().find_map(|plate| {
-            plate
-                .mapping
-                .get(&entity)
-                .filter(|column| column.as_str() != "unobserved")
-                .cloned()
-        })
+            plates.iter().find_map(|plate| {
+                plate
+                    .mapping
+                    .get(&entity)
+                    .filter(|column| column.as_str() != "unobserved")
+                    .cloned()
+            })
         })
         .unwrap_or_else(|| format!("{:.1}", scalar.val))
 }
 
-pub trait NodeDisplay{
+pub trait NodeDisplay {
     fn label(&self) -> String;
 }
 
 //on random variable nodes
 #[derive(Component)]
-pub struct RandomNode{
+pub struct RandomNode {
     pub name: Option<String>,
     pub dist_type: String,
     pub params: Vec<ParamValue>,
 }
 
-impl NodeDisplay for RandomNode{
-    fn label(&self) -> String{
+impl NodeDisplay for RandomNode {
+    fn label(&self) -> String {
         format![
             "{}{}",
             match self.name.clone() {
-            Some(n) => n + " ~ ",
+                Some(n) => n + " ~ ",
                 None => "var ~ ".to_string(),
             },
             self.dist_type
@@ -209,13 +208,13 @@ impl NodeDisplay for RandomNode{
 }
 
 #[derive(Component)]
-pub struct ComputeNode{
+pub struct ComputeNode {
     pub operation: Operation,
     pub params: Vec<ParamValue>,
 }
 
 #[derive(Component)]
-pub struct ScalarNode{
+pub struct ScalarNode {
     pub val: f64,
     pub name: Option<String>,
 }
@@ -233,10 +232,10 @@ pub fn update_node_observation_colors(
     mut labels: Query<(&ChildOf, &mut Text2d), With<NodeLabel>>,
     nodes: Query<
         (
-        Entity,
-        Option<&RandomNode>,
-        Option<&ScalarNode>,
-        Has<ObservedNode>,
+            Entity,
+            Option<&RandomNode>,
+            Option<&ScalarNode>,
+            Has<ObservedNode>,
         ),
         Or<(With<RandomNode>, With<ScalarNode>)>,
     >,
@@ -276,13 +275,13 @@ pub fn update_node_observation_colors(
                 .name
                 .clone()
                 .or_else(|| {
-                plates.iter().find_map(|plate| {
-                    plate
-                        .mapping
-                        .get(&entity)
-                        .filter(|column| column.as_str() != "unobserved")
-                        .cloned()
-                })
+                    plates.iter().find_map(|plate| {
+                        plate
+                            .mapping
+                            .get(&entity)
+                            .filter(|column| column.as_str() != "unobserved")
+                            .cloned()
+                    })
                 })
                 .unwrap_or_else(|| format!("{:.1}", scalar.val));
             for (child_of, mut text) in &mut labels {
@@ -294,8 +293,8 @@ pub fn update_node_observation_colors(
     }
 }
 
-impl NodeDisplay for ScalarNode{
-    fn label(&self) -> String{
+impl NodeDisplay for ScalarNode {
+    fn label(&self) -> String {
         self.name
             .clone()
             .unwrap_or_else(|| format!["{:.2}", self.val])
@@ -331,7 +330,7 @@ pub fn on_background_click(
     for entity in unfinished_links.iter_mut() {
         commands.entity(entity).despawn();
     }
-    if let Some(single) = selected{
+    if let Some(single) = selected {
         let (entity, _selected_comp) = single.into_inner();
         //deselect currently selected node + close context menus
         commands.entity(entity).remove::<Selected>();
@@ -356,7 +355,7 @@ pub fn on_background_click(
     }
     let mut node_num = 1;
     //finds the lowest unused node in the least efficient way possible
-    while current_nodes.iter().any(|node| node.0 == node_num) { 
+    while current_nodes.iter().any(|node| node.0 == node_num) {
         node_num += 1;
     }
     println!("Created node #{}", node_num);
@@ -388,7 +387,7 @@ pub fn on_node_click(
     compute_nodes: Query<&ComputeNode>,
     scalar_nodes: Query<&ScalarNode>,
     histogram_view: Option<Single<&HistogramView>>,
-){
+) {
     let shift_held = input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let joint_pair = histogram_view.as_ref().and_then(|view| {
         let y_node_id = node_ids.get(event.event_target()).ok()?.0;
@@ -411,7 +410,7 @@ pub fn on_node_click(
         commands.entity(unfinished_ent).remove::<UnfinishedLink>();
 
         //if user tries to create a link from a node to itself
-        if ends.from == event.event_target() { 
+        if ends.from == event.event_target() {
             commands.entity(unfinished_ent).despawn();
             return;
         }
@@ -449,15 +448,15 @@ pub fn on_node_click(
             ));
         }
     // Joint posterior inspection is available in either graph view.
-    }else if shift_held && let Some((x_node_id, y_node_id)) = joint_pair {
+    } else if shift_held && let Some((x_node_id, y_node_id)) = joint_pair {
         commands.trigger(OpenJointDistributionView {
             x_node_id,
             y_node_id,
         });
     // Graph-link editing remains unavailable in reduced view.
-    }else if !reduced_view.active && shift_held {
+    } else if !reduced_view.active && shift_held {
         commands.spawn((
-            GraphLink{
+            GraphLink {
                 from: event.event_target(),
                 to: None,
             },
@@ -465,12 +464,12 @@ pub fn on_node_click(
         ));
         println!("Created an UnfinishedLink");
     //normal click, select the node
-    }else{
+    } else {
         //println!("Node click event");
         if event.duration.as_millis() < 200 && event.count == 1 {
             println!("Selected a node");
 
-            if let Some(single) = selected{
+            if let Some(single) = selected {
                 let (entity, _selected_comp) = single.into_inner();
                 //deselect currently selected node
                 commands.entity(entity).remove::<Selected>();

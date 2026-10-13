@@ -1,10 +1,10 @@
 use super::*;
 use bevy::{input_focus::InputFocus, prelude::*, text::EditableText};
 
-impl SidebarContent for ScalarNode{
+impl SidebarContent for ScalarNode {
     fn build(
-        &self, 
-        commands: &mut Commands, 
+        &self,
+        commands: &mut Commands,
         sidebar_entity: Entity,
         _node_data: &Query<(
             Option<&RandomNode>,
@@ -15,20 +15,20 @@ impl SidebarContent for ScalarNode{
         _node: Entity,
         observed: bool,
         _observed_columns: &std::collections::HashMap<Entity, String>,
-    ){
+    ) {
         add_node_name_field(commands, sidebar_entity, self.name.as_deref());
         commands.entity(sidebar_entity).with_child(divider());
 
         let value_box = commands
             .spawn((
-            Node {
-                width: percent(100.),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                margin: px(8.).bottom(),
-                ..default()
-            },
-            Name::new(format!("value_box")),
+                Node {
+                    width: percent(100.),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: px(4.),
+                    margin: px(8.).bottom(),
+                    ..default()
+                },
+                Name::new(format!("value_box")),
             ))
             .id();
         commands.entity(sidebar_entity).add_child(value_box);
@@ -56,25 +56,25 @@ impl SidebarContent for ScalarNode{
             ));
         } else {
             commands.entity(value_box).with_child((
-                    ScalarValueTextbox,
-                    Node {
-                        width: px(120.),
-                        min_height: px(25.),
-                        border: px(2).all(),
-                        padding: px(4).all(),
-                        ..default()
-                    },
-                    BorderColor::from(Color::from(SLATE_300)),
-                    BackgroundColor(DARK_GREY.into()),
-                    EditableText::new(self.val.to_string()),
-                    text_font(),
-                    TextLayout::no_wrap(),
-                    TextCursorStyle::default(),
-                    TabIndex(1),
-                    Name::new(format!("value_textbox")),
+                ScalarValueTextbox,
+                Node {
+                    width: px(120.),
+                    min_height: px(25.),
+                    border: px(2).all(),
+                    padding: px(4).all(),
+                    ..default()
+                },
+                BorderColor::from(Color::from(SLATE_300)),
+                BackgroundColor(DARK_GREY.into()),
+                EditableText::new(self.val.to_string()),
+                text_font(),
+                TextLayout::no_wrap(),
+                TextCursorStyle::default(),
+                TabIndex(1),
+                Name::new(format!("value_textbox")),
             ));
         }
-        
+
         commands.entity(sidebar_entity).with_child(divider());
     }
 }
@@ -119,7 +119,7 @@ pub fn on_enter_clicked(
     }
     let Some(focused_entity) = input_focus.get() else {
         return;
-    }; 
+    };
 
     if (node_name_textboxes.contains(focused_entity)
         || scalar_textboxes.contains(focused_entity)
