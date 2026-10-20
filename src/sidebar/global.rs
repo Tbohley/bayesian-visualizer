@@ -441,7 +441,7 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
         "random seed",
         seed_box,
     );
-    let rounds_box = inference_textbox(&mut commands, "number_of_rounds", "1000", 2);
+    let rounds_box = inference_textbox(&mut commands, "number_of_rounds", "5000", 2);
     commands.entity(rounds_box).insert(NumberOfWarmupTextbox);
     add_inference_field(
         &mut commands,
@@ -450,7 +450,7 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
         rounds_box,
     );
 
-    let samples_box = inference_textbox(&mut commands, "number_of_samples", "1000", 1);
+    let samples_box = inference_textbox(&mut commands, "number_of_samples", "15000", 1);
     commands.entity(samples_box).insert(NumberOfSamplesTextbox);
     add_inference_field(
         &mut commands,

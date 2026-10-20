@@ -3,7 +3,7 @@ pub mod compilation;
 use crate::bayesian_core::ControlledInferenceResult;
 #[cfg(target_arch = "wasm32")]
 use crate::bayesian_core::InferenceRunner;
-use crate::bayesian_core::{CompiledGraph, InferenceResult, graph_checks::ModelValues};
+use crate::bayesian_core::{CompiledGraph, InferenceResult, graph_checks::PosteriorValues};
 use bevy::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::tasks::Task;
@@ -38,11 +38,7 @@ pub struct InferenceControl {
     pub discard_result: AtomicBool,
     pub warmup_completed: AtomicUsize,
     pub samples_completed: AtomicUsize,
-    pub warmup_diagnostic_ready: AtomicBool,
-    pub warmup_negative_infinity: AtomicBool,
-    pub warmup_negative_infinity_variables: Mutex<Vec<String>>,
-    pub warmup_warning_emitted: AtomicBool,
-    pub pending_draws: Mutex<Vec<ModelValues>>,
+    pub pending_draws: Mutex<Vec<PosteriorValues>>,
 }
 
 impl InferenceControl {
@@ -52,10 +48,6 @@ impl InferenceControl {
             discard_result: AtomicBool::new(false),
             warmup_completed: AtomicUsize::new(0),
             samples_completed: AtomicUsize::new(0),
-            warmup_diagnostic_ready: AtomicBool::new(false),
-            warmup_negative_infinity: AtomicBool::new(false),
-            warmup_negative_infinity_variables: Mutex::new(Vec::new()),
-            warmup_warning_emitted: AtomicBool::new(false),
             pending_draws: Mutex::new(Vec::new()),
         }
     }
@@ -74,6 +66,8 @@ pub struct InferenceJob {
     /// Lowest-ID unobserved random node at launch, used for the automatic
     /// live histogram when the user has not opened a result view themselves.
     pub auto_histogram_node: Option<u32>,
+    pub node_extents: std::collections::HashMap<u32, Vec<usize>>,
+    pub plot_refresh_elapsed: f32,
 }
 
 #[derive(Event)]

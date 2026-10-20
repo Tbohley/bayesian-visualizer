@@ -899,6 +899,9 @@ pub fn open_histogram_panel(
         });
         return;
     };
+    if !results.0.node_extents.contains_key(&node_id) {
+        return;
+    }
     let instances = match results.0.samples_for_node(node_id) {
         Ok(instances) if !instances.is_empty() => instances,
         Ok(_) => {
@@ -1888,6 +1891,8 @@ fn spawn_stats(
     if let Some(probability_line) = probability_line {
         lines.push((probability_line, 12.0));
     }
+    let mut sorted_samples = samples.to_vec();
+    sorted_samples.sort_by(|a, b| a.value.total_cmp(&b.value));
     lines.extend([
         (
             format!("Samples: {}", format_count(effective_count(samples))),
@@ -1899,14 +1904,17 @@ fn spawn_stats(
             14.0,
         ),
         (
-            format!("Median: {:.4}", weighted_quantile(samples, 0.5)),
+            format!(
+                "Median: {:.4}",
+                weighted_quantile_sorted(&sorted_samples, 0.5)
+            ),
             14.0,
         ),
         (
             format!(
                 "95% CrI: [{:.4}, {:.4}]",
-                weighted_quantile(samples, 0.025),
-                weighted_quantile(samples, 0.975)
+                weighted_quantile_sorted(&sorted_samples, 0.025),
+                weighted_quantile_sorted(&sorted_samples, 0.975)
             ),
             14.0,
         ),
@@ -1954,9 +1962,8 @@ fn weighted_standard_deviation(samples: &[WeightedSample]) -> f64 {
         .sqrt()
 }
 
-fn weighted_quantile(samples: &[WeightedSample], probability: f64) -> f64 {
-    let mut samples = samples.to_vec();
-    samples.sort_by(|a, b| a.value.total_cmp(&b.value));
+/// `samples` must already be sorted by value.
+fn weighted_quantile_sorted(samples: &[WeightedSample], probability: f64) -> f64 {
     if samples.iter().all(|sample| sample.weight == 1.0) {
         if samples.is_empty() {
             return f64::NAN;
@@ -1969,7 +1976,7 @@ fn weighted_quantile(samples: &[WeightedSample], probability: f64) -> f64 {
     }
     let threshold = probability * effective_count(&samples);
     let mut cumulative = 0.0;
-    for sample in &samples {
+    for sample in samples {
         cumulative += sample.weight;
         if cumulative >= threshold {
             return sample.value;

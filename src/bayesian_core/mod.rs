@@ -1,5 +1,6 @@
 use crate::nodes::Operation;
 use std::collections::HashMap;
+mod execution;
 pub mod graph_checks;
 mod inference;
 mod model_compilation;
@@ -7,7 +8,9 @@ mod plate_validation;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use inference::ControlledInferenceResult;
-pub use inference::{InferenceResult, NodeInstanceSamples, PosteriorSample};
+pub use inference::{
+    InferenceResult, NodeInstanceSamples, PosteriorSample, WARMUP_FAILURE_WARNING,
+};
 #[cfg(target_arch = "wasm32")]
 pub use inference::{InferenceRunner, InferenceStep};
 pub use model_compilation::CompiledGraph;

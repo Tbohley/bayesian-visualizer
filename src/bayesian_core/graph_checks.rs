@@ -3,9 +3,12 @@ use fugue::Model;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
-/// The values produced by one execution of a compiled graph model, keyed by
+/// Full values for graph inspection and posterior prediction, keyed by
 /// [`GraphNode`](crate::nodes::GraphNode) ID.
 pub type ModelValues = HashMap<u32, ModelResult>;
+
+/// One flat, row-major draw per latent random node, shared with live views.
+pub type PosteriorValues = HashMap<u32, std::sync::Arc<[f64]>>;
 
 /// Model execution can fail after an upstream random value has been sampled.
 /// For example, that value may be used as an invalid standard deviation by a
@@ -133,9 +136,10 @@ impl GraphIR {
         Ok(order)
     }
 
-    /// Samples every node in dependency order from the graph's prior model.
+    /// Convenience for graph-level tests; the UI reuses its compiled graph.
+    #[cfg(test)]
     pub fn ancestral_sample(&self) -> Result<HashMap<u32, ModelResult>, String> {
-        let model = self.create_model()?;
+        let model = self.clone().compile()?.model()?;
         let mut rng = rand::thread_rng();
         let (result, _trace) = fugue::runtime::handler::run(
             fugue::runtime::interpreters::PriorHandler {
@@ -145,11 +149,5 @@ impl GraphIR {
             model,
         );
         result
-    }
-
-    /// Compiles this graph into a hierarchical Fugue model after validating its structure.
-    /// Compilation errors are returned immediately, while value-dependent errors are retained in the model result.
-    pub fn create_model(&self) -> Result<GraphModel, String> {
-        super::model_compilation::create_model(self)
     }
 }

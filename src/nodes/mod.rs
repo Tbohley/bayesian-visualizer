@@ -394,7 +394,11 @@ pub fn on_node_click(
         let crate::data_vis::HistogramSubject::Node(x_node_id) = view.subject else {
             return None;
         };
-        (inference_results.is_some() && y_node_id != x_node_id).then_some((x_node_id, y_node_id))
+        let results = inference_results.as_ref()?;
+        (results.0.node_extents.contains_key(&x_node_id)
+            && results.0.node_extents.contains_key(&y_node_id)
+            && y_node_id != x_node_id)
+            .then_some((x_node_id, y_node_id))
     });
     //if there is an unfinished GraphLink, complete it.
     if !reduced_view.active
@@ -508,9 +512,16 @@ pub fn on_node_click(
             commands.trigger(ReloadSidebar);
 
             if let Ok(node) = node_ids.get(event.event_target()) {
-                if inference_results.is_some() {
+                if let Some(results) = inference_results.as_ref()
+                    && random_nodes.contains(event.event_target())
+                {
+                    let subject = if results.0.node_extents.contains_key(&node.0) {
+                        crate::data_vis::HistogramSubject::Node(node.0)
+                    } else {
+                        crate::data_vis::HistogramSubject::ObservedData(node.0)
+                    };
                     commands.trigger(OpenHistogramPanel {
-                        subject: crate::data_vis::HistogramSubject::Node(node.0),
+                        subject,
                         clear_toasts: true,
                     });
                 } else {

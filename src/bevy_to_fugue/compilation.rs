@@ -124,7 +124,7 @@ pub fn compile(
                     match g.compile() {
                         Ok(compiled) => {
                             match compiled.bind_debug_string() {
-                                Ok(code) => println!("Generated Fugue model:\n{code}"),
+                                Ok(code) => println!("Compiled Fugue execution plan:\n{code}"),
                                 Err(error) => {
                                     println!("Could not render Fugue bind model: {error}")
                                 }
@@ -183,7 +183,17 @@ pub fn global_sample(
         return;
     };
     let g = compiled.0.graph();
-    let sample_res = g.ancestral_sample();
+    let sample_res = compiled.0.model().and_then(|model| {
+        let mut rng = rand::thread_rng();
+        fugue::runtime::handler::run(
+            fugue::PriorHandler {
+                rng: &mut rng,
+                trace: fugue::Trace::default(),
+            },
+            model,
+        )
+        .0
+    });
 
     let vals = match sample_res {
         Ok(values) => values,
@@ -269,9 +279,9 @@ fn display_sample(
             .iter()
             .find(|(_, node, _)| node.0 == node_id)
             .expect("node not found");
-        let value = values
-            .get(&node_id)
-            .expect("sampled node val doesn't exist");
+        let Some(value) = values.get(&node_id) else {
+            continue;
+        };
         let console_output = match value {
             ModelResult::Scalar(_) => None,
             ModelResult::Plate(_) => Some(
@@ -376,6 +386,7 @@ pub fn run_inference(
     commands.trigger(SetPosteriorSampleEnabled(false));
 
     let compiled_graph = compiled.0.clone();
+    let node_extents = compiled_graph.posterior_node_extents();
     let control = Arc::new(InferenceControl::new());
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -384,7 +395,6 @@ pub fn run_inference(
         let task = AsyncComputeTaskPool::get().spawn(async move {
             let cancel_control = Arc::clone(&worker_control);
             let warmup_control = Arc::clone(&worker_control);
-            let diagnostic_control = Arc::clone(&worker_control);
             let sample_control = Arc::clone(&worker_control);
 
             compiled_graph.run_inference_controlled(
@@ -396,18 +406,6 @@ pub fn run_inference(
                     warmup_control
                         .warmup_completed
                         .store(completed, Ordering::Relaxed);
-                },
-                move |variables| {
-                    diagnostic_control
-                        .warmup_negative_infinity
-                        .store(!variables.is_empty(), Ordering::Relaxed);
-                    *diagnostic_control
-                        .warmup_negative_infinity_variables
-                        .lock()
-                        .expect("warmup diagnostic should not be poisoned") = variables;
-                    diagnostic_control
-                        .warmup_diagnostic_ready
-                        .store(true, Ordering::Release);
                 },
                 move |draw_index, values| {
                     sample_control
@@ -429,6 +427,8 @@ pub fn run_inference(
             requested_samples: n_samples,
             requested_warmup: n_warmup,
             auto_histogram_node,
+            node_extents,
+            plot_refresh_elapsed: 0.1,
         });
     }
 
@@ -455,11 +455,16 @@ pub fn run_inference(
             requested_samples: n_samples,
             requested_warmup: n_warmup,
             auto_histogram_node,
+            node_extents,
+            plot_refresh_elapsed: 0.1,
         });
     }
 }
 
-fn append_live_draws(result: &mut InferenceResult, draws: Vec<ModelValues>) {
+fn append_live_draws(
+    result: &mut InferenceResult,
+    draws: Vec<crate::bayesian_core::graph_checks::PosteriorValues>,
+) {
     for values in draws {
         for (node_id, value) in values {
             result
@@ -516,6 +521,7 @@ pub fn poll_inference_job(
     mut commands: Commands,
     mut job: Option<ResMut<InferenceJob>>,
     mut live_results: Option<ResMut<InferenceResultResource>>,
+    time: Res<Time>,
     selected: Query<&GraphNode, With<Selected>>,
     view: Option<Single<&HistogramView>>,
     joint_view: Option<Single<&JointDistributionView>>,
@@ -523,6 +529,7 @@ pub fn poll_inference_job(
     let Some(job) = job.as_mut() else {
         return;
     };
+    job.plot_refresh_elapsed += time.delta_secs();
     let joint_view = joint_view.as_ref().map(|joint| JointDistributionView {
         x_node_id: joint.x_node_id,
         y_node_id: joint.y_node_id,
@@ -548,21 +555,7 @@ pub fn poll_inference_job(
                         .warmup_completed
                         .store(completed, Ordering::Relaxed);
                 }
-                Ok(InferenceStep::WarmupComplete {
-                    negative_infinite_variables,
-                }) => {
-                    job.control
-                        .warmup_negative_infinity
-                        .store(!negative_infinite_variables.is_empty(), Ordering::Relaxed);
-                    *job.control
-                        .warmup_negative_infinity_variables
-                        .lock()
-                        .expect("warmup diagnostic should not be poisoned") =
-                        negative_infinite_variables;
-                    job.control
-                        .warmup_diagnostic_ready
-                        .store(true, Ordering::Release);
-                }
+                Ok(InferenceStep::WarmupComplete) => {}
                 Ok(InferenceStep::Sample { draw_index, values }) => {
                     job.control
                         .samples_completed
@@ -590,27 +583,6 @@ pub fn poll_inference_job(
     };
 
     let discard = job.control.discard_result.load(Ordering::Relaxed);
-    if !discard
-        && job.control.warmup_diagnostic_ready.load(Ordering::Acquire)
-        && job.control.warmup_negative_infinity.load(Ordering::Relaxed)
-        && !job
-            .control
-            .warmup_warning_emitted
-            .swap(true, Ordering::Relaxed)
-    {
-        let variables = job
-            .control
-            .warmup_negative_infinity_variables
-            .lock()
-            .expect("warmup diagnostic should not be poisoned")
-            .join(", ");
-        commands.trigger(ErrorToast {
-            text: format!(
-                "Warning: warmup ended with a -infinity log probability for {variables}. The posterior may be unreliable; check that variable's observed data and distribution parameters."
-            ),
-            color: Color::srgb(0.55, 0.30, 0.03),
-        });
-    }
     let pending = {
         let mut pending = job
             .control
@@ -630,18 +602,22 @@ pub fn poll_inference_job(
                 n_samples: 0,
                 n_warmup: job.requested_warmup,
                 samples_by_node: HashMap::new(),
+                node_extents: job.node_extents.clone(),
                 traces: Vec::new(),
             };
             append_live_draws(&mut results, pending);
             commands.insert_resource(InferenceResultResource(results));
         }
-        reopen_selected_histogram(
-            &mut commands,
-            &selected,
-            view.as_ref().map(|view| **view),
-            job.auto_histogram_node,
-        );
-        reopen_joint_distribution(&mut commands, joint_view);
+        if job.plot_refresh_elapsed >= 0.1 {
+            job.plot_refresh_elapsed = 0.0;
+            reopen_selected_histogram(
+                &mut commands,
+                &selected,
+                view.as_ref().map(|view| **view),
+                job.auto_histogram_node,
+            );
+            reopen_joint_distribution(&mut commands, joint_view);
+        }
     }
 
     let Some(outcome) = outcome else {
@@ -737,8 +713,16 @@ pub fn poll_inference_job(
                 reopen_joint_distribution(&mut commands, joint_view);
             }
             commands.trigger(ErrorToast {
-                text: format!("Inference error after {partial_count} retained draws: {error}"),
-                color: ERR_COLOR,
+                text: if error == WARMUP_FAILURE_WARNING {
+                    error.clone()
+                } else {
+                    format!("Inference error after {partial_count} retained draws: {error}")
+                },
+                color: if error == WARMUP_FAILURE_WARNING {
+                    Color::srgb(0.55, 0.30, 0.03)
+                } else {
+                    ERR_COLOR
+                },
             });
         }
     }

@@ -1,21 +1,27 @@
-use super::graph_checks::{ModelResult, ModelValues};
+#[cfg(test)]
+use super::graph_checks::ModelResult;
+use super::graph_checks::{ModelValues, PosteriorValues};
 use super::model_compilation::CompiledGraph;
+#[cfg(test)]
+use fugue::ScoreGivenTrace;
 use fugue::{
     Address, Choice, ChoiceValue, DiminishingAdaptation, Distribution, Handler, PriorHandler,
-    SafeReplayHandler, ScoreGivenTrace, Trace, adaptive_single_site_mh,
+    SafeReplayHandler, Trace, adaptive_single_site_mh,
 };
 use rand::{SeedableRng, rngs::StdRng};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// All retained posterior executions and their Fugue traces.
 ///
-/// Values stay in their original nested plate shape so future histogram views
-/// can select a concrete row without rerunning inference or pooling data.
+/// Only latent random nodes are retained, in flat row-major arrays. Dimensions
+/// are stored once; immutable draws are shared with live views without copying.
 pub struct InferenceResult {
     pub seed: u64,
     pub n_samples: usize,
     pub n_warmup: usize,
-    pub samples_by_node: HashMap<u32, Vec<ModelResult>>,
+    pub samples_by_node: HashMap<u32, Vec<Arc<[f64]>>>,
+    pub node_extents: HashMap<u32, Vec<usize>>,
     pub traces: Vec<Trace>,
 }
 
@@ -27,19 +33,17 @@ pub struct ControlledInferenceResult {
 
 /// A single observable boundary in a cooperatively driven inference run.
 ///
-/// Each call to [`InferenceRunner::step`] performs at most one model execution,
-/// which lets single-threaded hosts (notably browsers) return to their event
-/// loop between MCMC transitions.
+/// Each call to [`InferenceRunner::step`] advances a candidate, restarts one,
+/// or returns a retained draw, allowing single-threaded hosts to return to
+/// their event loop between transitions.
 pub enum InferenceStep {
     Warmup {
         completed: usize,
     },
-    WarmupComplete {
-        negative_infinite_variables: Vec<String>,
-    },
+    WarmupComplete,
     Sample {
         draw_index: usize,
-        values: ModelValues,
+        values: PosteriorValues,
     },
     Complete(ControlledInferenceResult),
 }
@@ -47,105 +51,121 @@ pub enum InferenceStep {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InferencePhase {
     Warmup,
-    DiagnoseWarmup,
     Sampling,
 }
 
 /// Stateful adaptive MCMC execution that can be advanced cooperatively.
 pub struct InferenceRunner {
     compiled: CompiledGraph,
-    rng: StdRng,
-    current_trace: Trace,
-    adaptation: DiminishingAdaptation,
+    chains: Vec<WarmupChain>,
+    active_chain: usize,
+    restarts: usize,
     seed: u64,
     requested_samples: usize,
     requested_warmup: usize,
     completed_warmup: usize,
-    samples_by_node: HashMap<u32, Vec<ModelResult>>,
+    samples_by_node: HashMap<u32, Vec<Arc<[f64]>>>,
     traces: Vec<Trace>,
     phase: InferencePhase,
 }
 
-fn negative_infinite_addresses(trace: &Trace) -> Vec<&str> {
-    trace
-        .choices
-        .values()
-        .filter(|choice| choice.logp == f64::NEG_INFINITY)
-        .map(|choice| choice.addr.0.as_str())
-        .collect()
-}
+// Internal candidates provide initialization resilience, not combined-chain inference.
+const NUM_CHAINS: usize = 3;
+const MAX_RESTARTS: usize = 5 * NUM_CHAINS;
+pub const WARMUP_FAILURE_WARNING: &str = "No chain completed warmup without a -infinity log probability. Check the model and observed data.";
 
-/// Rescores a trace while retaining the address and current log probability of
-/// observations as well as sampled choices. Fugue's `ScoreGivenTrace` only
-/// stores sampled choices, so its aggregate likelihood cannot identify which
-/// observed variable contributed `-infinity`.
-struct AddressedScoreGivenTrace {
-    base: Trace,
-    trace: Trace,
+struct WarmupChain {
+    rng: StdRng,
+    trace: Option<Trace>,
+    adaptation: DiminishingAdaptation,
 }
-
-impl AddressedScoreGivenTrace {
-    fn record(&mut self, addr: &Address, value: ChoiceValue, logp: f64) {
-        self.trace.choices.insert(
-            addr.clone(),
-            Choice {
-                addr: addr.clone(),
-                value,
-                logp,
-            },
-        );
+impl WarmupChain {
+    fn new(seed: u64) -> Self {
+        Self {
+            rng: StdRng::seed_from_u64(seed),
+            trace: None,
+            adaptation: DiminishingAdaptation::new(0.44, 0.7),
+        }
     }
 }
 
-impl Handler for AddressedScoreGivenTrace {
+fn has_negative_infinity(trace: &Trace) -> bool {
+    [trace.log_prior, trace.log_likelihood, trace.log_factors].contains(&f64::NEG_INFINITY)
+}
+
+/// Checks each site's score before aggregation, without storing observations.
+/// The marker in log_factors is used only to discard an invalid warmup state;
+/// healthy traces keep their ordinary Fugue scores and sampled choices.
+struct CheckedWarmupScore {
+    base: Trace,
+    trace: Trace,
+    impossible: bool,
+}
+impl Handler for CheckedWarmupScore {
     fn on_sample_f64(&mut self, addr: &Address, dist: &dyn Distribution<f64>) -> f64 {
         let value = self
             .base
             .get_f64(addr)
-            .expect("missing f64 sample in warmup trace");
+            .expect("compiled warmup trace has every latent");
         let logp = dist.log_prob(&value);
+        self.impossible |= logp == f64::NEG_INFINITY;
         self.trace.log_prior += logp;
-        self.record(addr, ChoiceValue::F64(value), logp);
+        self.trace.choices.insert(
+            addr.clone(),
+            Choice {
+                addr: addr.clone(),
+                value: ChoiceValue::F64(value),
+                logp,
+            },
+        );
         value
     }
-
-    fn on_sample_bool(&mut self, _: &Address, _: &dyn Distribution<bool>) -> bool {
-        unreachable!("compiled graphs only contain f64 random variables")
-    }
-
-    fn on_sample_u64(&mut self, _: &Address, _: &dyn Distribution<u64>) -> u64 {
-        unreachable!("compiled graphs only contain f64 random variables")
-    }
-
-    fn on_sample_usize(&mut self, _: &Address, _: &dyn Distribution<usize>) -> usize {
-        unreachable!("compiled graphs only contain f64 random variables")
-    }
-
-    fn on_observe_f64(&mut self, addr: &Address, dist: &dyn Distribution<f64>, value: f64) {
+    fn on_observe_f64(&mut self, _: &Address, dist: &dyn Distribution<f64>, value: f64) {
         let logp = dist.log_prob(&value);
+        self.impossible |= logp == f64::NEG_INFINITY;
         self.trace.log_likelihood += logp;
-        self.record(addr, ChoiceValue::F64(value), logp);
     }
-
-    fn on_observe_bool(&mut self, _: &Address, _: &dyn Distribution<bool>, _: bool) {
-        unreachable!("compiled graphs only contain f64 observations")
-    }
-
-    fn on_observe_u64(&mut self, _: &Address, _: &dyn Distribution<u64>, _: u64) {
-        unreachable!("compiled graphs only contain f64 observations")
-    }
-
-    fn on_observe_usize(&mut self, _: &Address, _: &dyn Distribution<usize>, _: usize) {
-        unreachable!("compiled graphs only contain f64 observations")
-    }
-
     fn on_factor(&mut self, logw: f64) {
+        self.impossible |= logw == f64::NEG_INFINITY;
         self.trace.log_factors += logw;
     }
-
-    fn finish(self) -> Trace {
+    fn on_sample_bool(&mut self, _: &Address, _: &dyn Distribution<bool>) -> bool {
+        unreachable!("compiled graphs use f64")
+    }
+    fn on_sample_u64(&mut self, _: &Address, _: &dyn Distribution<u64>) -> u64 {
+        unreachable!("compiled graphs use f64")
+    }
+    fn on_sample_usize(&mut self, _: &Address, _: &dyn Distribution<usize>) -> usize {
+        unreachable!("compiled graphs use f64")
+    }
+    fn on_observe_bool(&mut self, _: &Address, _: &dyn Distribution<bool>, _: bool) {
+        unreachable!("compiled graphs use f64")
+    }
+    fn on_observe_u64(&mut self, _: &Address, _: &dyn Distribution<u64>, _: u64) {
+        unreachable!("compiled graphs use f64")
+    }
+    fn on_observe_usize(&mut self, _: &Address, _: &dyn Distribution<usize>, _: usize) {
+        unreachable!("compiled graphs use f64")
+    }
+    fn finish(mut self) -> Trace {
+        if self.impossible {
+            self.trace.log_factors = f64::NEG_INFINITY;
+        }
         self.trace
     }
+}
+
+fn score_warmup(compiled: &CompiledGraph, base: Trace) -> Result<Trace, String> {
+    let (values, trace) = fugue::runtime::handler::run(
+        CheckedWarmupScore {
+            base,
+            trace: Trace::default(),
+            impossible: false,
+        },
+        compiled.inference_model(),
+    );
+    values.map_err(|error| format!("warmup scoring failed: {error}"))?;
+    Ok(trace)
 }
 
 /// One scalar posterior value and the retained draw that produced it.
@@ -160,7 +180,7 @@ pub struct PosteriorSample {
 
 /// Posterior samples for one concrete scalar instance of a node.
 ///
-/// Scalar nodes use an empty `indices` path. Plate values use paths such as
+/// Unplated random nodes use an empty `indices` path. Plate values use paths such as
 /// `[0]` or `[2, 4]`, preserving each concrete row independently.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeInstanceSamples {
@@ -187,20 +207,12 @@ impl CompiledGraph {
         n_warmup: usize,
     ) -> Result<InferenceResult, String> {
         Ok(self
-            .run_inference_controlled(
-                seed,
-                n_samples,
-                n_warmup,
-                || false,
-                |_| {},
-                |_| {},
-                |_, _| {},
-            )?
+            .run_inference_controlled(seed, n_samples, n_warmup, || false, |_| {}, |_, _| {})?
             .result)
     }
 
-    /// Runs the same adaptive single-site chain as `adaptive_mcmc_chain`, while
-    /// exposing safe boundaries for progress reporting and cancellation.
+    /// Warms up an internal candidate and restarts it on an impossible current
+    /// state. Only the first successful candidate produces posterior draws.
     ///
     /// Cancellation is checked between MH steps. Warmup values are never sent
     /// to `on_sample`; only retained posterior draws are published.
@@ -211,37 +223,17 @@ impl CompiledGraph {
         n_warmup: usize,
         should_cancel: impl Fn() -> bool,
         mut on_warmup: impl FnMut(usize),
-        mut on_warmup_complete: impl FnMut(Vec<String>),
-        mut on_sample: impl FnMut(usize, &ModelValues),
+        mut on_sample: impl FnMut(usize, &PosteriorValues),
     ) -> Result<ControlledInferenceResult, String> {
         let mut runner = self.clone().inference_runner(seed, n_samples, n_warmup)?;
         loop {
             match runner.step(should_cancel())? {
                 InferenceStep::Warmup { completed } => on_warmup(completed),
-                InferenceStep::WarmupComplete {
-                    negative_infinite_variables,
-                } => on_warmup_complete(negative_infinite_variables),
+                InferenceStep::WarmupComplete => {}
                 InferenceStep::Sample { draw_index, values } => on_sample(draw_index, &values),
                 InferenceStep::Complete(outcome) => return Ok(outcome),
             }
         }
-    }
-
-    fn variable_label_for_address(&self, address: &str) -> String {
-        let node_id = address
-            .strip_prefix("node#")
-            .and_then(|suffix| suffix.split('/').next())
-            .and_then(|id| id.parse::<u32>().ok());
-        node_id
-            .and_then(|id| self.graph().nodes.get(&id))
-            .map(|node| match node {
-                super::NodeIR::Random {
-                    label: Some(label), ..
-                } => label.clone(),
-                super::NodeIR::Random { id, .. } => format!("node {id}"),
-                _ => address.to_string(),
-            })
-            .unwrap_or_else(|| address.to_string())
     }
 
     /// Replays one retained posterior trace while freshly sampling nodes that
@@ -273,87 +265,40 @@ impl InferenceRunner {
             return Err("number of samples must be greater than zero".to_string());
         }
 
-        let mut rng = StdRng::seed_from_u64(seed);
-        let (_, current_trace) = fugue::runtime::handler::run(
-            PriorHandler {
-                rng: &mut rng,
-                trace: Trace::default(),
-            },
-            compiled.model()?,
-        );
+        let samples_by_node = compiled
+            .posterior_node_extents()
+            .keys()
+            .map(|&id| (id, Vec::with_capacity(requested_samples)))
+            .collect();
         Ok(Self {
             compiled,
-            rng,
-            current_trace,
-            adaptation: DiminishingAdaptation::new(0.44, 0.7),
+            chains: (0..NUM_CHAINS)
+                .map(|i| WarmupChain::new(seed.wrapping_add(i as u64)))
+                .collect(),
+            active_chain: 0,
+            restarts: 0,
             seed,
             requested_samples,
             requested_warmup,
             completed_warmup: 0,
-            samples_by_node: HashMap::new(),
+            samples_by_node,
             traces: Vec::with_capacity(requested_samples),
             phase: InferencePhase::Warmup,
         })
     }
 
-    /// Advances by one warmup transition, diagnostic pass, or retained draw.
+    /// Advances one warmup transition, candidate restart, or retained draw.
     pub fn step(&mut self, cancel_requested: bool) -> Result<InferenceStep, String> {
         if cancel_requested {
             return Ok(self.finish(true));
         }
 
         if self.phase == InferencePhase::Warmup {
-            if self.completed_warmup < self.requested_warmup {
-                let model_fn = || {
-                    self.compiled
-                        .model()
-                        .expect("a validated compiled graph should always create a model")
-                };
-                let (_, trace) = adaptive_single_site_mh(
-                    &mut self.rng,
-                    &model_fn,
-                    &self.current_trace,
-                    &mut self.adaptation,
-                );
-                self.current_trace = trace;
-                self.completed_warmup += 1;
-                return Ok(InferenceStep::Warmup {
-                    completed: self.completed_warmup,
-                });
-            }
-            self.phase = InferencePhase::DiagnoseWarmup;
-        }
-
-        if self.phase == InferencePhase::DiagnoseWarmup {
-            let (_, scored_trace) = fugue::runtime::handler::run(
-                ScoreGivenTrace {
-                    base: std::mem::take(&mut self.current_trace),
-                    trace: Trace::default(),
-                },
-                self.compiled.model()?,
-            );
-            self.current_trace = scored_trace;
-            let (_, diagnostic_trace) = fugue::runtime::handler::run(
-                AddressedScoreGivenTrace {
-                    base: self.current_trace.clone(),
-                    trace: Trace::default(),
-                },
-                self.compiled.model()?,
-            );
-            let negative_infinite_variables = negative_infinite_addresses(&diagnostic_trace)
-                .into_iter()
-                .map(|address| self.compiled.variable_label_for_address(address))
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            self.phase = InferencePhase::Sampling;
-            return Ok(InferenceStep::WarmupComplete {
-                negative_infinite_variables,
-            });
+            return self.step_warmup();
         }
 
         if self.traces.len() == self.requested_samples {
-            for &node_id in self.compiled.graph().nodes.keys() {
+            for &node_id in self.samples_by_node.keys() {
                 let count = self.samples_by_node.get(&node_id).map_or(0, Vec::len);
                 if count != self.requested_samples {
                     return Err(format!(
@@ -366,19 +311,19 @@ impl InferenceRunner {
         }
 
         let draw_index = self.traces.len();
-        let model_fn = || {
-            self.compiled
-                .model()
-                .expect("a validated compiled graph should always create a model")
-        };
+        let model_fn = || self.compiled.inference_model();
+        let chain = &mut self.chains[0];
         let (values, trace) = adaptive_single_site_mh(
-            &mut self.rng,
+            &mut chain.rng,
             &model_fn,
-            &self.current_trace,
-            &mut self.adaptation,
+            chain
+                .trace
+                .as_ref()
+                .expect("selected chain has completed warmup"),
+            &mut chain.adaptation,
         );
-        self.current_trace = trace;
-        let values: ModelValues = values
+        chain.trace = Some(trace);
+        let values: PosteriorValues = values
             .map_err(|error| format!("inference execution {} failed: {error}", draw_index + 1))?;
         for (&node_id, value) in &values {
             self.samples_by_node
@@ -386,8 +331,75 @@ impl InferenceRunner {
                 .or_default()
                 .push(value.clone());
         }
-        self.traces.push(self.current_trace.clone());
+        self.traces.push(chain.trace.as_ref().unwrap().clone());
         Ok(InferenceStep::Sample { draw_index, values })
+    }
+
+    fn step_warmup(&mut self) -> Result<InferenceStep, String> {
+        let chain = &mut self.chains[self.active_chain];
+        if chain.trace.is_none() {
+            let (values, trace) = fugue::runtime::handler::run(
+                PriorHandler {
+                    rng: &mut chain.rng,
+                    trace: Trace::default(),
+                },
+                self.compiled.inference_model(),
+            );
+            values.map_err(|error| format!("initial model execution failed: {error}"))?;
+            chain.trace = Some(score_warmup(&self.compiled, trace)?);
+        }
+        // Prior scores and every stored warmup score are fresh. Inspect the
+        // starting state even for zero warmup, before allowing MH to repair it.
+        if has_negative_infinity(chain.trace.as_ref().unwrap()) {
+            return self.restart_chain();
+        }
+        if self.completed_warmup == self.requested_warmup {
+            let selected = self.chains.swap_remove(self.active_chain);
+            self.chains.clear();
+            self.chains.push(selected);
+            self.active_chain = 0;
+            self.phase = InferencePhase::Sampling;
+            return Ok(InferenceStep::WarmupComplete);
+        }
+        let model_fn = || self.compiled.inference_model();
+        let (values, selected) = adaptive_single_site_mh(
+            &mut chain.rng,
+            &model_fn,
+            chain.trace.as_ref().unwrap(),
+            &mut chain.adaptation,
+        );
+        values.map_err(|error| {
+            format!(
+                "warmup execution {} failed: {error}",
+                self.completed_warmup + 1
+            )
+        })?;
+        // Fugue 0.1 returns stale aggregate scores on its selected trace.
+        // Rescore ONLY the returned (accepted/current) state: a proposal that
+        // was rejected must not discard an otherwise healthy chain.
+        let scored = score_warmup(&self.compiled, selected)?;
+        chain.trace = Some(scored);
+        if has_negative_infinity(chain.trace.as_ref().unwrap()) {
+            return self.restart_chain();
+        }
+        self.completed_warmup += 1;
+        Ok(InferenceStep::Warmup {
+            completed: self.completed_warmup,
+        })
+    }
+
+    fn restart_chain(&mut self) -> Result<InferenceStep, String> {
+        self.restarts += 1;
+        self.completed_warmup = 0;
+        if self.restarts > MAX_RESTARTS {
+            return Err(WARMUP_FAILURE_WARNING.to_string());
+        }
+        let seed = self
+            .seed
+            .wrapping_add((NUM_CHAINS + self.restarts - 1) as u64);
+        self.chains[self.active_chain] = WarmupChain::new(seed);
+        self.active_chain = (self.active_chain + 1) % NUM_CHAINS;
+        Ok(InferenceStep::Warmup { completed: 0 })
     }
 
     fn finish(&mut self, cancelled: bool) -> InferenceStep {
@@ -398,6 +410,7 @@ impl InferenceRunner {
                 n_samples: retained,
                 n_warmup: self.completed_warmup,
                 samples_by_node: std::mem::take(&mut self.samples_by_node),
+                node_extents: self.compiled.posterior_node_extents(),
                 traces: std::mem::take(&mut self.traces),
             },
             cancelled,
@@ -412,52 +425,34 @@ impl InferenceResult {
             .samples_by_node
             .get(&node_id)
             .ok_or_else(|| format!("inference results do not contain node {node_id}"))?;
-        let mut samples_by_instance = BTreeMap::<Vec<usize>, Vec<PosteriorSample>>::new();
-
-        for (draw_index, draw) in draws.iter().enumerate() {
-            flatten_result(draw, draw_index, &mut Vec::new(), &mut samples_by_instance);
+        let extents = self.node_extents.get(&node_id).ok_or_else(|| {
+            format!("inference results do not contain dimensions for node {node_id}")
+        })?;
+        let count = extents.iter().product::<usize>();
+        if draws.is_empty() {
+            return Err("cannot display an empty posterior".into());
         }
-
-        samples_by_instance
-            .into_iter()
-            .map(|(indices, samples)| {
-                if samples.is_empty() {
-                    return Err("cannot display an empty posterior".to_string());
-                }
-                if samples.iter().any(|sample| !sample.value.is_finite()) {
-                    return Err(format!(
-                        "node instance {indices:?} contains non-finite values"
-                    ));
-                }
-                Ok(NodeInstanceSamples { indices, samples })
+        if draws
+            .iter()
+            .any(|draw| draw.len() != count || draw.iter().any(|v| !v.is_finite()))
+        {
+            return Err(format!(
+                "node {node_id} contains invalid or non-finite posterior values"
+            ));
+        }
+        Ok((0..count)
+            .map(|index| NodeInstanceSamples {
+                indices: super::execution::unflatten(index, extents),
+                samples: draws
+                    .iter()
+                    .enumerate()
+                    .map(|(draw_index, draw)| PosteriorSample {
+                        draw_index,
+                        value: draw[index],
+                    })
+                    .collect(),
             })
-            .collect()
-    }
-}
-
-fn flatten_result(
-    value: &ModelResult,
-    draw_index: usize,
-    indices: &mut Vec<usize>,
-    output: &mut BTreeMap<Vec<usize>, Vec<PosteriorSample>>,
-) {
-    match value {
-        ModelResult::Scalar(value) => {
-            output
-                .entry(indices.clone())
-                .or_default()
-                .push(PosteriorSample {
-                    draw_index,
-                    value: *value,
-                })
-        }
-        ModelResult::Plate(items) => {
-            for (index, item) in items.iter().enumerate() {
-                indices.push(index);
-                flatten_result(item, draw_index, indices, output);
-                indices.pop();
-            }
-        }
+            .collect())
     }
 }
 
@@ -492,11 +487,12 @@ mod tests {
             samples_by_node: HashMap::from([(
                 7,
                 vec![
-                    ModelResult::Plate(vec![ModelResult::Scalar(1.0), ModelResult::Scalar(10.0)]),
-                    ModelResult::Plate(vec![ModelResult::Scalar(2.0), ModelResult::Scalar(20.0)]),
-                    ModelResult::Plate(vec![ModelResult::Scalar(3.0), ModelResult::Scalar(30.0)]),
+                    Arc::from([1.0, 10.0]),
+                    Arc::from([2.0, 20.0]),
+                    Arc::from([3.0, 30.0]),
                 ],
             )]),
+            node_extents: HashMap::from([(7, vec![2])]),
             traces: Vec::new(),
         };
 
@@ -518,15 +514,37 @@ mod tests {
     }
 
     #[test]
-    fn inference_retains_every_nodes_complete_draws() {
+    fn inference_retains_only_latent_random_nodes() {
         let compiled = simple_random_graph();
         let result = compiled.run_inference(42, 8, 2).unwrap();
 
         assert_eq!(result.traces.len(), 8);
-        assert_eq!(result.samples_by_node[&1].len(), 8);
-        assert_eq!(result.samples_by_node[&2].len(), 8);
+        assert!(!result.samples_by_node.contains_key(&1));
+        assert!(!result.samples_by_node.contains_key(&2));
         assert_eq!(result.samples_by_node[&3].len(), 8);
         assert_eq!(result.samples_for_node(3).unwrap()[0].samples.len(), 8);
+    }
+
+    #[test]
+    fn published_flat_draws_share_storage_with_retained_history() {
+        let published = std::cell::RefCell::new(Vec::new());
+        let outcome = simple_random_graph()
+            .run_inference_controlled(
+                42,
+                4,
+                1,
+                || false,
+                |_| {},
+                |_, values| published.borrow_mut().push(Arc::clone(&values[&3])),
+            )
+            .unwrap();
+        for (published, retained) in published
+            .borrow()
+            .iter()
+            .zip(&outcome.result.samples_by_node[&3])
+        {
+            assert!(Arc::ptr_eq(published, retained));
+        }
     }
 
     #[test]
@@ -543,7 +561,7 @@ mod tests {
         ));
         assert!(matches!(
             runner.step(false).unwrap(),
-            InferenceStep::WarmupComplete { .. }
+            InferenceStep::WarmupComplete
         ));
         assert!(matches!(
             runner.step(false).unwrap(),
@@ -577,7 +595,6 @@ mod tests {
                         cancel.set(true);
                     }
                 },
-                |_| {},
                 |_, _| published.set(published.get() + 1),
             )
             .unwrap();
@@ -600,7 +617,6 @@ mod tests {
                 2,
                 || cancel.get(),
                 |_| {},
-                |_| {},
                 |draw_index, _| {
                     published.set(published.get() + 1);
                     if draw_index == 2 {
@@ -619,41 +635,54 @@ mod tests {
     }
 
     #[test]
-    fn detects_negative_infinite_warmup_log_probabilities() {
+    fn detects_negative_infinity_in_any_score_component() {
         let finite = Trace {
             log_prior: -2.0,
             log_likelihood: -3.0,
-            log_factors: 0.0,
             ..Default::default()
         };
-        assert!(negative_infinite_addresses(&finite).is_empty());
-
-        let mut invalid = finite;
-        let address = Address("node#3/plate#10[2]".to_string());
-        invalid.choices.insert(
-            address.clone(),
-            Choice {
-                addr: address,
-                value: ChoiceValue::F64(1.0),
-                logp: f64::NEG_INFINITY,
-            },
-        );
-        assert_eq!(
-            negative_infinite_addresses(&invalid),
-            vec!["node#3/plate#10[2]"]
-        );
-
-        let compiled = simple_random_graph();
-        assert_eq!(
-            compiled.variable_label_for_address("node#3/plate#10[2]"),
-            "theta"
-        );
+        assert!(!has_negative_infinity(&finite));
+        for component in 0..3 {
+            let mut trace = finite.clone();
+            match component {
+                0 => trace.log_prior = f64::NEG_INFINITY,
+                1 => trace.log_likelihood = f64::NEG_INFINITY,
+                _ => trace.log_factors = f64::NEG_INFINITY,
+            }
+            assert!(has_negative_infinity(&trace));
+        }
     }
 
     #[test]
-    fn reports_observed_variable_with_negative_infinite_warmup_likelihood() {
-        use std::cell::RefCell;
+    fn an_individual_impossible_score_cannot_be_hidden_by_positive_infinity() {
+        #[derive(Clone)]
+        struct FixedScore(f64);
+        impl Distribution<f64> for FixedScore {
+            fn sample(&self, _: &mut dyn rand::RngCore) -> f64 {
+                0.0
+            }
+            fn log_prob(&self, _: &f64) -> f64 {
+                self.0
+            }
+            fn clone_box(&self) -> Box<dyn Distribution<f64>> {
+                Box::new(self.clone())
+            }
+        }
+        let mut handler = CheckedWarmupScore {
+            base: Trace::default(),
+            trace: Trace::default(),
+            impossible: false,
+        };
+        let address = Address("observed".into());
+        handler.on_observe_f64(&address, &FixedScore(f64::INFINITY), 0.0);
+        handler.on_observe_f64(&address, &FixedScore(f64::NEG_INFINITY), 0.0);
+        let trace = handler.finish();
+        assert!(trace.log_likelihood.is_nan());
+        assert!(has_negative_infinity(&trace));
+    }
 
+    #[test]
+    fn impossible_observations_stop_after_the_restart_budget() {
         let mut graph = GraphIR::new();
         graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 0.0 });
         graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 1.0 });
@@ -687,22 +716,230 @@ mod tests {
             },
         );
 
-        let diagnostic = RefCell::new(Vec::new());
-        graph
+        let mut runner = graph.compile().unwrap().inference_runner(42, 1, 1).unwrap();
+        for restart in 1..=MAX_RESTARTS {
+            assert!(matches!(
+                runner.step(false).unwrap(),
+                InferenceStep::Warmup { completed: 0 }
+            ));
+            assert_eq!(runner.restarts, restart);
+            assert!(runner.traces.is_empty());
+        }
+        assert_eq!(
+            runner.step(false).err().as_deref(),
+            Some(WARMUP_FAILURE_WARNING)
+        );
+        assert_eq!(runner.restarts, MAX_RESTARTS + 1);
+        assert!(runner.traces.is_empty());
+    }
+
+    fn bounded_likelihood_graph() -> CompiledGraph {
+        let mut graph = GraphIR::new();
+        for (id, value) in [(1, -2.0), (2, 2.0), (4, 1.0)] {
+            graph.nodes.insert(id, NodeIR::Scalar { id, value });
+        }
+        graph.nodes.insert(
+            3,
+            NodeIR::Random {
+                id: 3,
+                label: None,
+                dist_type: "Uniform".into(),
+                params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
+            },
+        );
+        graph.nodes.insert(
+            5,
+            NodeIR::Compute {
+                id: 5,
+                operation: crate::nodes::Operation::Add,
+                params: vec![ParamIR { from_node: 3 }, ParamIR { from_node: 4 }],
+            },
+        );
+        graph.nodes.insert(
+            6,
+            NodeIR::Random {
+                id: 6,
+                label: None,
+                dist_type: "Uniform".into(),
+                params: vec![ParamIR { from_node: 3 }, ParamIR { from_node: 5 }],
+            },
+        );
+        graph.plates.insert(
+            10,
+            PlateIR {
+                id: 10,
+                n: 1,
+                nodes: vec![6],
+                plates: vec![],
+                data: HashMap::from([("y".into(), vec![0.0])]),
+                mapping: HashMap::from([(6, "y".into())]),
+            },
+        );
+        graph.compile().unwrap()
+    }
+
+    fn prior_is_valid(compiled: &CompiledGraph, seed: u64) -> bool {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let (_, trace) = fugue::runtime::handler::run(
+            PriorHandler {
+                rng: &mut rng,
+                trace: Trace::default(),
+            },
+            compiled.inference_model(),
+        );
+        !has_negative_infinity(&trace)
+    }
+
+    fn seed_with_bad_then_good_initialization(compiled: &CompiledGraph) -> u64 {
+        (0..100)
+            .find(|&seed| !prior_is_valid(compiled, seed) && prior_is_valid(compiled, seed + 1))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_bad_initialization_is_silently_replaced_and_only_one_chain_is_retained() {
+        let compiled = bounded_likelihood_graph();
+        let seed = seed_with_bad_then_good_initialization(&compiled);
+        let mut runner = compiled.clone().inference_runner(seed, 4, 5).unwrap();
+        assert_eq!(runner.chains.len(), NUM_CHAINS);
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Warmup { completed: 0 }
+        ));
+        assert_eq!(runner.restarts, 1);
+        assert_eq!(runner.active_chain, 1);
+        let result = loop {
+            if let InferenceStep::Complete(outcome) = runner.step(false).unwrap() {
+                break outcome.result;
+            }
+        };
+        assert_eq!(runner.chains.len(), 1);
+        assert_eq!(runner.restarts, 1);
+        assert_eq!(result.n_warmup, 5);
+        assert_eq!(result.n_samples, 4);
+        for trace in result.traces {
+            let (_, scored) = fugue::runtime::handler::run(
+                ScoreGivenTrace {
+                    base: trace,
+                    trace: Trace::default(),
+                },
+                compiled.inference_model(),
+            );
+            assert!(scored.total_log_weight().is_finite());
+        }
+        let repeated = compiled.run_inference(seed, 4, 5).unwrap();
+        assert_eq!(result.samples_by_node, repeated.samples_by_node);
+    }
+
+    #[test]
+    fn an_impossible_current_state_during_warmup_resets_all_warmup_progress() {
+        let compiled = bounded_likelihood_graph();
+        let seed = (0..100)
+            .find(|&seed| prior_is_valid(&compiled, seed) && prior_is_valid(&compiled, seed + 1))
+            .unwrap();
+        let mut runner = compiled.inference_runner(seed, 1, 3).unwrap();
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Warmup { completed: 1 }
+        ));
+        // Inject a genuinely impossible current state after warmup has started.
+        let trace = runner.chains[0].trace.as_mut().unwrap();
+        trace
+            .choices
+            .get_mut(&fugue::Address("node#3".into()))
+            .unwrap()
+            .value = fugue::ChoiceValue::F64(1.5);
+        trace.log_likelihood = f64::NEG_INFINITY;
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Warmup { completed: 0 }
+        ));
+        assert_eq!(runner.restarts, 1);
+        assert!(runner.chains[0].trace.is_none());
+        assert!(runner.chains[0].adaptation.total_counts.is_empty());
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Warmup { completed: 1 }
+        ));
+    }
+
+    #[test]
+    fn impossible_rejected_proposals_do_not_restart_a_healthy_chain() {
+        let mut graph = GraphIR::new();
+        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: -1.0 });
+        graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 1.0 });
+        graph.nodes.insert(
+            3,
+            NodeIR::Random {
+                id: 3,
+                label: None,
+                dist_type: "Uniform".into(),
+                params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
+            },
+        );
+        let mut runner = graph
             .compile()
             .unwrap()
-            .run_inference_controlled(
-                42,
-                1,
-                1,
-                || false,
-                |_| {},
-                |variables| *diagnostic.borrow_mut() = variables,
-                |_, _| {},
-            )
+            .inference_runner(42, 1, 100)
             .unwrap();
+        for step in 1..=100 {
+            if step > 1 {
+                runner.chains[0]
+                    .adaptation
+                    .scales
+                    .insert(fugue::Address("node#3".into()), (100.0, 100.0_f64.ln()));
+            }
+            assert!(
+                matches!(runner.step(false).unwrap(), InferenceStep::Warmup { completed } if completed == step)
+            );
+            assert_eq!(runner.restarts, 0);
+        }
+        let adaptation = &runner.chains[0].adaptation;
+        assert!(
+            adaptation.accept_counts.values().sum::<usize>()
+                < adaptation.total_counts.values().sum::<usize>()
+        );
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::WarmupComplete
+        ));
+    }
 
-        assert_eq!(*diagnostic.borrow(), vec!["y"]);
+    #[test]
+    fn zero_warmup_still_rejects_an_impossible_initial_state() {
+        let compiled = bounded_likelihood_graph();
+        let seed = seed_with_bad_then_good_initialization(&compiled);
+        let mut runner = compiled.inference_runner(seed, 1, 0).unwrap();
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Warmup { completed: 0 }
+        ));
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::WarmupComplete
+        ));
+        assert_eq!(runner.restarts, 1);
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Sample { draw_index: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn cancellation_between_restarts_retains_no_failed_chain_draws() {
+        let compiled = bounded_likelihood_graph();
+        let seed = seed_with_bad_then_good_initialization(&compiled);
+        let mut runner = compiled.inference_runner(seed, 5, 5).unwrap();
+        assert!(matches!(
+            runner.step(false).unwrap(),
+            InferenceStep::Warmup { completed: 0 }
+        ));
+        let InferenceStep::Complete(outcome) = runner.step(true).unwrap() else {
+            panic!("expected cancellation");
+        };
+        assert!(outcome.cancelled);
+        assert_eq!(outcome.result.n_samples, 0);
+        assert!(outcome.result.traces.is_empty());
     }
 
     #[test]
@@ -735,7 +972,7 @@ mod tests {
                 n: 1,
                 nodes: vec![4],
                 plates: Vec::new(),
-                data: HashMap::from([("y".to_string(), vec![123.0])]),
+                data: HashMap::from([("y".to_string(), vec![12.0])]),
                 mapping: HashMap::from([(4, "y".to_string())]),
             },
         );
@@ -746,10 +983,14 @@ mod tests {
             .posterior_predictive_sample(&inference.traces[0])
             .unwrap();
 
-        assert_eq!(predictive[&3], inference.samples_by_node[&3][0]);
+        assert_eq!(
+            predictive[&3],
+            ModelResult::Scalar(inference.samples_by_node[&3][0][0])
+        );
+        assert!(!inference.samples_by_node.contains_key(&4));
         assert_ne!(
             predictive[&4],
-            ModelResult::Plate(vec![ModelResult::Scalar(123.0)])
+            ModelResult::Plate(vec![ModelResult::Scalar(12.0)])
         );
     }
 }

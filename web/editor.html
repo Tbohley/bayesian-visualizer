@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bayesian Visualizer — Page Editor</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/grapesjs@0.23.6/dist/css/grapes.min.css"
+    />
+    <link rel="stylesheet" href="./editor.css" />
+  </head>
+  <body>
+    <div class="editor-shell">
+      <header class="editor-toolbar">
+        <div class="editor-brand">
+          <strong>Page editor</strong>
+          <span>Header + article only</span>
+        </div>
+        <div class="editor-actions" aria-label="Editor actions">
+          <button type="button" data-command="core:undo" title="Undo">Undo</button>
+          <button type="button" data-command="core:redo" title="Redo">Redo</button>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <button type="button" data-device="Desktop" class="is-active">Desktop</button>
+          <button type="button" data-device="Tablet">Tablet</button>
+          <button type="button" data-device="Mobile">Mobile</button>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <button type="button" id="reload-source">Reload source</button>
+          <button type="button" id="export-html" class="primary-action">Save index.html</button>
+        </div>
+      </header>
+
+      <div class="editor-workspace">
+        <aside class="editor-sidebar editor-sidebar-left">
+          <div class="panel-heading">Add blocks</div>
+          <div id="blocks"></div>
+        </aside>
+
+        <main id="gjs" aria-label="Visual page editor"></main>
+
+        <aside class="editor-sidebar editor-sidebar-right">
+          <div class="panel-tabs" role="tablist" aria-label="Inspector panels">
+            <button type="button" class="panel-tab is-active" data-panel="styles">Design</button>
+            <button type="button" class="panel-tab" data-panel="layers">Layers</button>
+            <button type="button" class="panel-tab" data-panel="traits">Settings</button>
+          </div>
+          <div class="panel-view is-active" data-panel-view="styles">
+            <div id="styles"></div>
+          </div>
+          <div class="panel-view" data-panel-view="layers">
+            <div id="layers"></div>
+          </div>
+          <div class="panel-view" data-panel-view="traits">
+            <div id="traits"></div>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="editor-statusbar">
+        <span id="editor-status">Loading web/index.html…</span>
+        <span>Double-click text to edit · Drag blocks from the left · Select an element to style it</span>
+      </footer>
+    </div>
+
+    <script src="https://unpkg.com/grapesjs@0.23.6/dist/grapes.min.js"></script>
+    <script type="module" src="./editor.js"></script>
+  </body>
+</html>
