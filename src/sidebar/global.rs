@@ -139,7 +139,6 @@ fn on_confirm_graph_change(
     commands.remove_resource::<SampleSelections>();
     commands.remove_resource::<PlateIndexSelections>();
     commands.trigger(SetInferenceControlsEnabled(false));
-    commands.trigger(SetPosteriorSampleEnabled(false));
     commands.trigger(CloseHistogramPanel);
 }
 
@@ -160,9 +159,6 @@ fn menu_item(text: &str) -> impl Bundle {
         )],
     )
 }
-
-#[derive(Component)]
-struct NodeTypeButtonLabel;
 
 pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &GlobalSidebar)>) {
     for (sidebar_entity, _comp) in global.iter() {
@@ -271,51 +267,6 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
 
     commands.entity(global_sidebar_entity).with_child(divider());
 
-    commands.entity(global_sidebar_entity).with_child((
-        Text::new("Node type:"),
-        text_font(),
-        Node {
-            margin: px(8.).bottom(),
-            ..default()
-        },
-        TextColor(NODE_NAME_COLOR),
-    ));
-
-    let nodemode_menu = commands
-        .spawn((
-            Name::new("node_mode_context_menu"),
-            Button,
-            Node {
-                width: px(SIDEBAR_WIDTH * 0.75),
-                height: px(30),
-                border: UiRect::all(px(5)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::MAX,
-                margin: px(4).bottom(),
-                ..default()
-            },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::BLACK),
-            children![(
-                NodeTypeButtonLabel,
-                Pickable::IGNORE,
-                Text::new("Random"),
-                text_font(),
-                TextColor(Color::WHITE),
-                TextShadow::default(),
-            )],
-        ))
-        .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
-            event.propagate(false);
-            println!("Clicked context menu");
-            debug!("click: {}", event.pointer_location.position);
-            commands.trigger(OpenNodeTypeMenu {
-                pos: event.pointer_location.position,
-            });
-        })
-        .id();
-
     let compile_button = commands
         .spawn((
             Name::new("compile_button"),
@@ -345,77 +296,9 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
         })
         .id();
 
-    let sample_button = commands
-        .spawn((
-            Name::new("sample_button"),
-            RequiresCompilation,
-            InteractionDisabled,
-            Pickable::IGNORE,
-            Button,
-            Node {
-                width: px(SIDEBAR_WIDTH * 0.75),
-                height: px(30),
-                border: UiRect::all(px(5)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::MAX,
-                margin: px(4).bottom(),
-                ..default()
-            },
-            BorderColor::all(DISABLED_CONTROL_COLOR),
-            BackgroundColor(DISABLED_CONTROL_COLOR),
-            children![(
-                Pickable::IGNORE,
-                Text::new("Basic sample"),
-                text_font(),
-                TextColor(DISABLED_TEXT_COLOR),
-            )],
-        ))
-        .observe(compilation::global_sample)
-        .id();
-
-    let posterior_sample_button = commands
-        .spawn((
-            Name::new("posterior_sample_button"),
-            RequiresInference,
-            InteractionDisabled,
-            Pickable::IGNORE,
-            Button,
-            Node {
-                width: px(SIDEBAR_WIDTH * 0.75),
-                height: px(30),
-                border: UiRect::all(px(5)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::MAX,
-                margin: px(4).bottom(),
-                ..default()
-            },
-            BorderColor::all(DISABLED_CONTROL_COLOR),
-            BackgroundColor(DISABLED_CONTROL_COLOR),
-            children![(
-                Pickable::IGNORE,
-                Text::new("Post sample"),
-                text_font(),
-                TextColor(DISABLED_TEXT_COLOR),
-            )],
-        ))
-        .observe(compilation::posterior_sample)
-        .id();
-
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(nodemode_menu);
-    commands.entity(global_sidebar_entity).with_child(divider());
     commands
         .entity(global_sidebar_entity)
         .add_child(compile_button);
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(sample_button);
-    commands
-        .entity(global_sidebar_entity)
-        .add_child(posterior_sample_button);
     commands.entity(global_sidebar_entity).with_child(divider());
     commands.entity(global_sidebar_entity).with_child((
         Text::new("Inference:"),
@@ -598,7 +481,6 @@ pub fn load_global_sidebar(mut commands: Commands, global: Query<(Entity, &Globa
     commands
         .entity(global_sidebar_entity)
         .add_child(selection_controls);
-    //TODO: context menu for selecting which type of node to create
 }
 
 fn inference_textbox(
@@ -739,53 +621,6 @@ pub fn set_inference_controls_enabled(
     }
 }
 
-///un-grays out posterior sample button once inference has been run.
-pub fn set_posterior_sample_enabled(
-    event: On<SetPosteriorSampleEnabled>,
-    mut commands: Commands,
-    mut controls: Query<
-        (
-            Entity,
-            &mut BackgroundColor,
-            &mut BorderColor,
-            Option<&Children>,
-        ),
-        With<RequiresInference>,
-    >,
-    mut text_colors: Query<&mut TextColor>,
-) {
-    for (entity, mut background, mut border, children) in &mut controls {
-        let color = if event.0 {
-            BUTTON_COLOR
-        } else {
-            DISABLED_CONTROL_COLOR
-        };
-        background.0 = color;
-        *border = BorderColor::all(color);
-
-        if event.0 {
-            commands.entity(entity).remove::<InteractionDisabled>();
-            commands.entity(entity).remove::<Pickable>();
-        } else {
-            commands
-                .entity(entity)
-                .insert((InteractionDisabled, Pickable::IGNORE));
-        }
-
-        if let Some(children) = children {
-            for child in children.iter() {
-                if let Ok(mut text_color) = text_colors.get_mut(child) {
-                    text_color.0 = if event.0 {
-                        Color::WHITE
-                    } else {
-                        DISABLED_TEXT_COLOR
-                    };
-                }
-            }
-        }
-    }
-}
-
 pub fn update_random_seed_placeholder(
     seed: Query<&EditableText, (With<RandomSeedTextbox>, Changed<EditableText>)>,
     mut placeholder: Single<&mut Visibility, With<RandomSeedPlaceholder>>,
@@ -859,7 +694,6 @@ pub fn invalidate_compilation_on_graph_change(
         commands.remove_resource::<SampleSelections>();
         commands.remove_resource::<PlateIndexSelections>();
         commands.trigger(SetInferenceControlsEnabled(false));
-        commands.trigger(SetPosteriorSampleEnabled(false));
         commands.trigger(CloseHistogramPanel);
     }
 }
@@ -952,58 +786,4 @@ fn plate_execution_metadata_changed(
         }
     }
     false
-}
-
-//
-fn on_set_node_mode(
-    event: On<Pointer<Press>>,
-    menu_items: Query<&ContextMenuItem>,
-    mut commands: Commands,
-    node_mode: Single<&mut NodeMode>,
-    mut button_label: Single<&mut Text, With<NodeTypeButtonLabel>>,
-) {
-    let target = event.original_event_target();
-
-    if let Ok(item) = menu_items.get(target) {
-        //set distribution of node to new dist... or maybe on apply?
-        println!("Selected node creation type: {}", item.0);
-        button_label.0 = item.0.clone();
-        node_mode.into_inner().0 = match item.0.as_str() {
-            "Random" => NodeType::Random,
-            "Compute" => NodeType::Compute,
-            "Scalar" => NodeType::Scalar,
-            _ => NodeType::Random,
-        };
-        commands.trigger(CloseContextMenus);
-        commands.trigger(ReloadSidebar);
-    }
-}
-
-pub fn on_open_node_type_menu(event: On<OpenNodeTypeMenu>, mut commands: Commands) {
-    commands.trigger(CloseContextMenus);
-    let pos = event.pos;
-    println!("open context menu at: {pos}");
-
-    commands
-        .spawn((
-            Name::new("node type selector"),
-            ContextMenu,
-            ZIndex(999),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(pos.x),
-                top: px(pos.y),
-                flex_direction: FlexDirection::Column,
-                border_radius: BorderRadius::all(px(4)),
-                ..default()
-            },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
-            children![
-                context_item("Random"),
-                context_item("Compute"),
-                context_item("Scalar"),
-            ],
-        ))
-        .observe(on_set_node_mode);
 }

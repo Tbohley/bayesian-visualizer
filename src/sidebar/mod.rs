@@ -36,9 +36,6 @@ pub struct PlateNTextbox;
 pub struct RequiresCompilation;
 
 #[derive(Component)]
-pub struct RequiresInference;
-
-#[derive(Component)]
 pub struct InferenceTextbox {
     pub tab_index: i32,
 }
@@ -73,9 +70,6 @@ pub struct SetInferenceControlsEnabled(pub bool);
 #[derive(Event)]
 pub struct DeleteSelectedNode;
 
-#[derive(Event)]
-pub struct SetPosteriorSampleEnabled(pub bool);
-
 /// event opening a new context menu at position `pos`
 #[derive(Event)]
 pub struct OpenDistributionMenu {
@@ -99,6 +93,7 @@ pub struct OpenDatasetMenu {
 
 #[derive(Event)]
 pub struct OpenPlateMappingMenu {
+    pub plate: Entity,
     pub pos: Vec2,
     pub node: Entity,
 }
@@ -282,7 +277,7 @@ pub fn reload_sidebar(
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar: Query<(Entity, &LocalSidebar)>,
     joint_indicators: Query<Entity, With<crate::data_vis::JointSelectedIndicator>>,
-    mut plates: Query<&mut Plate>,
+    mut plates: Query<(Entity, &mut Plate)>,
 ) {
     for (sidebar_entity, _comp) in sidebar.iter() {
         commands.entity(sidebar_entity).despawn();
@@ -331,11 +326,11 @@ pub fn reload_sidebar(
         let (maybe_random, maybe_scalar, maybe_transform) = node_data.get(entity).unwrap();
         let observed_columns = plates
             .iter()
-            .flat_map(|plate| plate.mapping.iter())
+            .flat_map(|(_, plate)| plate.mapping.iter())
             .filter(|(_, column)| column.as_str() != "unobserved")
             .map(|(entity, column)| (*entity, column.clone()))
             .collect::<HashMap<_, _>>();
-        let is_observed = plates.iter().any(|plate| {
+        let is_observed = plates.iter().any(|(_, plate)| {
             plate
                 .mapping
                 .get(&entity)
@@ -372,10 +367,48 @@ pub fn reload_sidebar(
             (None, None, None) if plates.contains(entity) => plates
                 .get_mut(entity)
                 .expect("selected plate should exist")
-                .build(&mut commands, sidebar_entity, &plate_nodes),
+                .1
+                .build(&mut commands, sidebar_entity, entity, &plate_nodes),
             _ => warn!("Node has invalid or multiple node type components"),
         }
 
+        if maybe_random.is_some() || maybe_scalar.is_some() {
+            if let Ok((_, _, position, _, _)) = plate_nodes.get(entity) {
+                let mut containing = plates
+                    .iter()
+                    .filter(|(_, p)| {
+                        !p.data.data.is_empty()
+                            && p.bounds.contains_point(position.translation.truncate())
+                    })
+                    .collect::<Vec<_>>();
+                containing.sort_by_key(|(e, _)| e.to_bits());
+                for (plate_entity, plate) in containing {
+                    let mapping = plate
+                        .mapping
+                        .get(&entity)
+                        .map(String::as_str)
+                        .unwrap_or("unobserved");
+                    let label = format!("{}: {}", plate.data.name, mapping);
+                    let button = plate_menu::selector_button(
+                        &mut commands,
+                        "node_observation_selector",
+                        &label,
+                    )
+                    .observe(
+                        move |mut event: On<Pointer<Press>>, mut commands: Commands| {
+                            event.propagate(false);
+                            commands.trigger(OpenPlateMappingMenu {
+                                plate: plate_entity,
+                                node: entity,
+                                pos: event.pointer_location.position,
+                            });
+                        },
+                    )
+                    .id();
+                    commands.entity(sidebar_entity).add_child(button);
+                }
+            }
+        }
         if is_observed {
             let node_id = node.0;
             let raw_data = commands
@@ -447,7 +480,9 @@ pub fn delete_selected_node_on_backspace(
     editable_text: Query<(), With<EditableText>>,
     mut commands: Commands,
 ) {
-    if !keyboard_input.just_pressed(KeyCode::Backspace) {
+    if !keyboard_input.just_pressed(KeyCode::Backspace)
+        && !keyboard_input.just_pressed(KeyCode::Delete)
+    {
         return;
     }
     if input_focus
@@ -461,7 +496,10 @@ pub fn delete_selected_node_on_backspace(
 
 pub fn delete_selected_node(
     _event: On<DeleteSelectedNode>,
-    selected: Option<Single<Entity, (With<Selected>, With<GraphNode>)>>,
+    selected: Option<Single<Entity, With<Selected>>>,
+    mut random: Query<&mut RandomNode>,
+    mut compute: Query<&mut ComputeNode>,
+    mut plates: Query<&mut Plate>,
     finished_links: Query<(Entity, &GraphLink), Without<UnfinishedLink>>,
     unfinished_links: Query<(Entity, &GraphLink), With<UnfinishedLink>>,
     mut commands: Commands,
@@ -475,6 +513,42 @@ pub fn delete_selected_node(
         return;
     }
     let node = *selected;
+    if let Ok((_, link)) = finished_links.get(node) {
+        if let Some(target) = link.to {
+            if let Ok(mut n) = random.get_mut(target) {
+                for p in &mut n.params {
+                    if p.1 == Some(link.from) {
+                        p.1 = None;
+                    }
+                }
+            }
+            if let Ok(mut n) = compute.get_mut(target) {
+                for p in &mut n.params {
+                    if p.1 == Some(link.from) {
+                        p.1 = None;
+                    }
+                }
+            }
+        }
+    } else {
+        for mut n in &mut random {
+            for p in &mut n.params {
+                if p.1 == Some(node) {
+                    p.1 = None;
+                }
+            }
+        }
+        for mut n in &mut compute {
+            for p in &mut n.params {
+                if p.1 == Some(node) {
+                    p.1 = None;
+                }
+            }
+        }
+        for mut p in &mut plates {
+            p.mapping.remove(&node);
+        }
+    }
     commands.entity(node).despawn();
 
     for (link_entity, link) in &finished_links {

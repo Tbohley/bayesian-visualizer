@@ -1,6 +1,10 @@
 use crate::nodes::Operation;
 use std::collections::HashMap;
 mod execution;
+mod value;
+mod type_checking;
+pub use value::{ScalarType, Value, ValueType};
+pub use type_checking::{CompilationError, NodeShape};
 pub mod graph_checks;
 mod inference;
 mod model_compilation;
@@ -35,18 +39,17 @@ impl GraphIR {
 
 #[derive(Clone, Debug)]
 pub enum NodeIR {
+    Constant {
+        value: Value,
+    },
     Random {
-        id: u32,
-        label: Option<String>,
         dist_type: String,
         params: Vec<ParamIR>,
     },
     Scalar {
-        id: u32,
         value: f64,
     },
     Compute {
-        id: u32,
         operation: Operation,
         params: Vec<ParamIR>,
     },

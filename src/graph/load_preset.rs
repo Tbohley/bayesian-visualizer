@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 
 use super::*;
 use crate::bevy_to_fugue::{
-    GraphIRResource, InferenceJob, InferenceResultResource, InferenceStatusResource, SamplePopup,
+    GraphIRResource, InferenceJob, InferenceResultResource, InferenceStatusResource,
 };
 use crate::constants::*;
 use crate::data_vis::{
@@ -12,7 +12,7 @@ use crate::data_vis::{
 use crate::nodes::*;
 use crate::sidebar::{
     CloseContextMenus, ContextMenu, Datasets, LocalSidebar, ReloadSidebar,
-    SetInferenceControlsEnabled, SetPosteriorSampleEnabled,
+    SetInferenceControlsEnabled,
 };
 use crate::ui::{ErrorToast, ErrorToastBox};
 use bevy::prelude::*;
@@ -30,7 +30,6 @@ pub struct GraphPreset {
     pub plates: Vec<PresetPlate>,
 }
 
-#[allow(dead_code)] // The bundled catalog intentionally starts empty.
 pub enum PresetNode {
     Random {
         id: u32,
@@ -280,7 +279,6 @@ pub fn on_load_preset(
     reduced_links: Query<Entity, With<ReducedViewLink>>,
     drafts: Query<Entity, With<PlateDraft>>,
     local_sidebars: Query<Entity, With<LocalSidebar>>,
-    sample_popups: Query<Entity, With<SamplePopup>>,
     histogram_panels: Query<Entity, With<InferenceHistogramPanel>>,
     error_toasts: Query<Entity, With<ErrorToastBox>>,
     inference_job: Option<Res<InferenceJob>>,
@@ -317,7 +315,6 @@ pub fn on_load_preset(
         &reduced_links,
         &drafts,
         &local_sidebars,
-        &sample_popups,
         &histogram_panels,
         &error_toasts,
     );
@@ -351,7 +348,6 @@ fn clear_editable_graph(
     reduced_links: &Query<Entity, With<ReducedViewLink>>,
     drafts: &Query<Entity, With<PlateDraft>>,
     local_sidebars: &Query<Entity, With<LocalSidebar>>,
-    sample_popups: &Query<Entity, With<SamplePopup>>,
     histogram_panels: &Query<Entity, With<InferenceHistogramPanel>>,
     error_toasts: &Query<Entity, With<ErrorToastBox>>,
 ) {
@@ -361,7 +357,6 @@ fn clear_editable_graph(
     entities.extend(reduced_links.iter());
     entities.extend(drafts.iter());
     entities.extend(local_sidebars.iter());
-    entities.extend(sample_popups.iter());
     entities.extend(histogram_panels.iter());
     entities.extend(error_toasts.iter());
     for entity in entities {
@@ -373,7 +368,6 @@ fn clear_editable_graph(
     commands.remove_resource::<SampleSelections>();
     commands.remove_resource::<PlateIndexSelections>();
     commands.trigger(SetInferenceControlsEnabled(false));
-    commands.trigger(SetPosteriorSampleEnabled(false));
     commands.trigger(CloseHistogramPanel);
 }
 

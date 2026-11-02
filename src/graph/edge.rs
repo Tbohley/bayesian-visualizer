@@ -14,6 +14,9 @@ use bevy::prelude::*;
 pub fn on_node_drag(
     event: On<Pointer<Drag>>,
     reduced_view: Res<ReducedView>,
+    mut editor: ResMut<crate::ui::editor::Editor>,
+    input: Res<ButtonInput<KeyCode>>,
+    projection: Single<&Projection, With<Camera2d>>,
     mut commands: Commands,
     mut transforms: Query<&mut Transform>,
     mut mesh_query: Query<&mut Mesh2d>,
@@ -27,16 +30,23 @@ pub fn on_node_drag(
     inference_results: Option<Res<InferenceResultResource>>,
     plates: Query<(&GraphNode, &Plate), Without<PlateDraft>>,
 ) {
-    if reduced_view.active {
+    if event.button != bevy::picking::pointer::PointerButton::Primary
+        || reduced_view.active
+        || input.pressed(KeyCode::Space)
+        || editor.tool != crate::ui::editor::Tool::Select
+    {
         return;
     }
+    editor.dragged |= event.distance.length() > 3.;
+    let scale = crate::ui::editor::camera_scale(&projection);
     if let (Some(compiled), Some(results), Ok(node), Ok(transform)) = (
         graph_resource.as_deref(),
         inference_results.as_deref(),
         node_ids.get(event.event_target()),
         transforms.get(event.event_target()),
     ) {
-        let proposed = transform.translation.truncate() + Vec2::new(event.delta.x, -event.delta.y);
+        let proposed =
+            transform.translation.truncate() + Vec2::new(event.delta.x, -event.delta.y) * scale;
         let changes_membership = plates.iter().any(|(plate_node, plate)| {
             let compiled_member = compiled
                 .0
@@ -60,8 +70,8 @@ pub fn on_node_drag(
     {
         //update node position
         if let Ok(mut ent) = transforms.get_mut(event.event_target()) {
-            ent.translation.x += event.delta.x;
-            ent.translation.y -= event.delta.y;
+            ent.translation.x += event.delta.x * scale;
+            ent.translation.y -= event.delta.y * scale;
         }
     }
     //update all connected arrow positions/meshes
@@ -223,6 +233,10 @@ pub fn spawn_link_visual<B: Bundle>(
                 ..default()
             },
         ))
+        .observe(crate::ui::editor::on_edge_click)
+        .observe(crate::ui::editor::on_canvas_drag_start)
+        .observe(crate::ui::editor::on_canvas_drag)
+        .observe(crate::ui::editor::on_canvas_drag_end)
         .id()
 }
 
@@ -315,7 +329,7 @@ pub fn endpoint_shape(
     }
 }
 
-fn link_geometry(
+pub(crate) fn link_geometry(
     from_pos: Vec3,
     to_pos: Vec3,
     from_shape: EndpointShape,

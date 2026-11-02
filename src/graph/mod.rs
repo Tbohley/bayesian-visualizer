@@ -26,13 +26,13 @@ pub struct UnfinishedLink;
 #[derive(Component)]
 pub struct Selected;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlateBounds {
     pub min: Vec2,
     pub max: Vec2,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Dataset {
     pub name: String,
     pub n: usize,

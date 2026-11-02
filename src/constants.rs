@@ -5,8 +5,6 @@ use crate::{
     nodes::Operation,
 };
 
-pub const CANVAS_HEIGHT: f32 = 1000.0;
-pub const CANVAS_WIDTH: f32 = 2000.0;
 pub const SIDEBAR_WIDTH: f32 = 300.0;
 
 pub const RANDOM_NODE_RAD: f32 = 20.0;
@@ -31,8 +29,7 @@ pub fn text_font() -> TextFont {
     TextFont::default()
 }
 
-pub const CURSOR_DEFAULT: &str = "cursors/default.png";
-pub const CURSOR_SHIFT_HELD: &str = "cursors/shift_held.png";
+pub const CURSOR_LINK_START: &str = "cursors/shift_held.png";
 pub const CURSOR_FINISH_LINK: &str = "cursors/finish_link.png";
 
 pub const PLATE_Z: f32 = 0.5;
@@ -41,7 +38,6 @@ pub const PLATE_BORDER_THICKNESS: f32 = 7.0;
 
 //colors
 pub const CANVAS_COLOR: Color = Color::WHITE; // white
-pub const SIDEBAR_COLOR: Color = Color::srgb(0.827, 0.827, 0.827); //light grey
 pub const NODE_NAME_COLOR: Color = Color::BLACK;
 pub const BUTTON_COLOR: Color = Color::BLACK;
 pub const RANDOM_NODE_COLOR: Color = Color::srgb(1.0, 0., 0.); //red

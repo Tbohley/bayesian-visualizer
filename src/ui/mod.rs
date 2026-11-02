@@ -1,8 +1,8 @@
+pub mod editor;
+pub mod history;
 use crate::ERR_BORDER_COLOR;
-use crate::data_vis::HistogramView;
-use crate::graph::{Plate, UnfinishedLink};
+use crate::graph::Plate;
 use crate::nodes::GraphNode;
-use bevy::window::{CursorIcon, CustomCursor, CustomCursorImage};
 use bevy::{
     asset::RenderAssetUsages,
     mesh::{Indices, PrimitiveTopology},
@@ -21,20 +21,6 @@ pub struct ClearToasts;
 #[derive(Event)]
 pub struct ShowCompilationErrorMarkers {
     pub node_ids: Vec<u32>,
-}
-
-#[derive(Resource)]
-pub struct CursorAssets {
-    pub shift_held: Handle<Image>,
-    pub finish_link: Handle<Image>,
-}
-
-#[derive(Default, PartialEq, Eq, Clone, Copy)]
-pub enum GraphCursorState {
-    #[default]
-    Default,
-    ShiftHeld,
-    FinishLink,
 }
 
 #[derive(Component)]
@@ -70,72 +56,6 @@ fn compilation_error_marker_mesh() -> Mesh {
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_indices(Indices::U32(indices))
-}
-
-fn set_cursor_image(
-    commands: &mut Commands,
-    window_entity: Entity,
-    cursor_assets: &CursorAssets,
-    state: GraphCursorState,
-) {
-    commands
-        .entity(window_entity)
-        .insert(CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
-            handle: match state {
-                GraphCursorState::ShiftHeld => cursor_assets.shift_held.clone(),
-                GraphCursorState::FinishLink => cursor_assets.finish_link.clone(),
-                GraphCursorState::Default => cursor_assets.shift_held.clone(),
-            },
-            texture_atlas: None,
-            flip_x: false,
-            flip_y: false,
-            rect: None,
-            hotspot: match state {
-                GraphCursorState::ShiftHeld => (16, 1),
-                GraphCursorState::FinishLink => (16, 11),
-                _ => (0, 0),
-            },
-        })));
-}
-
-pub fn update_graph_cursor(
-    mut commands: Commands,
-    asset_server: Res<CursorAssets>,
-    input: Res<ButtonInput<KeyCode>>,
-    window: Single<Entity, With<Window>>,
-    unfinished_link: Query<Entity, With<UnfinishedLink>>,
-    histogram_views: Query<(), With<HistogramView>>,
-) {
-    let next_cursor = if !unfinished_link.is_empty() {
-        GraphCursorState::FinishLink
-    } else if histogram_views.is_empty()
-        && input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])
-    {
-        GraphCursorState::ShiftHeld
-    } else {
-        GraphCursorState::Default
-    };
-    match next_cursor {
-        GraphCursorState::Default => {
-            commands.entity(*window).remove::<CursorIcon>();
-        }
-        GraphCursorState::ShiftHeld => {
-            set_cursor_image(
-                &mut commands,
-                *window,
-                &asset_server,
-                GraphCursorState::ShiftHeld,
-            );
-        }
-        GraphCursorState::FinishLink => {
-            set_cursor_image(
-                &mut commands,
-                *window,
-                &asset_server,
-                GraphCursorState::FinishLink,
-            );
-        }
-    }
 }
 
 pub fn selection_indicator(inner_radius: f32) -> Mesh {

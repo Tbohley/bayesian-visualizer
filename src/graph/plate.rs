@@ -53,12 +53,18 @@ impl PlateBounds {
 pub fn on_plate_drag_start(
     event: On<Pointer<DragStart>>,
     reduced_view: Res<super::ReducedView>,
+    editor: Res<crate::ui::editor::Editor>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
 ) {
-    if reduced_view.active {
+    if event.button != bevy::picking::pointer::PointerButton::Primary
+        || reduced_view.active
+        || editor.tool != crate::ui::editor::Tool::Plate
+        || keys.pressed(KeyCode::Space)
+    {
         return;
     }
     if crate::sidebar::global::graph_change_requires_confirmation(
@@ -90,6 +96,9 @@ pub fn on_plate_drag_start(
             Visibility::default(),
             Transform::from_xyz(start.x, start.y, PLATE_Z),
         ))
+        .observe(crate::ui::editor::on_canvas_drag_start)
+        .observe(crate::ui::editor::on_canvas_drag)
+        .observe(crate::ui::editor::on_canvas_drag_end)
         .observe(on_plate_click)
         .observe(on_completed_plate_drag)
         .observe(on_completed_plate_drag_end)
@@ -115,6 +124,9 @@ pub fn spawn_completed_plate(
             Visibility::default(),
             Transform::from_xyz(bounds.center().x, bounds.center().y, PLATE_Z),
         ))
+        .observe(crate::ui::editor::on_canvas_drag_start)
+        .observe(crate::ui::editor::on_canvas_drag)
+        .observe(crate::ui::editor::on_canvas_drag_end)
         .observe(on_plate_click)
         .observe(on_completed_plate_drag)
         .observe(on_completed_plate_drag_end)
@@ -192,6 +204,8 @@ pub fn relabel_plates(
 
 fn on_plate_handle_click(
     mut event: On<Pointer<Click>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    editor: Res<crate::ui::editor::Editor>,
     mut commands: Commands,
     parents: Query<&ChildOf, With<PlateIndexHandle>>,
     node_ids: Query<&GraphNode, With<Plate>>,
@@ -200,7 +214,7 @@ fn on_plate_handle_click(
     compiled: Option<Res<GraphIRResource>>,
     inference: Option<Res<InferenceStatusResource>>,
 ) {
-    if event.count != 1 {
+    if keys.pressed(KeyCode::Space) || editor.dragged || event.count != 1 {
         return;
     }
     event.propagate(false);
@@ -340,19 +354,27 @@ fn add_plate_borders(
 fn on_completed_plate_drag(
     event: On<Pointer<Drag>>,
     reduced_view: Res<super::ReducedView>,
+    editor: Res<crate::ui::editor::Editor>,
+    keys: Res<ButtonInput<KeyCode>>,
+    projection: Single<&Projection, With<Camera2d>>,
     mut commands: Commands,
     mut plates: Query<(&GraphNode, &mut Plate, &mut Transform), Without<PlateDraft>>,
     inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
     graph_resource: Option<Res<crate::bevy_to_fugue::GraphIRResource>>,
     nodes: Query<(&GraphNode, &Transform), (Without<Plate>, Without<PlateDraft>)>,
 ) {
-    if reduced_view.active {
+    if event.button != bevy::picking::pointer::PointerButton::Primary
+        || reduced_view.active
+        || editor.tool != crate::ui::editor::Tool::Select
+        || keys.pressed(KeyCode::Space)
+    {
         return;
     }
     let Ok((plate_node, mut plate, mut transform)) = plates.get_mut(event.event_target()) else {
         return;
     };
-    let delta = Vec2::new(event.delta.x, -event.delta.y);
+    let delta =
+        Vec2::new(event.delta.x, -event.delta.y) * crate::ui::editor::camera_scale(&projection);
 
     if let (Some(results), Some(compiled)) =
         (inference_results.as_deref(), graph_resource.as_deref())
@@ -419,12 +441,18 @@ fn on_completed_plate_drag_end(
 
 pub fn on_plate_drag(
     event: On<Pointer<Drag>>,
-    plate: Single<(Entity, &mut Plate, &mut Transform), With<PlateDraft>>,
+    plate: Option<Single<(Entity, &mut Plate, &mut Transform), With<PlateDraft>>>,
+    projection: Single<&Projection, With<Camera2d>>,
     mut borders: Query<(&PlateBorder, &ChildOf, &mut Transform), Without<Plate>>,
 ) {
+    let Some(plate) = plate else {
+        return;
+    };
     let (plate_entity, mut plate, mut transform) = plate.into_inner();
     let start = plate.origin;
-    let current = start + Vec2::new(event.distance.x, -event.distance.y);
+    let current = start
+        + Vec2::new(event.distance.x, -event.distance.y)
+            * crate::ui::editor::camera_scale(&projection);
     let bounds = PlateBounds::from_points(start, current);
     let center = bounds.center();
     let size = bounds.size();
@@ -466,10 +494,13 @@ pub fn on_plate_drag(
 pub fn on_plate_drag_end(
     _event: On<Pointer<DragEnd>>,
     mut commands: Commands,
-    plate: Single<(Entity, &mut Plate), With<PlateDraft>>,
+    plate: Option<Single<(Entity, &mut Plate), With<PlateDraft>>>,
     nodes: Query<(Entity, &Transform), Or<(With<RandomNode>, With<ScalarNode>)>>,
     graph_nodes: Query<&GraphNode>,
 ) {
+    let Some(plate) = plate else {
+        return;
+    };
     let (entity, mut plate) = plate.into_inner();
     if plate.bounds.is_substantial() {
         let mut id = 1;
@@ -497,12 +528,18 @@ pub fn on_plate_drag_end(
 
 fn on_plate_click(
     mut event: On<Pointer<Click>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    editor: Res<crate::ui::editor::Editor>,
     mut commands: Commands,
     selected: Option<Single<Entity, With<Selected>>>,
     selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
 ) {
     event.propagate(false);
-    if event.duration.as_millis() >= 200 || event.count != 1 {
+    if keys.pressed(KeyCode::Space)
+        || editor.dragged
+        || event.duration.as_millis() >= 200
+        || event.count != 1
+    {
         return;
     }
 

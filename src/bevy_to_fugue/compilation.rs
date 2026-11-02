@@ -1,7 +1,6 @@
 use super::*;
 #[cfg(target_arch = "wasm32")]
 use crate::bayesian_core::InferenceStep;
-use crate::bayesian_core::graph_checks::ModelResult;
 use crate::bayesian_core::*;
 use crate::constants::*;
 use crate::data_vis::{
@@ -11,8 +10,6 @@ use crate::data_vis::{
 use crate::graph::*;
 use crate::nodes::*;
 use crate::sidebar::SetInferenceControlsEnabled;
-use crate::sidebar::SetPosteriorSampleEnabled;
-use crate::sidebar::link_params::format_number;
 use crate::sidebar::{
     InferenceProgressContainer, InferenceProgressFill, InferenceProgressLabel,
     InferenceRunButtonLabel, NumberOfSamplesTextbox, NumberOfWarmupTextbox, RandomSeedTextbox,
@@ -24,7 +21,6 @@ use bevy::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::tasks::{AsyncComputeTaskPool, futures::check_ready};
 use bevy::text::EditableText;
-use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, atomic::Ordering};
 #[cfg(target_arch = "wasm32")]
@@ -91,7 +87,6 @@ pub fn compile(
     commands.remove_resource::<SampleSelections>();
     commands.remove_resource::<PlateIndexSelections>();
     commands.trigger(CloseHistogramPanel);
-    commands.trigger(SetPosteriorSampleEnabled(false));
     let graph = compile_ir(
         &rand_nodes,
         &compute_nodes,
@@ -119,9 +114,8 @@ pub fn compile(
                             "Graph successfully compiled. No errors detected... yet.",
                         ),
                     });
-                    //println!("Compiled plates: {:#?}", g.plates);
                     //save graph for other functions
-                    match g.compile() {
+                    match g.compile_checked() {
                         Ok(compiled) => {
                             match compiled.bind_debug_string() {
                                 Ok(code) => println!("Compiled Fugue execution plan:\n{code}"),
@@ -137,7 +131,7 @@ pub fn compile(
                             report_compilation_error(
                                 &mut commands,
                                 format!("Compilation error: {error}"),
-                                Vec::new(),
+                                error.node_ids.clone(),
                             );
                             commands.remove_resource::<GraphIRResource>();
                             commands.remove_resource::<InferenceResultResource>();
@@ -163,145 +157,6 @@ pub fn compile(
             commands.trigger(SetInferenceControlsEnabled(false));
         }
     };
-}
-
-pub fn global_sample(
-    _event: On<Pointer<Click>>,
-    mut commands: Commands,
-    node_ids: Query<(Entity, &GraphNode, &Transform)>,
-    graph_resource: Option<Res<GraphIRResource>>,
-    old_samples: Query<(Entity, &SamplePopup)>,
-) {
-    for samp in old_samples.iter() {
-        commands.entity(samp.0).despawn();
-    }
-    let Some(compiled) = graph_resource else {
-        commands.trigger(ErrorToast {
-            text: "Graph not compiled.".to_string(),
-            color: ERR_COLOR,
-        });
-        return;
-    };
-    let g = compiled.0.graph();
-    let sample_res = compiled.0.model().and_then(|model| {
-        let mut rng = rand::thread_rng();
-        fugue::runtime::handler::run(
-            fugue::PriorHandler {
-                rng: &mut rng,
-                trace: fugue::Trace::default(),
-            },
-            model,
-        )
-        .0
-    });
-
-    let vals = match sample_res {
-        Ok(values) => values,
-        Err(error) => {
-            commands.trigger(ErrorToast {
-                text: format!("Sampling error: {error}"),
-                color: ERR_COLOR,
-            });
-            return;
-        }
-    };
-
-    display_sample(&mut commands, g, &vals, &node_ids, "Basic sample");
-}
-
-pub fn posterior_sample(
-    _event: On<Pointer<Click>>,
-    mut commands: Commands,
-    graph_resource: Option<Res<GraphIRResource>>,
-    inference_results: Option<Res<InferenceResultResource>>,
-    node_ids: Query<(Entity, &GraphNode, &Transform)>,
-    old_samples: Query<(Entity, &SamplePopup)>,
-) {
-    for (entity, _) in &old_samples {
-        commands.entity(entity).despawn();
-    }
-    let (Some(compiled), Some(results)) = (graph_resource, inference_results) else {
-        commands.trigger(ErrorToast {
-            text: "Run inference before taking a posterior sample.".to_string(),
-            color: ERR_COLOR,
-        });
-        return;
-    };
-    if results.0.traces.is_empty() {
-        commands.trigger(ErrorToast {
-            text: "Inference produced no posterior traces.".to_string(),
-            color: ERR_COLOR,
-        });
-        return;
-    }
-
-    let mut rng = rand::thread_rng();
-    let draw_index = rng.gen_range(0..results.0.traces.len());
-    let values = match compiled
-        .0
-        .posterior_predictive_sample(&results.0.traces[draw_index])
-    {
-        Ok(values) => values,
-        Err(error) => {
-            commands.trigger(ErrorToast {
-                text: format!("Posterior sampling error: {error}"),
-                color: ERR_COLOR,
-            });
-            return;
-        }
-    };
-    display_sample(
-        &mut commands,
-        compiled.0.graph(),
-        &values,
-        &node_ids,
-        &format!("Posterior predictive sample from draw {}", draw_index + 1),
-    );
-}
-
-fn display_sample(
-    commands: &mut Commands,
-    graph: &GraphIR,
-    values: &HashMap<u32, ModelResult>,
-    node_ids: &Query<(Entity, &GraphNode, &Transform)>,
-    title: &str,
-) {
-    match graph.format_model_values(values) {
-        Ok(output) => println!("{title}:\n{output}"),
-        Err(error) => println!("Could not format sample: {error}"),
-    }
-    let order = graph
-        .topological_sort()
-        .expect("topological ordering should be validated by compilation");
-
-    for node_id in order {
-        let (_, _, transform) = node_ids
-            .iter()
-            .find(|(_, node, _)| node.0 == node_id)
-            .expect("node not found");
-        let Some(value) = values.get(&node_id) else {
-            continue;
-        };
-        let console_output = match value {
-            ModelResult::Scalar(_) => None,
-            ModelResult::Plate(_) => Some(
-                graph
-                    .format_node_value(node_id, value)
-                    .unwrap_or_else(|error| format!("Could not format node {node_id}: {error}")),
-            ),
-        };
-
-        commands.trigger(SampleDisplay {
-            pos: Vec2 {
-                x: transform.translation.x,
-                y: transform.translation.y,
-            },
-            val: first_scalar(value)
-                .map(format_number)
-                .unwrap_or_else(|| "empty".to_string()),
-            console_output,
-        })
-    }
 }
 
 pub fn run_inference(
@@ -383,7 +238,6 @@ pub fn run_inference(
         state: InferenceResultState::Running,
         requested_samples: n_samples,
     });
-    commands.trigger(SetPosteriorSampleEnabled(false));
 
     let compiled_graph = compiled.0.clone();
     let node_extents = compiled_graph.posterior_node_extents();
@@ -430,6 +284,7 @@ pub fn run_inference(
             node_extents,
             plot_refresh_elapsed: 0.1,
         });
+        commands.trigger(crate::ui::editor::InspectModel);
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -458,6 +313,7 @@ pub fn run_inference(
             node_extents,
             plot_refresh_elapsed: 0.1,
         });
+        commands.trigger(crate::ui::editor::InspectModel);
     }
 }
 
@@ -482,7 +338,12 @@ fn reopen_selected_histogram(
     selected: &Query<&GraphNode, With<Selected>>,
     view: Option<&HistogramView>,
     auto_histogram_node: Option<u32>,
+    inspecting: bool,
 ) {
+    // Returning to editing must not be undone by the next live sampling update.
+    if !inspecting {
+        return;
+    }
     if let Some(view) = view {
         commands.trigger(OpenHistogramPanel {
             subject: view.subject,
@@ -491,10 +352,7 @@ fn reopen_selected_histogram(
         return;
     }
     if let Some(node_id) = auto_histogram_node {
-        commands.trigger(OpenHistogramPanel {
-            subject: HistogramSubject::Node(node_id),
-            clear_toasts: false,
-        });
+        commands.trigger(OpenNodeInspection { node_id });
         return;
     }
     let Ok(node) = selected.single() else {
@@ -525,6 +383,7 @@ pub fn poll_inference_job(
     selected: Query<&GraphNode, With<Selected>>,
     view: Option<Single<&HistogramView>>,
     joint_view: Option<Single<&JointDistributionView>>,
+    editor_view: Res<crate::ui::editor::EditorView>,
 ) {
     let Some(job) = job.as_mut() else {
         return;
@@ -603,18 +462,20 @@ pub fn poll_inference_job(
                 n_warmup: job.requested_warmup,
                 samples_by_node: HashMap::new(),
                 node_extents: job.node_extents.clone(),
+                #[cfg(test)]
                 traces: Vec::new(),
             };
             append_live_draws(&mut results, pending);
             commands.insert_resource(InferenceResultResource(results));
         }
-        if job.plot_refresh_elapsed >= 0.1 {
+        if job.plot_refresh_elapsed >= 0.1 && outcome.is_none() {
             job.plot_refresh_elapsed = 0.0;
             reopen_selected_histogram(
                 &mut commands,
                 &selected,
                 view.as_ref().map(|view| **view),
                 job.auto_histogram_node,
+                editor_view.inspecting,
             );
             reopen_joint_distribution(&mut commands, joint_view);
         }
@@ -632,7 +493,6 @@ pub fn poll_inference_job(
         commands.remove_resource::<SampleSelections>();
         commands.remove_resource::<PlateIndexSelections>();
         commands.trigger(CloseHistogramPanel);
-        commands.trigger(SetPosteriorSampleEnabled(false));
         return;
     }
 
@@ -651,12 +511,12 @@ pub fn poll_inference_job(
                 state,
                 requested_samples: job.requested_samples,
             });
-            commands.trigger(SetPosteriorSampleEnabled(true));
             reopen_selected_histogram(
                 &mut commands,
                 &selected,
                 view.as_ref().map(|view| **view),
                 job.auto_histogram_node,
+                editor_view.inspecting,
             );
             reopen_joint_distribution(&mut commands, joint_view);
             let message = if state == InferenceResultState::Cancelled {
@@ -680,7 +540,6 @@ pub fn poll_inference_job(
             commands.remove_resource::<SampleSelections>();
             commands.remove_resource::<PlateIndexSelections>();
             commands.trigger(CloseHistogramPanel);
-            commands.trigger(SetPosteriorSampleEnabled(false));
             let message = if outcome.cancelled {
                 "Inference cancelled before any posterior draws were retained."
             } else {
@@ -699,7 +558,6 @@ pub fn poll_inference_job(
                 state: InferenceResultState::Failed,
                 requested_samples: job.requested_samples,
             });
-            commands.trigger(SetPosteriorSampleEnabled(false));
             if partial_count == 0 {
                 commands.remove_resource::<InferenceResultResource>();
                 commands.trigger(CloseHistogramPanel);
@@ -709,6 +567,7 @@ pub fn poll_inference_job(
                     &selected,
                     view.as_ref().map(|view| **view),
                     job.auto_histogram_node,
+                    editor_view.inspecting,
                 );
                 reopen_joint_distribution(&mut commands, joint_view);
             }
@@ -808,69 +667,6 @@ fn parse_count(text: &EditableText, label: &str) -> Result<usize, String> {
         .map_err(|_| format!("{label} must be a non-negative whole number"))
 }
 
-pub fn sample_popup(
-    event: On<SampleDisplay>,
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
-    commands
-        .spawn((
-            Mesh2d(meshes.add(Rectangle::new(100., 30.))),
-            MeshMaterial2d(materials.add(ColorMaterial::from_color(SAMPLE_COLOR))),
-            SamplePopup {
-                timer: Timer::from_seconds(15.0, TimerMode::Once),
-                console_output: event.console_output.clone(),
-            },
-            Pickable {
-                should_block_lower: true,
-                is_hoverable: true,
-            },
-            Transform::from_xyz(event.pos.x, event.pos.y + 50., 99.),
-            children![(
-                Pickable::IGNORE,
-                Text2d::new(event.val.clone()),
-                TextColor(Color::WHITE),
-                TextFont {
-                    font_size: FontSize::Px(14.),
-                    ..text_font()
-                },
-            )],
-        ))
-        .observe(print_plate_sample);
-}
-
-fn first_scalar(value: &ModelResult) -> Option<f64> {
-    match value {
-        ModelResult::Scalar(value) => Some(*value),
-        ModelResult::Plate(values) => values.iter().find_map(first_scalar),
-    }
-}
-
-fn print_plate_sample(mut event: On<Pointer<Click>>, popups: Query<&SamplePopup>) {
-    event.propagate(false);
-    let Ok(popup) = popups.get(event.event_target()) else {
-        return;
-    };
-    if let Some(output) = &popup.console_output {
-        println!("Plate sample:\n{output}");
-    }
-}
-
-pub fn tick_sample_popups(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut q: Query<(Entity, &mut SamplePopup)>,
-) {
-    for (entity, mut toast) in &mut q {
-        toast.timer.tick(time.delta());
-
-        if toast.timer.is_finished() {
-            commands.entity(entity).despawn();
-        }
-    }
-}
-
 pub fn compile_ir(
     rand_nodes: &Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
     compute_nodes: &Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
@@ -911,8 +707,6 @@ pub fn compile_ir(
         graph.nodes.insert(
             node.0,
             NodeIR::Random {
-                id: node.0,
-                label: rand.name.clone(),
                 dist_type: rand.dist_type.clone(),
                 params: params,
             },
@@ -935,7 +729,6 @@ pub fn compile_ir(
         graph.nodes.insert(
             node.0,
             NodeIR::Compute {
-                id: node.0,
                 operation: compute.operation,
                 params: params,
             },
@@ -947,13 +740,9 @@ pub fn compile_ir(
             .get(entity)
             .map_err(|_| "Node is missing its GraphNode ID")?
             .1;
-        graph.nodes.insert(
-            node.0,
-            NodeIR::Scalar {
-                id: node.0,
-                value: scalar.val,
-            },
-        );
+        graph
+            .nodes
+            .insert(node.0, NodeIR::Scalar { value: scalar.val });
     }
 
     let plate_bounds = plates
@@ -1055,6 +844,34 @@ fn compile_plate_irs(
 #[cfg(test)]
 mod plate_tests {
     use super::*;
+    #[test]
+    fn live_histogram_updates_do_not_reopen_panels_after_returning_to_editing() {
+        use bevy::ecs::system::RunSystemOnce;
+        #[derive(Resource, Default)]
+        struct OpenedNodes(Vec<u32>);
+        let mut app = App::new();
+        app.init_resource::<OpenedNodes>().add_observer(
+            |event: On<OpenNodeInspection>, mut opened: ResMut<OpenedNodes>| {
+                opened.0.push(event.node_id);
+            },
+        );
+        app.world_mut()
+            .run_system_once(
+                |mut commands: Commands, selected: Query<&GraphNode, With<Selected>>| {
+                    reopen_selected_histogram(&mut commands, &selected, None, Some(7), false);
+                },
+            )
+            .unwrap();
+        assert!(app.world().resource::<OpenedNodes>().0.is_empty());
+        app.world_mut()
+            .run_system_once(
+                |mut commands: Commands, selected: Query<&GraphNode, With<Selected>>| {
+                    reopen_selected_histogram(&mut commands, &selected, None, Some(7), true);
+                },
+            )
+            .unwrap();
+        assert_eq!(app.world().resource::<OpenedNodes>().0, vec![7]);
+    }
 
     #[test]
     fn compilation_errors_extract_stable_node_ids() {

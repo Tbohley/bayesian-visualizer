@@ -139,6 +139,9 @@ pub fn spawn_compute(
             Pickable::IGNORE,
             Transform::from_xyz(0.0, 0.0, 2.0),
         ))
+        .observe(crate::ui::editor::on_canvas_drag_start)
+        .observe(crate::ui::editor::on_canvas_drag)
+        .observe(crate::ui::editor::on_canvas_drag_end)
         .observe(on_node_drag)
         .observe(on_node_click)
         .id()

@@ -188,7 +188,7 @@ fn ensure_unique(values: &[u32], error: impl Fn(u32) -> String) -> Result<(), St
 fn node_params(node: &NodeIR) -> &[ParamIR] {
     match node {
         NodeIR::Random { params, .. } | NodeIR::Compute { params, .. } => params,
-        NodeIR::Scalar { .. } => &[],
+        NodeIR::Scalar { .. } | NodeIR::Constant { .. } => &[],
     }
 }
 
@@ -205,12 +205,11 @@ mod tests {
     use super::*;
     use crate::nodes::Operation;
 
-    fn scalar(id: u32) -> NodeIR {
-        NodeIR::Scalar { id, value: 1.0 }
+    fn scalar() -> NodeIR {
+        NodeIR::Scalar { value: 1.0 }
     }
-    fn compute(id: u32, from_node: u32) -> NodeIR {
+    fn compute(from_node: u32) -> NodeIR {
         NodeIR::Compute {
-            id,
             operation: Operation::Exponential,
             params: vec![ParamIR { from_node }],
         }
@@ -229,8 +228,8 @@ mod tests {
     #[test]
     fn dimensions_include_all_memberships_in_stable_order() {
         let mut graph = GraphIR::new();
-        graph.nodes.insert(1, scalar(1));
-        graph.nodes.insert(2, scalar(2));
+        graph.nodes.insert(1, scalar());
+        graph.nodes.insert(2, scalar());
         graph.plates.insert(20, plate(20, 3, vec![2]));
         graph.plates.insert(10, plate(10, 2, vec![2]));
         let normalized = graph.normalize_plates().unwrap();
@@ -241,7 +240,7 @@ mod tests {
     #[test]
     fn non_dataset_plate_with_positive_extent_is_valid() {
         let mut graph = GraphIR::new();
-        graph.nodes.insert(1, scalar(1));
+        graph.nodes.insert(1, scalar());
         graph.plates.insert(10, plate(10, 4, vec![1]));
         assert_eq!(graph.validate_plate_semantics(), Ok(()));
     }
@@ -249,7 +248,7 @@ mod tests {
     #[test]
     fn dataset_rows_define_and_must_match_extent() {
         let mut graph = GraphIR::new();
-        graph.nodes.insert(1, scalar(1));
+        graph.nodes.insert(1, scalar());
         let mut p = plate(10, 2, vec![1]);
         p.data.insert("x".into(), vec![1.0, 2.0]);
         p.mapping.insert(1, "x".into());
@@ -267,9 +266,9 @@ mod tests {
     #[test]
     fn subset_dependencies_cover_root_same_and_outer_to_overlap() {
         let mut graph = GraphIR::new();
-        graph.nodes.insert(1, scalar(1));
-        graph.nodes.insert(2, compute(2, 1));
-        graph.nodes.insert(3, compute(3, 2));
+        graph.nodes.insert(1, scalar());
+        graph.nodes.insert(2, compute(1));
+        graph.nodes.insert(3, compute(2));
         graph.plates.insert(10, plate(10, 2, vec![2, 3]));
         graph.plates.insert(20, plate(20, 3, vec![3]));
         assert!(graph.validate_plate_semantics().is_ok());
@@ -278,8 +277,8 @@ mod tests {
     #[test]
     fn cross_sibling_and_deeper_to_shallower_dependencies_are_clear_errors() {
         let mut siblings = GraphIR::new();
-        siblings.nodes.insert(1, scalar(1));
-        siblings.nodes.insert(2, compute(2, 1));
+        siblings.nodes.insert(1, scalar());
+        siblings.nodes.insert(2, compute(1));
         siblings.plates.insert(10, plate(10, 2, vec![1]));
         siblings.plates.insert(20, plate(20, 2, vec![2]));
         assert!(
@@ -290,8 +289,8 @@ mod tests {
         );
 
         let mut outward = GraphIR::new();
-        outward.nodes.insert(1, scalar(1));
-        outward.nodes.insert(2, compute(2, 1));
+        outward.nodes.insert(1, scalar());
+        outward.nodes.insert(2, compute(1));
         outward.plates.insert(10, plate(10, 2, vec![1, 2]));
         outward.plates.insert(20, plate(20, 2, vec![1]));
         assert!(outward.validate_plate_semantics().is_err());
@@ -300,7 +299,7 @@ mod tests {
     #[test]
     fn conflicting_observation_owners_are_rejected() {
         let mut graph = GraphIR::new();
-        graph.nodes.insert(1, scalar(1));
+        graph.nodes.insert(1, scalar());
         for id in [10, 20] {
             let mut p = plate(id, 1, vec![1]);
             p.data.insert("x".into(), vec![1.0]);

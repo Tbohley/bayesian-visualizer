@@ -1,8 +1,10 @@
 //! A compiled instruction plan. Deterministic work runs in a loop; only a
 //! probabilistic effect suspends execution and owns a continuation.
-use super::graph_checks::{ModelResult, ModelValues, PosteriorValues};
+use super::graph_checks::PosteriorValues;
+#[cfg(test)]
+use super::graph_checks::{ModelResult, ModelValues};
 use super::plate_validation::{NormalizedPlates, projection_positions};
-use super::{GraphIR, NodeIR, ParamIR};
+use super::{GraphIR, NodeIR, ParamIR, Value};
 use crate::nodes::Operation;
 use fugue::{
     Address, Beta, Distribution, Exponential, Gamma, LogNormal, Model, Normal, Uniform, pure,
@@ -14,33 +16,41 @@ use std::sync::Arc;
 #[derive(Clone, Copy)]
 pub(super) enum Mode {
     Inference,
+    #[cfg(test)]
     Predictive,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Source {
-    Constant(f64),
+    Constant(Value),
     Slot(usize),
 }
 impl Source {
-    fn read(self, values: &[f64]) -> f64 {
+    fn read(&self, values: &[Value]) -> Value {
         match self {
-            Self::Constant(value) => value,
-            Self::Slot(slot) => values[slot],
+            Self::Constant(value) => value.clone(),
+            Self::Slot(slot) => values[*slot].clone(),
         }
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Arguments {
     values: [Source; 2],
     len: usize,
 }
 impl Arguments {
-    fn resolve(self, slots: &[f64]) -> [f64; 2] {
-        self.values.map(|source| source.read(slots))
+    fn resolve(&self, slots: &[Value]) -> Vec<Value> {
+        self.values[..self.len].iter().map(|source| source.read(slots)).collect()
     }
-    fn constant(self) -> bool {
+    fn real_parameters(&self, slots: &[Value]) -> Result<[f64; 2], String> {
+        let mut result = [0.0; 2];
+        for (index, value) in self.resolve(slots).iter().enumerate() {
+            result[index] = value.real_scalar()?;
+        }
+        Ok(result)
+    }
+    fn constant(&self) -> bool {
         self.values[..self.len]
             .iter()
             .all(|source| matches!(source, Source::Constant(_)))
@@ -48,7 +58,7 @@ impl Arguments {
 }
 
 #[derive(Clone, Copy)]
-enum DistributionKind {
+pub(super) enum DistributionKind {
     Normal,
     Uniform,
     Beta,
@@ -57,7 +67,7 @@ enum DistributionKind {
     LogNormal,
 }
 impl DistributionKind {
-    fn parse(name: &str, arity: usize) -> Result<Self, String> {
+    pub(super) fn parse(name: &str, arity: usize) -> Result<Self, String> {
         let kind = match (name, arity) {
             ("Normal", 2) => Self::Normal,
             ("Uniform", 2) => Self::Uniform,
@@ -83,7 +93,7 @@ impl DistributionKind {
             Self::LogNormal => "LogNormal",
         }
     }
-    fn create(self, p: [f64; 2]) -> Result<Box<dyn Distribution<f64>>, String> {
+    pub(super) fn create(self, p: [f64; 2]) -> Result<Box<dyn Distribution<f64>>, String> {
         macro_rules! boxed {
             ($e:expr) => {
                 $e.map(|d| Box::new(d) as Box<dyn Distribution<f64>>)
@@ -110,10 +120,10 @@ enum DistributionSpec {
     Dynamic(DistributionKind, Arguments),
 }
 impl DistributionSpec {
-    fn create(&self, slots: &[f64]) -> Result<Box<dyn Distribution<f64>>, String> {
+    fn create(&self, slots: &[Value]) -> Result<Box<dyn Distribution<f64>>, String> {
         match self {
             Self::Constant { distribution, .. } => Ok(distribution.clone_box()),
-            Self::Dynamic(kind, args) => kind.create(args.resolve(slots)),
+            Self::Dynamic(kind, args) => kind.create(args.real_parameters(slots)?),
         }
     }
 }
@@ -199,7 +209,7 @@ impl ExecutionPlan {
             for flat_index in 0..count {
                 let indices = unflatten(flat_index, &extents);
                 let mut args = Arguments {
-                    values: [Source::Constant(0.0); 2],
+                    values: std::array::from_fn(|_| Source::Constant(Value::Real(0.0))),
                     len: params.len(),
                 };
                 for (i, param) in params.iter().enumerate() {
@@ -212,7 +222,7 @@ impl ExecutionPlan {
                                 offset * normalized.extents[&producer_dims[axis]]
                                     + indices[position]
                             });
-                    args.values[i] = sources[&param.from_node][producer_index];
+                    args.values[i] = sources[&param.from_node][producer_index].clone();
                 }
                 let observed = if let Some(owner) = normalized.observation_owners.get(&id) {
                     let plate = &graph.plates[owner];
@@ -224,7 +234,12 @@ impl ExecutionPlan {
                     None
                 };
                 let source = match node {
-                    NodeIR::Scalar { value, .. } => Source::Constant(observed.unwrap_or(*value)),
+                    NodeIR::Scalar { value, .. } => Source::Constant(Value::Real(observed.unwrap_or(*value))),
+                    NodeIR::Constant { value } => Source::Constant(match observed {
+                        Some(raw) => Value::observation(raw, value.value_type())
+                            .map_err(|error| format!("node {id}: {error}"))?,
+                        None => value.clone(),
+                    }),
                     NodeIR::Compute { operation, .. } => {
                         let address =
                             super::model_compilation::instance_address(id, dimensions, &indices);
@@ -232,7 +247,7 @@ impl ExecutionPlan {
                             let p = args.resolve(&[]);
                             Source::Constant(
                                 operation
-                                    .evaluate(&p[..args.len])
+                                    .evaluate_values(&p)
                                     .map_err(|e| format!("compute error at {address}: {e}"))?,
                             )
                         } else {
@@ -253,7 +268,7 @@ impl ExecutionPlan {
                         let kind = DistributionKind::parse(dist_type, params.len())
                             .map_err(|e| format!("{e} at {}", address.0))?;
                         let distribution = if args.constant() {
-                            let parameters = args.resolve(&[]);
+                            let parameters = args.real_parameters(&[])?;
                             let distribution = kind.create(parameters).map_err(|e| {
                                 format!("invalid {dist_type} parameters at {}: {e}", address.0)
                             })?;
@@ -267,6 +282,7 @@ impl ExecutionPlan {
                         };
                         let observed = match mode {
                             Mode::Inference => observed,
+                            #[cfg(test)]
                             Mode::Predictive => None,
                         };
                         let output = if observed.is_some() {
@@ -282,7 +298,7 @@ impl ExecutionPlan {
                             observed,
                         });
                         match (observed, output) {
-                            (Some(value), _) => Source::Constant(value),
+                            (Some(value), _) => Source::Constant(Value::Real(value)),
                             (_, Some(slot)) => Source::Slot(slot),
                             _ => unreachable!(),
                         }
@@ -308,16 +324,16 @@ impl ExecutionPlan {
     /// Shows the actual optimized instructions, including folded literals and slots.
     /// Limit console output for large plates; the header counts the complete plan.
     pub(super) fn debug_string(&self) -> String {
-        fn source(s: Source) -> String {
+        fn source(s: &Source) -> String {
             match s {
                 Source::Constant(v) => format!("{v:?}"),
                 Source::Slot(i) => format!("values[{i}]"),
             }
         }
-        fn args(a: Arguments) -> String {
+        fn args(a: &Arguments) -> String {
             a.values[..a.len]
                 .iter()
-                .map(|s| source(*s))
+                .map(|s| source(s))
                 .collect::<Vec<_>>()
                 .join(", ")
         }
@@ -342,7 +358,7 @@ impl ExecutionPlan {
                     writeln!(
                         text,
                         "{address}: values[{output}] = {operation:?}({})",
-                        args(*a)
+                        args(a)
                     )
                     .unwrap();
                 }
@@ -361,7 +377,7 @@ impl ExecutionPlan {
                             .map(|v| format!("{v:?}"))
                             .collect::<Vec<_>>()
                             .join(", "),
-                        DistributionSpec::Dynamic(_, a) => args(*a),
+                        DistributionSpec::Dynamic(_, a) => args(a),
                     };
                     if let Some(value) = observed {
                         writeln!(
@@ -420,26 +436,23 @@ impl ExecutionPlan {
             .collect()
     }
 
+    #[cfg(test)]
     pub(super) fn model(self: &Arc<Self>) -> Model<Result<ModelValues, String>> {
         self.start(materialize)
     }
     pub(super) fn inference_model(self: &Arc<Self>) -> Model<Result<PosteriorValues, String>> {
         self.start(|plan, values| {
-            Ok(plan
+            plan
                 .outputs
                 .iter()
                 .filter(|o| o.latent)
                 .map(|o| {
-                    (
-                        o.node_id,
-                        o.sources
-                            .iter()
-                            .map(|s| s.read(values))
-                            .collect::<Vec<_>>()
-                            .into(),
-                    )
+                    let values = o.sources.iter()
+                        .map(|s| s.read(values).real_scalar())
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok((o.node_id, values.into()))
                 })
-                .collect())
+                .collect()
         })
     }
     fn start<R: Send + 'static>(self: &Arc<Self>, finish: Finish<R>) -> Model<Result<R, String>> {
@@ -447,17 +460,17 @@ impl ExecutionPlan {
             Arc::clone(self),
             State {
                 next: 0,
-                values: vec![0.0; self.slot_count],
+                values: vec![Value::Real(0.0); self.slot_count],
             },
             finish,
         )
     }
 }
 
-type Finish<R> = fn(&ExecutionPlan, &[f64]) -> Result<R, String>;
+type Finish<R> = fn(&ExecutionPlan, &[Value]) -> Result<R, String>;
 struct State {
     next: usize,
-    values: Vec<f64>,
+    values: Vec<Value>,
 }
 
 fn drive<R: Send + 'static>(
@@ -478,7 +491,7 @@ fn drive<R: Send + 'static>(
                 address,
             } => {
                 let p = args.resolve(&state.values);
-                match operation.evaluate(&p[..args.len]) {
+                match operation.evaluate_values(&p) {
                     Ok(value) => state.values[*output] = value,
                     Err(error) => return pure(Err(format!("compute error at {address}: {error}"))),
                 }
@@ -514,7 +527,7 @@ fn drive<R: Send + 'static>(
                     addr,
                     dist,
                     k: Box::new(move |value| {
-                        state.values[output.expect("sample instruction has a slot")] = value;
+                        state.values[output.expect("sample instruction has a slot")] = Value::Real(value);
                         drive(plan, state, finish)
                     }),
                 };
@@ -525,7 +538,7 @@ fn drive<R: Send + 'static>(
 
 fn node_params(node: &NodeIR) -> &[ParamIR] {
     match node {
-        NodeIR::Scalar { .. } => &[],
+        NodeIR::Scalar { .. } | NodeIR::Constant { .. } => &[],
         NodeIR::Compute { params, .. } | NodeIR::Random { params, .. } => params,
     }
 }
@@ -539,12 +552,17 @@ pub(super) fn unflatten(mut index: usize, extents: &[usize]) -> Vec<usize> {
     indices
 }
 
-fn materialize(plan: &ExecutionPlan, values: &[f64]) -> Result<ModelValues, String> {
-    fn nest(output: &NodeOutput, values: &[f64], depth: usize, offset: &mut usize) -> ModelResult {
+#[cfg(test)]
+fn materialize(plan: &ExecutionPlan, values: &[Value]) -> Result<ModelValues, String> {
+    fn nest(output: &NodeOutput, values: &[Value], depth: usize, offset: &mut usize) -> ModelResult {
         if depth == output.extents.len() {
             let value = output.sources[*offset].read(values);
             *offset += 1;
-            ModelResult::Scalar(value)
+            match value {
+                Value::Real(value) => ModelResult::Scalar(value),
+                Value::Integer(value) => ModelResult::Integer(value),
+                vector => ModelResult::Vector(vector),
+            }
         } else {
             ModelResult::Plate(
                 (0..output.extents[depth])
@@ -568,14 +586,12 @@ mod tests {
     use rand::{SeedableRng, rngs::StdRng};
 
     fn scalar(graph: &mut GraphIR, id: u32, value: f64) {
-        graph.nodes.insert(id, NodeIR::Scalar { id, value });
+        graph.nodes.insert(id, NodeIR::Scalar { value });
     }
     fn random(graph: &mut GraphIR, id: u32, distribution: &str, inputs: &[u32]) {
         graph.nodes.insert(
             id,
             NodeIR::Random {
-                id,
-                label: None,
                 dist_type: distribution.into(),
                 params: inputs
                     .iter()
@@ -588,7 +604,6 @@ mod tests {
         graph.nodes.insert(
             id,
             NodeIR::Compute {
-                id,
                 operation,
                 params: inputs
                     .iter()
@@ -766,7 +781,6 @@ mod tests {
             + Normal::new(0.5, 1.0).unwrap().log_prob(&2.0)
             + Normal::new(4.0, 1.0).unwrap().log_prob(&4.0);
         assert_eq!(predictive.log_prior, expected);
-        assert!(compiled.graph().format_model_values(&values).is_ok());
     }
 
     #[test]

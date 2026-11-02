@@ -1,10 +1,12 @@
 use super::*;
+#[cfg(test)]
 use fugue::Model;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 /// Full values for graph inspection and posterior prediction, keyed by
 /// [`GraphNode`](crate::nodes::GraphNode) ID.
+#[cfg(test)]
 pub type ModelValues = HashMap<u32, ModelResult>;
 
 /// One flat, row-major draw per latent random node, shared with live views.
@@ -14,6 +16,7 @@ pub type PosteriorValues = HashMap<u32, std::sync::Arc<[f64]>>;
 /// For example, that value may be used as an invalid standard deviation by a
 /// downstream distribution. Keeping the error in the model's result lets us
 /// build the complete hierarchy without panicking inside a `bind` closure.
+#[cfg(test)]
 pub type GraphModel = Model<Result<ModelValues, String>>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -22,15 +25,22 @@ enum VisitState {
     Visited,
 }
 
+#[cfg(test)]
 #[derive(Clone, PartialEq, Debug)]
 pub enum ModelResult {
     Scalar(f64),
+    Integer(i64),
+    Vector(super::Value),
     Plate(Vec<ModelResult>),
 }
 
 impl GraphIR {
     /// Validates this graph once and retains its reusable execution metadata.
     pub fn compile(self) -> Result<super::CompiledGraph, String> {
+        self.compile_checked().map_err(|error| error.to_string())
+    }
+
+    pub fn compile_checked(self) -> Result<super::CompiledGraph, super::CompilationError> {
         super::model_compilation::CompiledGraph::new(self)
     }
 
@@ -41,7 +51,7 @@ impl GraphIR {
             match node {
                 NodeIR::Random { params, .. } => params,
                 NodeIR::Compute { params, .. } => params,
-                NodeIR::Scalar { .. } => &[],
+                NodeIR::Scalar { .. } | NodeIR::Constant { .. } => &[],
             }
         }
 
@@ -98,7 +108,7 @@ impl GraphIR {
         for (&id, node) in &self.nodes {
             let params: &[ParamIR] = match node {
                 NodeIR::Random { params, .. } | NodeIR::Compute { params, .. } => params.as_slice(),
-                NodeIR::Scalar { .. } => &[],
+                NodeIR::Scalar { .. } | NodeIR::Constant { .. } => &[],
             };
             indegrees.insert(id, params.len());
             for param in params {

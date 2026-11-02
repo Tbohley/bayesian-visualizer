@@ -1,18 +1,20 @@
 #[cfg(test)]
 use super::graph_checks::ModelResult;
-use super::graph_checks::{ModelValues, PosteriorValues};
-use super::model_compilation::CompiledGraph;
 #[cfg(test)]
-use fugue::ScoreGivenTrace;
+use super::graph_checks::ModelValues;
+use super::graph_checks::PosteriorValues;
+use super::model_compilation::CompiledGraph;
 use fugue::{
     Address, Choice, ChoiceValue, DiminishingAdaptation, Distribution, Handler, PriorHandler,
-    SafeReplayHandler, Trace, adaptive_single_site_mh,
+    Trace, adaptive_single_site_mh,
 };
+#[cfg(test)]
+use fugue::{SafeReplayHandler, ScoreGivenTrace};
 use rand::{SeedableRng, rngs::StdRng};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// All retained posterior executions and their Fugue traces.
+/// Retained posterior draws and their shared plate dimensions.
 ///
 /// Only latent random nodes are retained, in flat row-major arrays. Dimensions
 /// are stored once; immutable draws are shared with live views without copying.
@@ -22,6 +24,8 @@ pub struct InferenceResult {
     pub n_warmup: usize,
     pub samples_by_node: HashMap<u32, Vec<Arc<[f64]>>>,
     pub node_extents: HashMap<u32, Vec<usize>>,
+    /// Full traces are used only by reference-execution tests.
+    #[cfg(test)]
     pub traces: Vec<Trace>,
 }
 
@@ -65,6 +69,8 @@ pub struct InferenceRunner {
     requested_warmup: usize,
     completed_warmup: usize,
     samples_by_node: HashMap<u32, Vec<Arc<[f64]>>>,
+    completed_samples: usize,
+    #[cfg(test)]
     traces: Vec<Trace>,
     phase: InferencePhase,
 }
@@ -199,7 +205,7 @@ impl CompiledGraph {
         InferenceRunner::new(self, seed, n_samples, n_warmup)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn run_inference(
         &self,
         seed: u64,
@@ -216,6 +222,7 @@ impl CompiledGraph {
     ///
     /// Cancellation is checked between MH steps. Warmup values are never sent
     /// to `on_sample`; only retained posterior draws are published.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     pub fn run_inference_controlled(
         &self,
         seed: u64,
@@ -238,6 +245,7 @@ impl CompiledGraph {
 
     /// Replays one retained posterior trace while freshly sampling nodes that
     /// were observed during inference.
+    #[cfg(test)]
     pub fn posterior_predictive_sample(&self, posterior: &Trace) -> Result<ModelValues, String> {
         let model = self.predictive_model()?;
         let mut rng = rand::thread_rng();
@@ -282,6 +290,8 @@ impl InferenceRunner {
             requested_warmup,
             completed_warmup: 0,
             samples_by_node,
+            completed_samples: 0,
+            #[cfg(test)]
             traces: Vec::with_capacity(requested_samples),
             phase: InferencePhase::Warmup,
         })
@@ -297,7 +307,7 @@ impl InferenceRunner {
             return self.step_warmup();
         }
 
-        if self.traces.len() == self.requested_samples {
+        if self.completed_samples == self.requested_samples {
             for &node_id in self.samples_by_node.keys() {
                 let count = self.samples_by_node.get(&node_id).map_or(0, Vec::len);
                 if count != self.requested_samples {
@@ -310,7 +320,7 @@ impl InferenceRunner {
             return Ok(self.finish(false));
         }
 
-        let draw_index = self.traces.len();
+        let draw_index = self.completed_samples;
         let model_fn = || self.compiled.inference_model();
         let chain = &mut self.chains[0];
         let (values, trace) = adaptive_single_site_mh(
@@ -331,6 +341,8 @@ impl InferenceRunner {
                 .or_default()
                 .push(value.clone());
         }
+        self.completed_samples += 1;
+        #[cfg(test)]
         self.traces.push(chain.trace.as_ref().unwrap().clone());
         Ok(InferenceStep::Sample { draw_index, values })
     }
@@ -403,7 +415,7 @@ impl InferenceRunner {
     }
 
     fn finish(&mut self, cancelled: bool) -> InferenceStep {
-        let retained = self.traces.len();
+        let retained = self.completed_samples;
         InferenceStep::Complete(ControlledInferenceResult {
             result: InferenceResult {
                 seed: self.seed,
@@ -411,6 +423,7 @@ impl InferenceRunner {
                 n_warmup: self.completed_warmup,
                 samples_by_node: std::mem::take(&mut self.samples_by_node),
                 node_extents: self.compiled.posterior_node_extents(),
+                #[cfg(test)]
                 traces: std::mem::take(&mut self.traces),
             },
             cancelled,
@@ -464,13 +477,11 @@ mod tests {
 
     fn simple_random_graph() -> CompiledGraph {
         let mut graph = GraphIR::new();
-        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 0.0 });
-        graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 1.0 });
+        graph.nodes.insert(1, NodeIR::Scalar { value: 0.0 });
+        graph.nodes.insert(2, NodeIR::Scalar { value: 1.0 });
         graph.nodes.insert(
             3,
             NodeIR::Random {
-                id: 3,
-                label: Some("theta".to_string()),
                 dist_type: "Normal".to_string(),
                 params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
             },
@@ -684,13 +695,11 @@ mod tests {
     #[test]
     fn impossible_observations_stop_after_the_restart_budget() {
         let mut graph = GraphIR::new();
-        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 0.0 });
-        graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 1.0 });
+        graph.nodes.insert(1, NodeIR::Scalar { value: 0.0 });
+        graph.nodes.insert(2, NodeIR::Scalar { value: 1.0 });
         graph.nodes.insert(
             3,
             NodeIR::Random {
-                id: 3,
-                label: Some("theta".to_string()),
                 dist_type: "Normal".to_string(),
                 params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
             },
@@ -698,8 +707,6 @@ mod tests {
         graph.nodes.insert(
             4,
             NodeIR::Random {
-                id: 4,
-                label: Some("y".to_string()),
                 dist_type: "Uniform".to_string(),
                 params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
             },
@@ -736,13 +743,11 @@ mod tests {
     fn bounded_likelihood_graph() -> CompiledGraph {
         let mut graph = GraphIR::new();
         for (id, value) in [(1, -2.0), (2, 2.0), (4, 1.0)] {
-            graph.nodes.insert(id, NodeIR::Scalar { id, value });
+            graph.nodes.insert(id, NodeIR::Scalar { value });
         }
         graph.nodes.insert(
             3,
             NodeIR::Random {
-                id: 3,
-                label: None,
                 dist_type: "Uniform".into(),
                 params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
             },
@@ -750,7 +755,6 @@ mod tests {
         graph.nodes.insert(
             5,
             NodeIR::Compute {
-                id: 5,
                 operation: crate::nodes::Operation::Add,
                 params: vec![ParamIR { from_node: 3 }, ParamIR { from_node: 4 }],
             },
@@ -758,8 +762,6 @@ mod tests {
         graph.nodes.insert(
             6,
             NodeIR::Random {
-                id: 6,
-                label: None,
                 dist_type: "Uniform".into(),
                 params: vec![ParamIR { from_node: 3 }, ParamIR { from_node: 5 }],
             },
@@ -866,13 +868,11 @@ mod tests {
     #[test]
     fn impossible_rejected_proposals_do_not_restart_a_healthy_chain() {
         let mut graph = GraphIR::new();
-        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: -1.0 });
-        graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 1.0 });
+        graph.nodes.insert(1, NodeIR::Scalar { value: -1.0 });
+        graph.nodes.insert(2, NodeIR::Scalar { value: 1.0 });
         graph.nodes.insert(
             3,
             NodeIR::Random {
-                id: 3,
-                label: None,
                 dist_type: "Uniform".into(),
                 params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
             },
@@ -945,13 +945,11 @@ mod tests {
     #[test]
     fn posterior_predictive_replays_latents_and_resamples_observations() {
         let mut graph = GraphIR::new();
-        graph.nodes.insert(1, NodeIR::Scalar { id: 1, value: 0.0 });
-        graph.nodes.insert(2, NodeIR::Scalar { id: 2, value: 1.0 });
+        graph.nodes.insert(1, NodeIR::Scalar { value: 0.0 });
+        graph.nodes.insert(2, NodeIR::Scalar { value: 1.0 });
         graph.nodes.insert(
             3,
             NodeIR::Random {
-                id: 3,
-                label: Some("theta".to_string()),
                 dist_type: "Normal".to_string(),
                 params: vec![ParamIR { from_node: 1 }, ParamIR { from_node: 2 }],
             },
@@ -959,8 +957,6 @@ mod tests {
         graph.nodes.insert(
             4,
             NodeIR::Random {
-                id: 4,
-                label: Some("y".to_string()),
                 dist_type: "Normal".to_string(),
                 params: vec![ParamIR { from_node: 3 }, ParamIR { from_node: 2 }],
             },

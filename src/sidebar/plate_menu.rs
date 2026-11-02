@@ -33,6 +33,7 @@ impl Plate {
         &mut self,
         commands: &mut Commands,
         sidebar_entity: Entity,
+        plate_entity: Entity,
         nodes: &Query<
             (
                 Entity,
@@ -188,6 +189,7 @@ impl Plate {
                         commands.trigger(OpenPlateMappingMenu {
                             pos: event.pointer_location.position,
                             node: entity,
+                            plate: plate_entity,
                         });
                     },
                 )
@@ -199,7 +201,7 @@ impl Plate {
     }
 }
 
-fn selector_button<'a>(
+pub(super) fn selector_button<'a>(
     commands: &'a mut Commands,
     name: &'static str,
     value: &str,
@@ -324,24 +326,17 @@ fn on_select_plate_mapping(
     event: On<Pointer<Press>>,
     menu_items: Query<&ContextMenuItem>,
     mut commands: Commands,
-    selected: Option<Single<Entity, With<Selected>>>,
     mut plates: Query<&mut Plate>,
     mapping_menus: Query<&PlateMappingMenu>,
     inference_results: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
 ) {
-    let Some(selected) = selected else {
-        return;
-    };
     let Ok(item) = menu_items.get(event.original_event_target()) else {
         return;
     };
     let Ok(mapping_menu) = mapping_menus.get(event.event_target()) else {
         return;
     };
-    let Ok(mut plate) = plates.get_mut(*selected) else {
-        return;
-    };
-    let Some(mapping) = plate.mapping.get_mut(&mapping_menu.node) else {
+    let Ok(mut plate) = plates.get_mut(mapping_menu.plate) else {
         return;
     };
 
@@ -353,23 +348,24 @@ fn on_select_plate_mapping(
         return;
     }
 
-    *mapping = item.0.clone();
+    plate.mapping.insert(mapping_menu.node, item.0.clone());
     commands.trigger(CloseContextMenus);
     commands.trigger(ReloadSidebar);
 }
 
 #[derive(Component)]
 struct PlateMappingMenu {
+    plate: Entity,
     node: Entity,
 }
 
 pub fn on_open_plate_mapping_menu(
     event: On<OpenPlateMappingMenu>,
     mut commands: Commands,
-    selected_plate: Option<Single<&Plate, With<Selected>>>,
+    plates: Query<&Plate>,
 ) {
     commands.trigger(CloseContextMenus);
-    let Some(plate) = selected_plate else {
+    let Ok(plate) = plates.get(event.plate) else {
         return;
     };
 
@@ -379,7 +375,10 @@ pub fn on_open_plate_mapping_menu(
     let menu = commands
         .spawn((
             Name::new("plate mapping selector"),
-            PlateMappingMenu { node: event.node },
+            PlateMappingMenu {
+                node: event.node,
+                plate: event.plate,
+            },
             ContextMenu,
             ZIndex(999),
             Node {

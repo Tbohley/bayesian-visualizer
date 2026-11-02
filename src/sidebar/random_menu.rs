@@ -100,87 +100,8 @@ impl SidebarContent for RandomNode {
         }
 
         commands.entity(sidebar_entity).with_child(divider());
-
-        /*let sample_button = commands.spawn((
-        Name::new("sample_button"),
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(8.).bottom(),
-            ..default()
-        },
-        BorderColor::all(Color::BLACK),
-        BackgroundColor(Color::BLACK),
-        children![(
-            Pickable::IGNORE,
-            Text::new("Sample"),
-            text_font(),
-            TextColor(Color::WHITE),
-            TextShadow::default(),
-        )],
-        )).observe(sample_node_toast).id();
-        commands.entity(sidebar_entity).add_child(sample_button);
-        commands.entity(sidebar_entity).with_child(divider());
-        */
     }
 }
-
-/*fn build_param_textbox(     //TODO: rip out param textbox, replace with context menu of graphlink options
-    commands: &mut Commands,
-    random_var: &RandomNode,
-    param_num: usize
-) -> Entity {
-    let param = random_var
-        .params
-        .get(param_num)
-        .expect("invalid param_num");
-
-    let param_name = param.0;
-    let param_value = param.1;
-
-    commands
-        .spawn((
-            Node {
-                width: percent(100.),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                margin: px(8.).bottom(),
-                ..default()
-            },
-            Name::new(format!("param_row_{}", param_name)),
-            children![
-                (
-                    Text::new(param_name),
-                    text_font(),
-                    TextColor(NODE_NAME_COLOR),
-                ),
-                (
-                    Node {
-                        width: px(120.),
-                        min_height: px(25.),
-                        border: px(2).all(),
-                        padding: px(4).all(),
-                        ..default()
-                    },
-                    BorderColor::from(Color::from(SLATE_300)),
-                    BackgroundColor(DARK_GREY.into()),
-                    EditableText::new(param_value.to_string()),
-                    text_font(),
-                    TextLayout::no_wrap(),
-                    TextCursorStyle::default(),
-                    TabIndex(param_num.try_into().unwrap()),
-                    Name::new(format!("{}_textbox", param_name)),
-                    ParamTextbox(param_num)
-                ),
-            ],
-        ))
-        .id()
-}*/
 
 fn on_select_distribution(
     event: On<Pointer<Press>>,

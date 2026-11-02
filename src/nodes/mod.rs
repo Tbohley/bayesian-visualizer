@@ -19,12 +19,51 @@ pub use scalar_node::*;
 #[derive(Component)]
 pub struct GraphNode(pub u32);
 
+/// Select the latent node whose automatic posterior histogram is being opened.
+#[derive(Event)]
+pub struct OpenNodeInspection {
+    pub node_id: u32,
+}
+
+pub fn open_node_inspection(
+    event: On<OpenNodeInspection>,
+    mut commands: Commands,
+    nodes: Query<(Entity, &GraphNode, &RandomNode)>,
+    selected: Query<Entity, With<Selected>>,
+    indicators: Query<Entity, With<SelectedIndicator>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let Some((entity, id, random)) = nodes.iter().find(|(_, id, _)| id.0 == event.node_id) else {
+        return;
+    };
+    for old in &selected {
+        commands.entity(old).remove::<Selected>();
+    }
+    for old in &indicators {
+        commands.entity(old).despawn();
+    }
+    commands.entity(entity).insert(Selected).with_child((
+        SelectedIndicator,
+        Pickable::IGNORE,
+        Mesh2d(meshes.add(random_selection_mesh(&random_node_label(random, id.0)))),
+        MeshMaterial2d(materials.add(SELECTION_INDICATOR_COLOR)),
+        Transform::from_xyz(0., 0., 1.),
+    ));
+    commands.trigger(ReloadSidebar);
+    commands.trigger(OpenHistogramPanel {
+        subject: crate::data_vis::HistogramSubject::Node(event.node_id),
+        clear_toasts: false,
+    });
+}
+
 #[derive(Component)]
 pub struct NodeLabel;
 
 #[derive(Component)]
 pub struct NodeInterior;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeType {
     Random,
     Compute,
@@ -34,7 +73,7 @@ pub enum NodeType {
 #[derive(Component)]
 pub struct NodeMode(pub NodeType);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Operation {
     Add,
     Subtract,
@@ -48,7 +87,7 @@ pub enum Operation {
 }
 
 #[derive(Debug, Clone)]
-pub struct ParamValue(pub &'static str, pub Option<Entity>); //TODO: change from f64 to GraphLink
+pub struct ParamValue(pub &'static str, pub Option<Entity>);
 
 #[derive(Event)]
 pub struct AutofillNextParam {
@@ -305,6 +344,8 @@ impl NodeDisplay for ScalarNode {
 pub fn on_background_click(
     event: On<Pointer<Click>>,
     reduced_view: Res<ReducedView>,
+    editor: Res<crate::ui::editor::Editor>,
+    input: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     meshes: ResMut<Assets<Mesh>>,
     materials: ResMut<Assets<ColorMaterial>>,
@@ -316,6 +357,12 @@ pub fn on_background_click(
     plate_drafts: Query<&Plate, With<PlateDraft>>,
     inference_results: Option<Res<InferenceResultResource>>,
 ) {
+    if event.button != bevy::picking::pointer::PointerButton::Primary
+        || editor.dragged
+        || input.pressed(KeyCode::Space)
+    {
+        return;
+    }
     commands.trigger(CloseHistogramPanel);
     // Bevy emits Click before DragEnd when a drag is released. Do not treat
     // a real plate gesture as a normal background click. Tiny pointer jitter
@@ -341,9 +388,8 @@ pub fn on_background_click(
         }
         commands.trigger(CloseContextMenus);
         commands.trigger(ReloadSidebar);
-        return;
     }
-    if reduced_view.active {
+    if reduced_view.active || editor.tool != crate::ui::editor::Tool::Node {
         return;
     }
     if graph_change_requires_confirmation(
@@ -369,7 +415,7 @@ pub fn on_background_click(
     };
 }
 
-//multifunctional: single click to edit a node, shift click two nodes consecutively to create a link
+// Select nodes normally; the link tool connects a source and destination.
 pub fn on_node_click(
     event: On<Pointer<Click>>,
     mut commands: Commands,
@@ -387,7 +433,14 @@ pub fn on_node_click(
     compute_nodes: Query<&ComputeNode>,
     scalar_nodes: Query<&ScalarNode>,
     histogram_view: Option<Single<&HistogramView>>,
+    editor: Res<crate::ui::editor::Editor>,
 ) {
+    if event.button != bevy::picking::pointer::PointerButton::Primary
+        || input.pressed(KeyCode::Space)
+        || editor.dragged
+    {
+        return;
+    }
     let shift_held = input.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let joint_pair = histogram_view.as_ref().and_then(|view| {
         let y_node_id = node_ids.get(event.event_target()).ok()?.0;
@@ -411,7 +464,31 @@ pub fn on_node_click(
         ) {
             return;
         }
+        let target = event.event_target();
+        let free_input = random_nodes
+            .get(target)
+            .map(|n| &n.params)
+            .ok()
+            .or_else(|| compute_nodes.get(target).map(|n| &n.params).ok())
+            .is_some_and(|params| {
+                params.iter().any(|p| p.1.is_none())
+                    && !params.iter().any(|p| p.1 == Some(ends.from))
+            });
+        if !free_input && ends.from != target {
+            commands.trigger(ErrorToast {
+                text: "Choose a destination with a free input parameter.".into(),
+                color: ERR_COLOR,
+            });
+            return;
+        }
         commands.entity(unfinished_ent).remove::<UnfinishedLink>();
+        commands.entity(unfinished_ent).remove::<Pickable>();
+        commands
+            .entity(unfinished_ent)
+            .observe(crate::ui::editor::on_edge_click)
+            .observe(crate::ui::editor::on_canvas_drag_start)
+            .observe(crate::ui::editor::on_canvas_drag)
+            .observe(crate::ui::editor::on_canvas_drag_end);
 
         //if user tries to create a link from a node to itself
         if ends.from == event.event_target() {
@@ -452,13 +529,16 @@ pub fn on_node_click(
             ));
         }
     // Joint posterior inspection is available in either graph view.
-    } else if shift_held && let Some((x_node_id, y_node_id)) = joint_pair {
+    } else if editor.tool == crate::ui::editor::Tool::Select
+        && shift_held
+        && let Some((x_node_id, y_node_id)) = joint_pair
+    {
         commands.trigger(OpenJointDistributionView {
             x_node_id,
             y_node_id,
         });
     // Graph-link editing remains unavailable in reduced view.
-    } else if !reduced_view.active && shift_held {
+    } else if !reduced_view.active && editor.tool == crate::ui::editor::Tool::Edge {
         commands.spawn((
             GraphLink {
                 from: event.event_target(),
@@ -469,7 +549,6 @@ pub fn on_node_click(
         println!("Created an UnfinishedLink");
     //normal click, select the node
     } else {
-        //println!("Node click event");
         if event.duration.as_millis() < 200 && event.count == 1 {
             println!("Selected a node");
 

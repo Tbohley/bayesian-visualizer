@@ -4,12 +4,6 @@ use super::*;
 use crate::nodes::*;
 use bevy::prelude::*;
 
-//fn get_ents_and_labels
-/*
-takes same args as available_links
-
-
-*/
 pub fn get_ents_and_labels(
     _commands: &mut Commands,
     node_data: &Query<(
