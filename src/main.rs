@@ -16,8 +16,8 @@ use crate::nodes::*;
 use crate::sidebar::*;
 use crate::ui::*;
 use bevy_to_fugue::compilation::compile;
-use bevy_to_fugue::compilation::poll_inference_job;
-use bevy_to_fugue::compilation::update_inference_progress;
+use bevy_to_fugue::inference::poll_inference_job;
+use bevy_to_fugue::inference::update_inference_progress;
 pub use constants::*;
 use sidebar::compute_menu::on_open_operation_menu;
 use sidebar::global::invalidate_compilation_on_graph_change;
@@ -105,6 +105,7 @@ fn main() {
         .add_observer(on_open_param_link_menu)
         .add_observer(autofill_next_param)
         .add_observer(set_node_name)
+        .add_observer(sidebar::vector_menu::apply_vector_values)
         .add_observer(toggle_reduced_view)
         .add_observer(throw_err)
         .add_observer(show_compilation_error_markers)
@@ -121,6 +122,7 @@ fn main() {
             Update,
             (
                 on_enter_clicked,
+                sidebar::vector_menu::on_vector_enter,
                 delete_selected_node_on_backspace,
                 refresh_links_for_resized_random_nodes,
                 refresh_reduced_view,

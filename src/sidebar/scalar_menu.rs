@@ -10,6 +10,7 @@ impl SidebarContent for ScalarNode {
             Option<&RandomNode>,
             Option<&ScalarNode>,
             Option<&ComputeNode>,
+            Option<&VectorNode>,
         )>,
         _finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
         _node: Entity,
@@ -109,6 +110,7 @@ pub fn on_enter_clicked(
     >,
     selected_scalar: Option<Single<(Entity, &mut ScalarNode, &Selected)>>,
     selected_random: Option<Single<Entity, (With<RandomNode>, With<Selected>)>>,
+    selected_vector: Option<Single<Entity, (With<VectorNode>, With<Selected>)>>,
     selected_plate: Option<Single<(Entity, &mut Plate, &Selected)>>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
     mut commands: Commands,
@@ -136,7 +138,8 @@ pub fn on_enter_clicked(
     if let Ok(text_input) = node_name_textboxes.get(focused_entity) {
         let entity = selected_random
             .map(|selected| *selected)
-            .or_else(|| selected_scalar.as_ref().map(|selected| selected.0));
+            .or_else(|| selected_scalar.as_ref().map(|selected| selected.0))
+            .or_else(|| selected_vector.map(|selected| *selected));
         if let Some(entity) = entity {
             commands.trigger(SetNodeName {
                 entity,

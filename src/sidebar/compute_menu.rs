@@ -14,6 +14,7 @@ impl SidebarContent for ComputeNode {
             Option<&RandomNode>,
             Option<&ScalarNode>,
             Option<&ComputeNode>,
+            Option<&VectorNode>,
         )>,
         finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
         node: Entity,

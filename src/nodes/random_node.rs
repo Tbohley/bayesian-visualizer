@@ -5,6 +5,26 @@ use crate::ui::capsule_selection_indicator;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
+#[derive(Component)]
+pub struct RandomNode {
+    pub name: Option<String>,
+    pub dist_type: String,
+    pub params: Vec<ParamValue>,
+}
+
+impl NodeDisplay for RandomNode {
+    fn label(&self) -> String {
+        format![
+            "{}{}",
+            match self.name.clone() {
+                Some(n) => n + " ~ ",
+                None => "var ~ ".to_string(),
+            },
+            self.dist_type
+        ]
+    }
+}
+
 pub fn new_random(
     commands: &mut Commands,
     loc: Vec3,

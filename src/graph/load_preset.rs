@@ -44,6 +44,12 @@ pub enum PresetNode {
         operation: Operation,
         parameters: Vec<PresetParameter>,
     },
+    Vector {
+        id: u32,
+        position: [f32; 2],
+        elements: VectorElements,
+        name: Option<&'static str>,
+    },
     Scalar {
         id: u32,
         position: [f32; 2],
@@ -55,7 +61,10 @@ pub enum PresetNode {
 impl PresetNode {
     fn id(&self) -> u32 {
         match self {
-            Self::Random { id, .. } | Self::Compute { id, .. } | Self::Scalar { id, .. } => *id,
+            Self::Random { id, .. }
+            | Self::Compute { id, .. }
+            | Self::Scalar { id, .. }
+            | Self::Vector { id, .. } => *id,
         }
     }
 
@@ -63,14 +72,15 @@ impl PresetNode {
         match self {
             Self::Random { position, .. }
             | Self::Compute { position, .. }
-            | Self::Scalar { position, .. } => *position,
+            | Self::Scalar { position, .. }
+            | Self::Vector { position, .. } => *position,
         }
     }
 
     fn parameters(&self) -> &[PresetParameter] {
         match self {
             Self::Random { parameters, .. } | Self::Compute { parameters, .. } => parameters,
-            Self::Scalar { .. } => &[],
+            Self::Scalar { .. } | Self::Vector { .. } => &[],
         }
     }
 }
@@ -387,6 +397,14 @@ fn validate_preset(preset: &GraphPreset, datasets: &Datasets) -> Result<(), Stri
             return Err(format!("node {} has a non-finite scalar value", node.id()));
         }
     }
+    for node in &preset.nodes {
+        if let PresetNode::Vector { elements, .. } = node {
+            elements
+                .value()
+                .validate()
+                .map_err(|error| format!("node {}: {error}", node.id()))?;
+        }
+    }
     for plate in &preset.plates {
         if !ids.insert(plate.id) {
             return Err(format!("duplicate graph ID {}", plate.id));
@@ -471,6 +489,19 @@ fn spawn_preset(
                 meshes,
                 materials,
             ),
+            PresetNode::Vector {
+                id, elements, name, ..
+            } => spawn_vector(
+                commands,
+                position,
+                *id,
+                VectorNode {
+                    elements: elements.clone(),
+                    name: name.map(str::to_string),
+                },
+                meshes,
+                materials,
+            ),
             PresetNode::Scalar {
                 id, value, name, ..
             } => spawn_scalar(
@@ -498,7 +529,9 @@ fn spawn_preset(
                     )
                 }
                 PresetNode::Compute { .. } => EndpointShape::circle(COMPUTE_NODE_RAD),
-                PresetNode::Scalar { .. } => EndpointShape::circle(SCALAR_NODE_RAD),
+                PresetNode::Scalar { .. } | PresetNode::Vector { .. } => {
+                    EndpointShape::circle(SCALAR_NODE_RAD)
+                }
             },
         );
     }
@@ -535,7 +568,7 @@ fn spawn_preset(
                         compute.params = params;
                     });
             }
-            PresetNode::Scalar { .. } => {}
+            PresetNode::Scalar { .. } | PresetNode::Vector { .. } => {}
         }
     }
     for (from, to) in link_pairs {
@@ -619,6 +652,7 @@ pub fn print_graph_preset(
     random_nodes: &Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
     compute_nodes: &Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
     scalar_nodes: &Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
+    vector_nodes: &Query<(Entity, &VectorNode)>,
     node_ids: &Query<(Entity, &GraphNode)>,
     node_positions: &Query<(&GraphNode, &Transform), Without<Plate>>,
     plates: &Query<(&GraphNode, &Plate)>,
@@ -680,6 +714,20 @@ pub fn print_graph_preset(
             ),
         ));
     }
+    for (entity, vector) in vector_nodes {
+        let Some(&id) = entity_ids.get(&entity) else {
+            continue;
+        };
+        let position = positions.get(&id).copied().unwrap_or(Vec2::ZERO);
+        let elements = match &vector.elements {
+            VectorElements::Real(values) => format!("VectorElements::Real(vec!{values:?})"),
+            VectorElements::Integer(values) => format!("VectorElements::Integer(vec!{values:?})"),
+        };
+        nodes.push((id, format!(
+            "        PresetNode::Vector {{ id: {id}, position: [{:?}, {:?}], elements: {elements}, name: {:?} }}",
+            position.x, position.y, vector.name.as_deref()
+        )));
+    }
     nodes.sort_by_key(|(id, _)| *id);
 
     let mut plate_text = plates.iter().map(|(id, plate)| {
@@ -709,3 +757,7 @@ pub fn print_graph_preset(
             .join(",\n"),
     );
 }
+
+#[cfg(test)]
+#[path = "tests/load_preset.rs"]
+mod vector_tests;

@@ -1,9 +1,12 @@
 pub mod compute_menu;
+mod confirmation;
 pub mod global;
+mod invalidation;
 pub mod link_params;
 pub mod plate_menu;
 pub mod random_menu;
 pub mod scalar_menu;
+pub mod vector_menu;
 use crate::constants::*;
 use crate::data_vis::{HistogramSubject, OpenHistogramPanel};
 use crate::graph::*;
@@ -141,6 +144,7 @@ trait SidebarContent {
             Option<&RandomNode>,
             Option<&ScalarNode>,
             Option<&ComputeNode>,
+            Option<&VectorNode>,
         )>,
         finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
         node: Entity,
@@ -233,6 +237,7 @@ pub fn available_links(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     finished_links: &Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     sidebar_entity: Entity,
@@ -263,6 +268,7 @@ pub fn reload_sidebar(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     plate_nodes: Query<
         (
@@ -323,7 +329,8 @@ pub fn reload_sidebar(
             },
             TextColor(NODE_NAME_COLOR),
         ));
-        let (maybe_random, maybe_scalar, maybe_transform) = node_data.get(entity).unwrap();
+        let (maybe_random, maybe_scalar, maybe_transform, maybe_vector) =
+            node_data.get(entity).unwrap();
         let observed_columns = plates
             .iter()
             .flat_map(|(_, plate)| plate.mapping.iter())
@@ -336,8 +343,8 @@ pub fn reload_sidebar(
                 .get(&entity)
                 .is_some_and(|column| column != "unobserved")
         });
-        match (maybe_random, maybe_scalar, maybe_transform) {
-            (Some(rv), None, None) => rv.build(
+        match (maybe_random, maybe_scalar, maybe_transform, maybe_vector) {
+            (Some(rv), None, None, None) => rv.build(
                 &mut commands,
                 sidebar_entity,
                 &node_data,
@@ -346,7 +353,7 @@ pub fn reload_sidebar(
                 is_observed,
                 &observed_columns,
             ),
-            (None, Some(sc), None) => sc.build(
+            (None, Some(sc), None, None) => sc.build(
                 &mut commands,
                 sidebar_entity,
                 &node_data,
@@ -355,7 +362,7 @@ pub fn reload_sidebar(
                 is_observed,
                 &observed_columns,
             ),
-            (None, None, Some(cn)) => cn.build(
+            (None, None, Some(cn), None) => cn.build(
                 &mut commands,
                 sidebar_entity,
                 &node_data,
@@ -364,7 +371,10 @@ pub fn reload_sidebar(
                 is_observed,
                 &observed_columns,
             ),
-            (None, None, None) if plates.contains(entity) => plates
+            (None, None, None, Some(vector)) => {
+                vector_menu::build_vector_sidebar(&mut commands, sidebar_entity, entity, vector)
+            }
+            (None, None, None, None) if plates.contains(entity) => plates
                 .get_mut(entity)
                 .expect("selected plate should exist")
                 .1

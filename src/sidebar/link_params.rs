@@ -10,6 +10,7 @@ pub fn get_ents_and_labels(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     finished_links: &Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     node: Entity,
@@ -37,13 +38,14 @@ pub fn apply_observed_scalar_labels(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     observed_columns: &HashMap<Entity, String>,
 ) {
     for (entity, label) in link_labels {
         let unnamed_scalar = node_data
             .get(*entity)
-            .is_ok_and(|(_, scalar, _)| scalar.is_some_and(|scalar| scalar.name.is_none()));
+            .is_ok_and(|(_, scalar, _, _)| scalar.is_some_and(|scalar| scalar.name.is_none()));
         if unnamed_scalar {
             if let Some(column) = observed_columns.get(entity) {
                 *label = column.clone();
@@ -143,6 +145,7 @@ pub fn on_open_param_link_menu(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     finished_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     plates: Query<&Plate>,
@@ -300,6 +303,7 @@ fn node_expression(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     visiting: &mut HashSet<Entity>,
     nested_inside_operation: bool,
@@ -309,11 +313,13 @@ fn node_expression(
     }
 
     let expression = match node_data.get(entity) {
-        Ok((random_node, scalar_node, compute_node)) => {
+        Ok((random_node, scalar_node, compute_node, vector_node)) => {
             if let Some(random_node) = random_node {
                 random_short_label(random_node)
             } else if let Some(scalar_node) = scalar_node {
                 scalar_label(scalar_node)
+            } else if let Some(vector_node) = vector_node {
+                vector_node.label()
             } else if let Some(compute_node) = compute_node {
                 compute_expression(compute_node, node_data, visiting, nested_inside_operation)
             } else {
@@ -353,6 +359,7 @@ fn compute_expression(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     visiting: &mut HashSet<Entity>,
     nested_inside_operation: bool,
@@ -389,6 +396,7 @@ fn infix_expression(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     visiting: &mut HashSet<Entity>,
 ) -> String {
@@ -404,6 +412,7 @@ fn infix_arg_expression(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     visiting: &mut HashSet<Entity>,
 ) -> String {
@@ -424,6 +433,7 @@ fn function_arg_expression(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     visiting: &mut HashSet<Entity>,
 ) -> String {
@@ -447,6 +457,7 @@ fn compact_expression(
         Option<&RandomNode>,
         Option<&ScalarNode>,
         Option<&ComputeNode>,
+        Option<&VectorNode>,
     )>,
     visiting: &mut HashSet<Entity>,
 ) -> String {

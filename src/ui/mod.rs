@@ -1,4 +1,5 @@
 pub mod editor;
+mod grid;
 pub mod history;
 use crate::ERR_BORDER_COLOR;
 use crate::graph::Plate;

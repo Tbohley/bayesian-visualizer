@@ -2,7 +2,8 @@ use crate::bevy_to_fugue::{GraphIRResource, InferenceResultResource};
 use crate::constants::*;
 use crate::graph::*;
 use crate::nodes::{
-    ComputeNode, GraphNode, RandomNode, ScalarNode, random_node_label, random_node_straight_length,
+    ComputeNode, GraphNode, RandomNode, ScalarNode, VectorNode, random_node_label,
+    random_node_straight_length,
 };
 use crate::sidebar::global::graph_change_requires_confirmation;
 use bevy::asset::RenderAssetUsages;
@@ -23,7 +24,7 @@ pub fn on_node_drag(
     mut graph_links: Query<(Entity, &mut GraphLink), Without<UnfinishedLink>>,
     random_nodes: Query<&RandomNode>,
     compute_nodes: Query<&ComputeNode>,
-    scalar_nodes: Query<&ScalarNode>,
+    scalar_nodes: Query<(), Or<(With<ScalarNode>, With<VectorNode>)>>,
     node_ids: Query<&GraphNode>,
     mut meshes: ResMut<Assets<Mesh>>,
     graph_resource: Option<Res<GraphIRResource>>,
@@ -121,7 +122,7 @@ pub fn refresh_links_for_resized_random_nodes(
     node_transforms: Query<&Transform, With<GraphNode>>,
     random_nodes: Query<&RandomNode>,
     compute_nodes: Query<&ComputeNode>,
-    scalar_nodes: Query<&ScalarNode>,
+    scalar_nodes: Query<(), Or<(With<ScalarNode>, With<VectorNode>)>>,
     node_ids: Query<&GraphNode>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -314,7 +315,7 @@ pub fn endpoint_shape(
     entity: Entity,
     random_nodes: &Query<&RandomNode>,
     compute_nodes: &Query<&ComputeNode>,
-    scalar_nodes: &Query<&ScalarNode>,
+    scalar_nodes: &Query<(), Or<(With<ScalarNode>, With<VectorNode>)>>,
     node_ids: &Query<&GraphNode>,
 ) -> EndpointShape {
     if scalar_nodes.contains(entity) {
@@ -351,19 +352,5 @@ pub(crate) fn link_geometry(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn capsule_boundary_distance_matches_sides_and_end_caps() {
-        let capsule = EndpointShape::horizontal_capsule(20.0, 36.0);
-
-        assert!((capsule.boundary_distance(Vec2::Y) - 20.0).abs() < 0.001);
-        assert!((capsule.boundary_distance(Vec2::X) - 38.0).abs() < 0.001);
-
-        let diagonal = Vec2::new(1.0, 1.0).normalize();
-        let point = diagonal * capsule.boundary_distance(diagonal);
-        let cap_center = Vec2::new(18.0, 0.0);
-        assert!((point.distance(cap_center) - 20.0).abs() < 0.001);
-    }
-}
+#[path = "tests/edge.rs"]
+mod tests;

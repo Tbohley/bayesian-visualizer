@@ -6,8 +6,8 @@ use super::{EndpointShape, GraphLink, Selected, UnfinishedLink, spawn_link_visua
 use crate::constants::RANDOM_NODE_RAD;
 use crate::data_vis::CloseHistogramPanel;
 use crate::nodes::{
-    ComputeNode, GraphNode, RandomNode, ScalarNode, SelectedIndicator, random_node_label,
-    random_node_straight_length,
+    ComputeNode, GraphNode, RandomNode, ScalarNode, SelectedIndicator, VectorNode,
+    random_node_label, random_node_straight_length,
 };
 use crate::sidebar::ReloadSidebar;
 
@@ -37,12 +37,19 @@ pub fn toggle_reduced_view(
             Option<&RandomNode>,
             Option<&ComputeNode>,
             Option<&ScalarNode>,
+            Option<&VectorNode>,
         ),
         With<GraphNode>,
     >,
     graph_links: Query<Entity, (With<GraphLink>, Without<ReducedViewLink>)>,
     unfinished_links: Query<Entity, With<UnfinishedLink>>,
-    hidden_selections: Query<Entity, (With<Selected>, Or<(With<ComputeNode>, With<ScalarNode>)>)>,
+    hidden_selections: Query<
+        Entity,
+        (
+            With<Selected>,
+            Or<(With<ComputeNode>, With<ScalarNode>, With<VectorNode>)>,
+        ),
+    >,
     selection_indicators: Query<(Entity, &ChildOf), With<SelectedIndicator>>,
     old_reduced_links: Query<Entity, With<ReducedViewLink>>,
     node_data: Query<
@@ -51,8 +58,14 @@ pub fn toggle_reduced_view(
             Option<&RandomNode>,
             Option<&ComputeNode>,
             Option<&ScalarNode>,
+            Option<&VectorNode>,
         ),
-        Or<(With<RandomNode>, With<ComputeNode>, With<ScalarNode>)>,
+        Or<(
+            With<RandomNode>,
+            With<ComputeNode>,
+            With<ScalarNode>,
+            With<VectorNode>,
+        )>,
     >,
     transforms: Query<&Transform, With<GraphNode>>,
     node_ids: Query<&GraphNode>,
@@ -114,6 +127,7 @@ pub fn refresh_reduced_view(
                 Changed<RandomNode>,
                 Changed<ComputeNode>,
                 Changed<ScalarNode>,
+                Changed<VectorNode>,
                 Changed<Transform>,
             )>,
         ),
@@ -127,6 +141,7 @@ pub fn refresh_reduced_view(
             Option<&RandomNode>,
             Option<&ComputeNode>,
             Option<&ScalarNode>,
+            Option<&VectorNode>,
         ),
         With<GraphNode>,
     >,
@@ -138,8 +153,14 @@ pub fn refresh_reduced_view(
             Option<&RandomNode>,
             Option<&ComputeNode>,
             Option<&ScalarNode>,
+            Option<&VectorNode>,
         ),
-        Or<(With<RandomNode>, With<ComputeNode>, With<ScalarNode>)>,
+        Or<(
+            With<RandomNode>,
+            With<ComputeNode>,
+            With<ScalarNode>,
+            With<VectorNode>,
+        )>,
     >,
     transforms: Query<&Transform, With<GraphNode>>,
     node_ids: Query<&GraphNode>,
@@ -174,15 +195,16 @@ fn apply_visibility(
             Option<&RandomNode>,
             Option<&ComputeNode>,
             Option<&ScalarNode>,
+            Option<&VectorNode>,
         ),
         With<GraphNode>,
     >,
     graph_links: &Query<Entity, (With<GraphLink>, Without<ReducedViewLink>)>,
 ) {
-    for (entity, random, compute, scalar) in nodes {
+    for (entity, random, compute, scalar, vector) in nodes {
         if random.is_some() {
             commands.entity(entity).insert(Visibility::Inherited);
-        } else if compute.is_some() || scalar.is_some() {
+        } else if compute.is_some() || scalar.is_some() || vector.is_some() {
             commands.entity(entity).insert(if reduced {
                 Visibility::Hidden
             } else {
@@ -207,8 +229,14 @@ fn spawn_reduced_links(
             Option<&RandomNode>,
             Option<&ComputeNode>,
             Option<&ScalarNode>,
+            Option<&VectorNode>,
         ),
-        Or<(With<RandomNode>, With<ComputeNode>, With<ScalarNode>)>,
+        Or<(
+            With<RandomNode>,
+            With<ComputeNode>,
+            With<ScalarNode>,
+            With<VectorNode>,
+        )>,
     >,
     transforms: &Query<&Transform, With<GraphNode>>,
     node_ids: &Query<&GraphNode>,
@@ -216,7 +244,7 @@ fn spawn_reduced_links(
     materials: &mut Assets<ColorMaterial>,
 ) {
     let mut dependencies = HashSet::new();
-    for (target_entity, random, _, _) in node_data {
+    for (target_entity, random, _, _, _) in node_data {
         let Some(random) = random else {
             continue;
         };
@@ -241,7 +269,7 @@ fn spawn_reduced_links(
         let (Ok(from), Ok(to)) = (transforms.get(source), transforms.get(target)) else {
             continue;
         };
-        let (Ok((_, Some(from_random), _, _)), Ok((_, Some(to_random), _, _))) =
+        let (Ok((_, Some(from_random), _, _, _)), Ok((_, Some(to_random), _, _, _))) =
             (node_data.get(source), node_data.get(target))
         else {
             continue;
@@ -278,8 +306,14 @@ fn collect_nearest_randoms(
             Option<&RandomNode>,
             Option<&ComputeNode>,
             Option<&ScalarNode>,
+            Option<&VectorNode>,
         ),
-        Or<(With<RandomNode>, With<ComputeNode>, With<ScalarNode>)>,
+        Or<(
+            With<RandomNode>,
+            With<ComputeNode>,
+            With<ScalarNode>,
+            With<VectorNode>,
+        )>,
     >,
     visiting: &mut HashSet<Entity>,
     dependencies: &mut HashSet<(Entity, Entity)>,
@@ -288,7 +322,7 @@ fn collect_nearest_randoms(
     if !visiting.insert(entity) {
         return;
     }
-    if let Ok((_, random, compute, _scalar)) = node_data.get(entity) {
+    if let Ok((_, random, compute, _scalar, _vector)) = node_data.get(entity) {
         if random.is_some() {
             dependencies.insert((entity, target));
         } else if let Some(compute) = compute {

@@ -1,10 +1,10 @@
 use crate::nodes::Operation;
 use std::collections::HashMap;
 mod execution;
-mod value;
 mod type_checking;
-pub use value::{ScalarType, Value, ValueType};
+mod value;
 pub use type_checking::{CompilationError, NodeShape};
+pub use value::{ScalarType, Value, ValueType};
 pub mod graph_checks;
 mod inference;
 mod model_compilation;

@@ -1,5 +1,12 @@
 use super::*;
+use crate::{constants::*, graph::on_node_drag};
 use bevy::prelude::*;
+
+#[derive(Component)]
+pub struct ComputeNode {
+    pub operation: Operation,
+    pub params: Vec<ParamValue>,
+}
 
 impl NodeDisplay for ComputeNode {
     fn label(&self) -> String {

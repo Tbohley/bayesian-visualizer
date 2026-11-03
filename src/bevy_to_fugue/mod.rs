@@ -1,4 +1,6 @@
 pub mod compilation;
+pub mod inference;
+mod ir;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::bayesian_core::ControlledInferenceResult;
 #[cfg(target_arch = "wasm32")]
@@ -67,6 +69,7 @@ pub struct InferenceJob {
     /// live histogram when the user has not opened a result view themselves.
     pub auto_histogram_node: Option<u32>,
     pub node_extents: std::collections::HashMap<u32, Vec<usize>>,
+    pub node_shapes: std::collections::HashMap<u32, crate::bayesian_core::NodeShape>,
     pub plot_refresh_elapsed: f32,
 }
 

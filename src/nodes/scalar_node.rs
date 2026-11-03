@@ -1,5 +1,20 @@
 use super::*;
+use crate::{constants::*, graph::on_node_drag};
 use bevy::prelude::*;
+
+#[derive(Component)]
+pub struct ScalarNode {
+    pub val: f64,
+    pub name: Option<String>,
+}
+
+impl NodeDisplay for ScalarNode {
+    fn label(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!["{:.2}", self.val])
+    }
+}
 
 pub fn new_scalar(
     commands: &mut Commands,
