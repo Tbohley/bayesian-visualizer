@@ -354,6 +354,7 @@ fn add_plate_borders(
 fn on_completed_plate_drag(
     event: On<Pointer<Drag>>,
     reduced_view: Res<super::ReducedView>,
+    view: Option<Res<crate::ui::editor::EditorView>>,
     editor: Res<crate::ui::editor::Editor>,
     keys: Res<ButtonInput<KeyCode>>,
     projection: Single<&Projection, With<Camera2d>>,
@@ -364,6 +365,7 @@ fn on_completed_plate_drag(
     nodes: Query<(&GraphNode, &Transform), (Without<Plate>, Without<PlateDraft>)>,
 ) {
     if event.button != bevy::picking::pointer::PointerButton::Primary
+        || view.as_ref().is_some_and(|view| view.inspecting)
         || reduced_view.active
         || editor.tool != crate::ui::editor::Tool::Select
         || keys.pressed(KeyCode::Space)
@@ -415,9 +417,13 @@ fn on_completed_plate_drag(
 fn on_completed_plate_drag_end(
     event: On<Pointer<DragEnd>>,
     mut commands: Commands,
+    view: Option<Res<crate::ui::editor::EditorView>>,
     mut plates: Query<&mut Plate, Without<PlateDraft>>,
     nodes: Query<(Entity, &Transform), Or<(With<RandomNode>, With<ScalarNode>)>>,
 ) {
+    if view.as_ref().is_some_and(|view| view.inspecting) {
+        return;
+    }
     let Ok(mut plate) = plates.get_mut(event.event_target()) else {
         return;
     };

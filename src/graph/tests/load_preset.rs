@@ -145,9 +145,25 @@ fn discrete_presets_load_compile_and_complete_inference() {
                 .all(|t| t.total_log_weight().is_finite())
         );
         if preset.id == "coin_binomial" {
+            assert_eq!(compiled.graph().plates[&50].n, 10);
+            assert_eq!(
+                compiled.graph().plates[&50].data["flip"],
+                vec![1., 0., 1., 1., 0., 1., 1., 0., 1., 1.]
+            );
+            assert_eq!(compiled.node_plate_path(5), Some(&[50][..]));
+            assert!(matches!(
+                compiled.graph().nodes[&1],
+                crate::bayesian_core::NodeIR::Scalar { value: 2. }
+            ));
+            assert!(matches!(
+                compiled.graph().nodes[&2],
+                crate::bayesian_core::NodeIR::Constant {
+                    value: Value::Integer(1)
+                }
+            ));
             let mean = result.samples_by_node[&3].iter().map(|d| d[0]).sum::<f64>() / 6000.;
             assert!(
-                (mean - 15. / 22.).abs() < 0.045,
+                (mean - 9. / 14.).abs() < 0.045,
                 "coin posterior mean {mean}"
             );
         } else {

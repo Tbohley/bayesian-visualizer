@@ -14,7 +14,7 @@ use bevy::prelude::*;
 //update arrow transforms connecting to dragged node
 pub fn on_node_drag(
     event: On<Pointer<Drag>>,
-    reduced_view: Res<ReducedView>,
+    view_state: (Res<ReducedView>, Option<Res<crate::ui::editor::EditorView>>),
     mut editor: ResMut<crate::ui::editor::Editor>,
     input: Res<ButtonInput<KeyCode>>,
     projection: Single<&Projection, With<Camera2d>>,
@@ -31,7 +31,9 @@ pub fn on_node_drag(
     inference_results: Option<Res<InferenceResultResource>>,
     plates: Query<(&GraphNode, &Plate), Without<PlateDraft>>,
 ) {
+    let (reduced_view, view) = view_state;
     if event.button != bevy::picking::pointer::PointerButton::Primary
+        || view.as_ref().is_some_and(|view| view.inspecting)
         || reduced_view.active
         || input.pressed(KeyCode::Space)
         || editor.tool != crate::ui::editor::Tool::Select

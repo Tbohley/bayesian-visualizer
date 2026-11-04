@@ -535,3 +535,96 @@ fn fit_centers_and_contains_model_in_the_reserved_canvas() {
     }
     assert_eq!(transform.translation.z, 7.);
 }
+
+#[test]
+fn inference_inspection_locks_node_and_plate_dragging_until_the_pencil_is_clicked() {
+    use bevy::picking::{backend::HitData, pointer::PointerButton};
+    let mut app = test_app();
+    let node = app
+        .world_mut()
+        .spawn((
+            GraphNode(1),
+            Transform::default(),
+            ScalarNode {
+                val: 1.,
+                name: None,
+            },
+        ))
+        .observe(crate::graph::on_node_drag)
+        .id();
+    let bounds = PlateBounds {
+        min: Vec2::splat(100.),
+        max: Vec2::splat(200.),
+    };
+    let mut meshes = app.world_mut().remove_resource::<Assets<Mesh>>().unwrap();
+    let mut materials = app
+        .world_mut()
+        .remove_resource::<Assets<ColorMaterial>>()
+        .unwrap();
+    let plate = crate::graph::spawn_completed_plate(
+        &mut app.world_mut().commands(),
+        2,
+        Plate {
+            origin: bounds.min,
+            bounds,
+            data: Dataset {
+                name: "No dataset".into(),
+                n: 1,
+                data: Default::default(),
+            },
+            mapping: Default::default(),
+        },
+        &mut meshes,
+        &mut materials,
+    );
+    app.world_mut().insert_resource(meshes);
+    app.world_mut().insert_resource(materials);
+    app.world_mut().flush();
+    let original_node = app.world().get::<Transform>(node).unwrap().translation;
+    let original_plate = app.world().get::<Transform>(plate).unwrap().translation;
+    app.world_mut().trigger(InspectModel);
+    app.world_mut().flush();
+    let drag = || Drag {
+        button: PointerButton::Primary,
+        distance: Vec2::new(25., 10.),
+        delta: Vec2::new(25., 10.),
+    };
+    pointer(&mut app, node, Vec2::new(400., 300.), drag());
+    pointer(&mut app, plate, Vec2::new(400., 300.), drag());
+    assert_eq!(
+        app.world().get::<Transform>(node).unwrap().translation,
+        original_node
+    );
+    assert_eq!(
+        app.world().get::<Transform>(plate).unwrap().translation,
+        original_plate
+    );
+    assert_eq!(app.world().get::<Plate>(plate).unwrap().bounds, bounds);
+    let pencil = button(&mut app, Action::Edit);
+    pointer(
+        &mut app,
+        pencil,
+        Vec2::new(320., 20.),
+        Click {
+            button: PointerButton::Primary,
+            hit: HitData::new(Entity::PLACEHOLDER, 0., None, None),
+            duration: std::time::Duration::from_millis(50),
+            count: 1,
+        },
+    );
+    pointer(&mut app, node, Vec2::new(400., 300.), drag());
+    pointer(&mut app, plate, Vec2::new(400., 300.), drag());
+    let delta = Vec3::new(25., -10., 0.);
+    assert_eq!(
+        app.world().get::<Transform>(node).unwrap().translation,
+        original_node + delta
+    );
+    assert_eq!(
+        app.world().get::<Transform>(plate).unwrap().translation,
+        original_plate + delta
+    );
+    assert_eq!(
+        app.world().get::<Plate>(plate).unwrap().bounds.min,
+        bounds.min + delta.truncate()
+    );
+}

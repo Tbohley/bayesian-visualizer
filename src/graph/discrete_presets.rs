@@ -1,4 +1,4 @@
-//! Synthetic, reproducible examples of count inference and sensor fault classification.
+//! Reproducible examples of coin-bias inference and sensor fault classification.
 use super::*;
 use crate::nodes::{Operation, VectorElements};
 fn scalar(id: u32, x: f32, y: f32, value: f64) -> PresetNode {
@@ -61,15 +61,17 @@ pub(crate) fn discrete_presets() -> Vec<GraphPreset> {
     vec![
         GraphPreset {
             id: "coin_binomial",
-            title: "Coin flips: learn the bias",
+            title: "Bayesian coin flip",
             study_condition: None,
-            description: "Observe 14 heads in 20 synthetic flips. Beta(1,1) prior; the exact posterior is Beta(15,7). Click future for the predictive number of heads in another 20 flips.",
+            description: "Fugue Bayesian Coin Flip tutorial: Beta(2,2) prior and H,T,H,H,T,H,H,T,H,H observations (7 heads, 3 tails). The exact posterior is Beta(9,5), with mean 9/14. Bernoulli flips are Binomial(1,p). Click future for heads in the next 20 flips.",
             nodes: vec![
-                scalar(1, -230., 160., 1.),
-                integer(2, 20., 160., 20),
-                random(3, -130., 40., "bias", "Beta", &[1, 1]),
-                random(5, 60., -130., "heads", "Binomial", &[2, 3]),
-                random(6, 290., -20., "future", "Binomial", &[2, 3]),
+                // https://fugue.run/tutorials/foundation/bayesian-coin-flip.html
+                scalar(1, -230., 160., 2.),
+                integer(2, 20., 160., 1),
+                random(3, -130., 40., "coin_bias", "Beta", &[1, 1]),
+                integer(4, 290., 160., 20),
+                random(5, 60., -130., "flip", "Binomial", &[2, 3]),
+                random(6, 290., -20., "future", "Binomial", &[4, 3]),
             ],
             plates: vec![PresetPlate {
                 id: 50,
@@ -77,10 +79,10 @@ pub(crate) fn discrete_presets() -> Vec<GraphPreset> {
                     min: [-30., -200.],
                     max: [160., -70.],
                 },
-                dataset_id: "coin_counts.csv",
+                dataset_id: "coin_flips.csv",
                 mapping: vec![PresetMapping {
                     node: 5,
-                    column: "heads",
+                    column: "flip",
                 }],
             }],
         },
@@ -130,9 +132,12 @@ pub(crate) fn discrete_presets() -> Vec<GraphPreset> {
 pub(crate) fn discrete_datasets() -> Vec<Dataset> {
     vec![
         Dataset {
-            name: "coin_counts.csv".into(),
-            n: 1,
-            data: std::collections::HashMap::from([("heads".into(), vec![14.])]),
+            name: "coin_flips.csv".into(),
+            n: 10,
+            data: std::collections::HashMap::from([(
+                "flip".into(),
+                vec![1., 0., 1., 1., 0., 1., 1., 0., 1., 1.],
+            )]),
         },
         Dataset {
             name: "sensor_faults.csv".into(),
