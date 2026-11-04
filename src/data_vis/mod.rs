@@ -1,4 +1,6 @@
 //! Shared plot state and public entry points for posterior visualization.
+mod discrete;
+use discrete::*;
 mod controls;
 mod histogram;
 mod histogram_view;
@@ -161,8 +163,8 @@ pub struct OpenJointDistributionView {
 #[derive(Component)]
 pub struct InferenceHistogramPanel;
 
-/// Viewport-independent posterior sample selections. Every brush or lasso
-/// appends an entry; selections are only removed through the clear button.
+/// Viewport-independent posterior sample selections. Brushes and lassos append
+/// entries; categorical bin clicks toggle their individual entries.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct SampleSelections {
     pub entries: Vec<SampleSelection>,
@@ -282,6 +284,7 @@ pub enum HistogramPopulation {
 /// Screen-space interaction surface for future posterior brushing.
 #[derive(Component)]
 pub struct HistogramPlot {
+    pub kind: HistogramKind,
     pub domain: HistogramDomain,
     pub bins: Vec<HistogramBin>,
     pub highlighted_bins: Option<Vec<HistogramBin>>,
@@ -345,8 +348,16 @@ pub struct HistogramBin {
     pub count: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistogramKind {
+    Continuous,
+    Integer,
+    Categorical,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Histogram {
+    pub kind: HistogramKind,
     pub domain: HistogramDomain,
     pub bins: Vec<HistogramBin>,
     pub max_count: f64,
@@ -361,3 +372,7 @@ struct WeightedSample {
 #[cfg(test)]
 #[path = "tests/data_vis.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/discrete.rs"]
+mod discrete_tests;

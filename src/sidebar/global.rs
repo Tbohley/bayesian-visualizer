@@ -383,8 +383,8 @@ fn add_inference_field(
             Node {
                 width: percent(100.),
                 flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                margin: px(8.).bottom(),
+                row_gap: px(2.),
+                margin: px(6.).bottom(),
                 ..default()
             },
             Name::new(format!("{label}_box")),

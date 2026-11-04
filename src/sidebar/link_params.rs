@@ -66,10 +66,14 @@ pub fn build_link_param_selector(
     params: Vec<ParamValue>,
     param_num: usize,
     sidebar_entity: &Entity,
-) {
+) -> Entity {
     let param = params.get(param_num).expect("invalid param_num");
 
-    let param_name = param.0;
+    let param_name = if param.0 == "element" {
+        format!("element {}", param_num + 1)
+    } else {
+        param.0.to_string()
+    };
     let param_entity = param.1;
 
     let param_label = param_entity
@@ -81,46 +85,51 @@ pub fn build_link_param_selector(
         })
         .unwrap_or_else(|| "Pick a link".to_string());
 
+    let collect = param.0 == "element";
     let context_root = commands
         .spawn((
             Node {
                 width: percent(100.),
                 flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
+                flex_shrink: 0.,
+                row_gap: px(1.),
+                padding: if collect { px(8).all() } else { UiRect::ZERO },
+                border: if collect { px(2).all() } else { UiRect::ZERO },
+                border_radius: BorderRadius::all(px(8)),
                 margin: px(8.).bottom(),
                 ..default()
             },
             Name::new(format!("param_row_{}", param_name)),
-            children![(
-                Text::new(param_name),
-                text_font(),
-                TextColor(NODE_NAME_COLOR),
-            )],
+            BackgroundColor(if collect {
+                Color::srgb(0.1, 0.1, 0.1)
+            } else {
+                Color::NONE
+            }),
+            BorderColor::all(Color::srgb(0.35, 0.35, 0.35)),
         ))
         .id();
 
-    let button = commands
-        .spawn((
-            Name::new(format!("param_{}_context_menu", param_name)),
-            Button,
+    if collect {
+        commands.entity(context_root).with_child((
+            Text::new(format!("Element {}", param_num + 1)),
+            text_font(),
+            TextColor(Color::WHITE),
             Node {
-                width: px(SIDEBAR_WIDTH * 0.75),
-                height: px(60),
-                border: UiRect::all(px(5)),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::MAX,
+                margin: px(1).bottom(),
+                padding: px(64).right(),
                 ..default()
             },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::BLACK),
-            children![(
-                Pickable::IGNORE,
-                Text::new(param_label),
-                text_font(),
-                TextColor(Color::WHITE),
-                TextShadow::default(),
-            )],
+            Pickable::IGNORE,
+        ));
+    } else {
+        commands
+            .entity(context_root)
+            .with_child(dropdown::label(param_name.clone()));
+    }
+    let button = commands
+        .spawn(dropdown::selector(
+            format!("param_{}_context_menu", param_name),
+            &param_label,
         ))
         .observe(
             move |mut event: On<Pointer<Press>>, mut commands: Commands| {
@@ -133,9 +142,22 @@ pub fn build_link_param_selector(
             },
         )
         .id();
+    commands.entity(button).insert(Node {
+        width: percent(100),
+        min_height: px(if collect { 30 } else { 36 }),
+        padding: UiRect::axes(px(9), px(if collect { 5 } else { 7 })),
+        border: px(1).all(),
+        border_radius: BorderRadius::MAX,
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::SpaceBetween,
+        column_gap: px(6),
+        flex_shrink: 0.,
+        ..default()
+    });
     commands.entity(context_root).add_child(button);
 
     commands.entity(*sidebar_entity).add_child(context_root);
+    context_root
 }
 
 pub fn on_open_param_link_menu(
@@ -169,37 +191,16 @@ pub fn on_open_param_link_menu(
     let menu = commands
         .spawn((
             Name::new("param link selector"),
-            ContextMenu,
-            ZIndex(999),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(pos.x),
-                top: px(pos.y),
-                flex_direction: FlexDirection::Column,
-                border_radius: BorderRadius::all(px(4)),
-                ..default()
-            },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
+            crate::sidebar::dropdown::panel(pos),
         ))
+        .observe(super::scroll::scroll_panel)
         .observe(on_pick_param)
         .id();
 
     if link_labels.is_empty() {
-        commands.entity(menu).with_child((
-            Name::new("item-no-links"),
-            Button,
-            Node {
-                padding: UiRect::all(px(5)),
-                ..default()
-            },
-            children![(
-                Pickable::IGNORE,
-                Text::new("No available links"),
-                text_font(),
-                TextColor(Color::WHITE),
-            )],
-        ));
+        commands
+            .entity(menu)
+            .with_child((dropdown::item("No available links"), Pickable::IGNORE));
         return;
     }
     for (ent, text) in link_labels.iter() {
@@ -217,17 +218,7 @@ pub fn param_context_item(text: String, entity: Entity, param_num: usize) -> imp
             entity,
             param_num,
         },
-        Button,
-        Node {
-            padding: UiRect::all(px(5)),
-            ..default()
-        },
-        children![(
-            Pickable::IGNORE,
-            Text::new(text),
-            text_font(),
-            TextColor(Color::WHITE),
-        )],
+        dropdown::item(&text),
     )
 }
 //fn on_pick_param
@@ -380,6 +371,12 @@ fn compute_expression(
         }
         Operation::Sum => compact_expression("sum", compute_node, node_data, visiting),
         Operation::Product => compact_expression("product", compute_node, node_data, visiting),
+        Operation::Logit => compact_expression("logit", compute_node, node_data, visiting),
+        Operation::InverseLogit => compact_expression("sigmoid", compute_node, node_data, visiting),
+        Operation::Normalize => compact_expression("normalize", compute_node, node_data, visiting),
+        Operation::Softmax => compact_expression("softmax", compute_node, node_data, visiting),
+        Operation::Index => compact_expression("at", compute_node, node_data, visiting),
+        Operation::Collect => compact_expression("vector", compute_node, node_data, visiting),
     };
 
     if nested_inside_operation && is_infix_operation(&compute_node.operation) {

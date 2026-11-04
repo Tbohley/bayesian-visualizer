@@ -1,5 +1,4 @@
 //! A node's value shape is independent of the dimensions introduced by plates.
-use crate::nodes::Operation;
 use std::{fmt, sync::Arc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,113 +96,11 @@ impl Value {
             ValueType::Scalar(ScalarType::Integer)
                 if value.is_finite()
                     && value.fract() == 0.0
-                    && value >= i64::MIN as f64
-                    && value < -(i64::MIN as f64) =>
+                    && value.abs() <= super::distributions::MAX_COUNT as f64 =>
             {
                 Self::Integer(value as i64)
             }
             _ => return Err(format!("dataset value {value} cannot supply {expected}")),
-        };
-        result.validate()?;
-        Ok(result)
-    }
-}
-
-impl Operation {
-    pub(crate) fn output_type(&self, inputs: &[ValueType]) -> Result<ValueType, String> {
-        let arity = match self {
-            Self::Exponential | Self::Logarithm => 1,
-            Self::Sum | Self::Product => {
-                return Err("vector reductions are not implemented yet".into());
-            }
-            _ => 2,
-        };
-        if inputs.len() != arity {
-            return Err(format!(
-                "operation expected {arity} parameters, got {}",
-                inputs.len()
-            ));
-        }
-        let mut length = None;
-        for input in inputs {
-            if let ValueType::Vector { length: n, .. } = *input {
-                if n == 0 {
-                    return Err("vector must contain at least one element".into());
-                }
-                if length.is_some_and(|previous| previous != n) {
-                    return Err("elementwise operations require matching vector lengths".into());
-                }
-                length = Some(n);
-            }
-        }
-        let element = if matches!(self, Self::Add | Self::Subtract | Self::Multiply)
-            && inputs
-                .iter()
-                .all(|input| input.element() == ScalarType::Integer)
-        {
-            ScalarType::Integer
-        } else {
-            ScalarType::Real
-        };
-        Ok(match length {
-            Some(length) => ValueType::Vector { element, length },
-            None => ValueType::Scalar(element),
-        })
-    }
-
-    pub(crate) fn evaluate_values(&self, inputs: &[Value]) -> Result<Value, String> {
-        let output = self.output_type(&inputs.iter().map(Value::value_type).collect::<Vec<_>>())?;
-        for input in inputs {
-            input.validate()?;
-        }
-        let integer_at = |value: &Value, index| match value {
-            Value::Integer(v) => *v,
-            Value::IntegerVector(v) => v[index],
-            _ => unreachable!("integer output requires integer inputs"),
-        };
-        let real_at = |value: &Value, index| match value {
-            Value::Real(v) => *v,
-            Value::Integer(v) => *v as f64,
-            Value::RealVector(v) => v[index],
-            Value::IntegerVector(v) => v[index] as f64,
-        };
-        let length = match output {
-            ValueType::Scalar(_) => 1,
-            ValueType::Vector { length, .. } => length,
-        };
-        let result = if output.element() == ScalarType::Integer {
-            let values = (0..length)
-                .map(|index| {
-                    let a = integer_at(&inputs[0], index);
-                    let b = integer_at(&inputs[1], index);
-                    match self {
-                        Self::Add => a.checked_add(b),
-                        Self::Subtract => a.checked_sub(b),
-                        Self::Multiply => a.checked_mul(b),
-                        _ => unreachable!(),
-                    }
-                    .ok_or_else(|| "integer arithmetic overflow".to_string())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            match output {
-                ValueType::Scalar(_) => Value::Integer(values[0]),
-                _ => Value::IntegerVector(values.into()),
-            }
-        } else {
-            let values = (0..length)
-                .map(|index| {
-                    self.evaluate(
-                        &inputs
-                            .iter()
-                            .map(|value| real_at(value, index))
-                            .collect::<Vec<_>>(),
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            match output {
-                ValueType::Scalar(_) => Value::Real(values[0]),
-                _ => Value::RealVector(values.into()),
-            }
         };
         result.validate()?;
         Ok(result)

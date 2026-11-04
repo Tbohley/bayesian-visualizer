@@ -19,6 +19,7 @@ pub fn open_histogram_panel(
         Option<&ComputeNode>,
     )>,
     node_labels: Query<(&ChildOf, &Text2d), With<NodeLabel>>,
+    plates: Query<(&GraphNode, &crate::graph::Plate)>,
 ) {
     let requested_bin_count = bin_count_setting.0.clamp(1, MAX_HISTOGRAM_BINS);
     if event.clear_toasts {
@@ -38,9 +39,29 @@ pub fn open_histogram_panel(
     }
     if let HistogramSubject::ObservedData(node_id) = event.subject {
         let label = graph_node_label(node_id, &graph_nodes, &node_labels);
+        let node_entity = graph_nodes
+            .iter()
+            .find_map(|(entity, id, ..)| (id.0 == node_id).then_some(entity));
+        let live_source = node_entity.and_then(|entity| {
+            plates
+                .iter()
+                .filter_map(|(id, plate)| {
+                    let column = plate.mapping.get(&entity)?;
+                    if column == "unobserved" {
+                        return None;
+                    }
+                    Some((
+                        id.0,
+                        column.as_str(),
+                        plate.data.data.get(column)?.as_slice(),
+                    ))
+                })
+                .min_by_key(|(id, _, _)| *id)
+        });
         open_observed_data_panel(
             &mut commands,
             graph.as_deref(),
+            live_source,
             plate_selections.as_deref(),
             node_id,
             &label,
@@ -102,16 +123,18 @@ pub fn open_histogram_panel(
         .as_deref()
         .map_or(full_samples.samples.len() as f64, effective_count);
     let bin_count = requested_bin_count;
-    let histogram = match build_histogram(&full_samples.samples, bin_count) {
-        Ok(histogram) => histogram,
-        Err(error) => {
-            commands.trigger(ErrorToast {
-                text: format!("Could not build histogram: {error}"),
-                color: ERR_COLOR,
-            });
-            return;
-        }
-    };
+    let histogram =
+        match node_histogram(graph.as_deref(), node_id, &full_samples.samples, bin_count) {
+            Ok(histogram) => histogram,
+            Err(error) => {
+                commands.trigger(ErrorToast {
+                    text: format!("Could not build histogram: {error}"),
+                    color: ERR_COLOR,
+                });
+                return;
+            }
+        };
+    let bin_count = histogram.bins.len();
     let highlighted_histogram = match highlighted_samples.as_deref() {
         Some(samples) => match build_weighted_histogram(samples, bin_count, histogram.domain) {
             Ok(histogram) => Some(histogram),
@@ -167,14 +190,23 @@ pub fn open_histogram_panel(
         &plate_ids,
         graph.as_deref(),
     );
-    let stats = spawn_stats(
-        &mut commands,
-        &node_label,
-        &full_weighted_samples,
-        &population,
-        probability_line,
-        bin_count,
-    );
+    let stats = if histogram.kind != HistogramKind::Continuous {
+        discrete_stats(
+            &mut commands,
+            &node_label,
+            &histogram,
+            &full_weighted_samples,
+        )
+    } else {
+        spawn_stats(
+            &mut commands,
+            &node_label,
+            &full_weighted_samples,
+            &population,
+            probability_line,
+            bin_count,
+        )
+    };
     let chart = spawn_chart(
         &mut commands,
         &histogram,
@@ -291,16 +323,16 @@ fn open_plate_index_panel(
 fn open_observed_data_panel(
     commands: &mut Commands,
     graph: Option<&GraphIRResource>,
+    live_source: Option<(u32, &str, &[f64])>,
     plate_selections: Option<&PlateIndexSelections>,
     node_id: u32,
     node_label: &str,
     requested_bins: usize,
 ) {
-    let Some(graph) = graph else {
-        return;
-    };
-    let Some((owner_id, column, values)) =
-        graph
+    // Read live plate data first, so viewing a column never requires compiling
+    // the model or running inference (and reflects edits to its mapping).
+    let source = live_source.or_else(|| {
+        graph?
             .0
             .graph()
             .plates
@@ -313,7 +345,8 @@ fn open_observed_data_panel(
                     plate.data.get(column)?.as_slice(),
                 ))
             })
-    else {
+    });
+    let Some((owner_id, column, values)) = source else {
         commands.trigger(ErrorToast {
             text: format!("Node {node_id} has no mapped observation column."),
             color: ERR_COLOR,
@@ -322,7 +355,7 @@ fn open_observed_data_panel(
     };
     let raw = observed_samples(values);
     let bin_count = requested_bins.clamp(1, MAX_HISTOGRAM_BINS);
-    let histogram = match build_histogram(&raw, bin_count) {
+    let histogram = match node_histogram(graph, node_id, &raw, bin_count) {
         Ok(value) => value,
         Err(error) => {
             commands.trigger(ErrorToast {
@@ -332,6 +365,7 @@ fn open_observed_data_panel(
             return;
         }
     };
+    let bin_count = histogram.bins.len();
     let weighted = unweighted_samples(&raw);
     let highlighted = linked_observed_samples(&raw, owner_id, plate_selections);
     let highlighted = (!highlighted.is_empty()).then_some(highlighted);
@@ -352,7 +386,9 @@ fn open_observed_data_panel(
         .iter()
         .map(|sample| vec![sample.draw_index])
         .collect::<Vec<_>>();
-    let dimensions = graph.0.node_plate_path(node_id).unwrap_or_default();
+    let dimensions = graph
+        .and_then(|graph| graph.0.node_plate_path(node_id))
+        .unwrap_or_default();
     let broadcasts = dimensions
         .iter()
         .filter(|&&id| id != owner_id)
@@ -372,23 +408,27 @@ fn open_observed_data_panel(
         bin_count,
         raw.len() as f64,
     );
-    let stats = spawn_stats(
-        commands,
-        node_label,
-        &weighted,
-        &HistogramPopulation::Pooled {
-            instance_count: raw.len(),
-        },
-        Some(match highlighted.as_deref() {
-            Some(selected) => format!(
-                "{} of {} source rows highlighted",
-                selected.len(),
-                raw.len()
-            ),
-            None => format!("{} source rows", raw.len()),
-        }),
-        bin_count,
-    );
+    let stats = if histogram.kind != HistogramKind::Continuous {
+        discrete_stats(commands, node_label, &histogram, &weighted)
+    } else {
+        spawn_stats(
+            commands,
+            node_label,
+            &weighted,
+            &HistogramPopulation::Pooled {
+                instance_count: raw.len(),
+            },
+            Some(match highlighted.as_deref() {
+                Some(selected) => format!(
+                    "{} of {} source rows highlighted",
+                    selected.len(),
+                    raw.len()
+                ),
+                None => format!("{} source rows", raw.len()),
+            }),
+            bin_count,
+        )
+    };
     let chart = spawn_chart(
         commands,
         &histogram,
@@ -398,7 +438,9 @@ fn open_observed_data_panel(
         &[owner_id],
         HistogramSubject::ObservedData(node_id),
         None,
-        &format!("Observed data - {node_label} | plate {owner_id} column {column}{broadcast_text}"),
+        &format!(
+            "Column distribution - {node_label} | plate {owner_id} column {column}{broadcast_text}"
+        ),
     );
     commands.entity(panel).add_children(&[stats, chart]);
 }

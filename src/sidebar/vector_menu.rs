@@ -22,27 +22,17 @@ pub fn build_vector_sidebar(
 ) {
     add_node_name_field(commands, sidebar, vector.name.as_deref());
     commands.entity(sidebar).with_child(divider());
-    commands.entity(sidebar).with_child((
-        Text::new(format!(
-            "{} vector, n = {}",
-            match vector.elements.element_type() {
-                ScalarType::Real => "Real",
-                ScalarType::Integer => "Integer",
-            },
-            vector.elements.len()
-        )),
-        text_font(),
-        TextColor(NODE_NAME_COLOR),
-    ));
-    commands.entity(sidebar).with_child((
-        Text::new("Elements, separated by commas"),
-        text_font(),
-        TextColor(NODE_NAME_COLOR),
-        Node {
-            margin: px(8).top(),
-            ..default()
+    commands.entity(sidebar).with_child(dropdown::label(format!(
+        "{} vector · {} elements",
+        match vector.elements.element_type() {
+            ScalarType::Real => "Real",
+            ScalarType::Integer => "Integer",
         },
-    ));
+        vector.elements.len()
+    )));
+    commands
+        .entity(sidebar)
+        .with_child(dropdown::label("Elements (comma separated)"));
     commands.entity(sidebar).with_child((
         VectorValuesTextbox {
             node: entity,
@@ -57,7 +47,7 @@ pub fn build_vector_sidebar(
             ..default()
         },
         BorderColor::all(Color::from(SLATE_300)),
-        BackgroundColor(DARK_GREY.into()),
+        BackgroundColor(dropdown::FIELD_SURFACE),
         EditableText {
             visible_width: Some(22.0),
             ..EditableText::new(vector.elements.text())

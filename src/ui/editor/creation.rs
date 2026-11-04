@@ -137,8 +137,8 @@ pub(super) fn open_node_type_menu(
                 border_radius: BorderRadius::all(px(12)),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.98, 0.985, 1.)),
-            BorderColor::all(Color::srgb(0.82, 0.85, 0.90)),
+            BackgroundColor(crate::sidebar::dropdown::FIELD_SURFACE),
+            BorderColor::all(Color::srgb(0.32, 0.32, 0.32)),
         ))
         .observe(|mut e: On<Pointer<Press>>| e.propagate(false))
         .id();
@@ -162,7 +162,7 @@ pub(super) fn open_node_type_menu(
                     ..default()
                 },
                 BackgroundColor(if selected {
-                    Color::srgb(0.82, 0.88, 1.)
+                    Color::srgb(0.7, 0.7, 0.7)
                 } else {
                     Color::NONE
                 }),
@@ -173,7 +173,7 @@ pub(super) fn open_node_type_menu(
         commands.entity(row).add_child(thumbnail).with_child((
             Text::new(name),
             font(14.),
-            TextColor(INK),
+            TextColor(if selected { Color::BLACK } else { Color::WHITE }),
             Pickable::IGNORE,
         ));
         commands.entity(menu).add_child(row);
@@ -200,13 +200,26 @@ fn select_node_type(
 
 pub(super) fn style_node_options(
     mode: Single<&NodeMode>,
-    mut options: Query<(&NodeTypeOption, &Interaction, &mut BackgroundColor)>,
+    mut options: Query<(Entity, &NodeTypeOption, &Interaction, &mut BackgroundColor)>,
+    children: Query<&Children>,
+    mut text: Query<&mut TextColor>,
 ) {
-    for (option, interaction, mut bg) in &mut options {
+    for (entity, option, interaction, mut bg) in &mut options {
+        if let Ok(children) = children.get(entity) {
+            for child in children {
+                if let Ok(mut color) = text.get_mut(*child) {
+                    color.0 = if option.0 == mode.0 {
+                        Color::BLACK
+                    } else {
+                        Color::WHITE
+                    };
+                }
+            }
+        }
         bg.0 = if option.0 == mode.0 {
-            Color::srgb(0.82, 0.88, 1.)
+            Color::srgb(0.7, 0.7, 0.7)
         } else if *interaction != Interaction::None {
-            Color::srgb(0.89, 0.92, 0.97)
+            Color::srgb(0.3, 0.3, 0.3)
         } else {
             Color::NONE
         };

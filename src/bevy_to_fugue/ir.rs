@@ -3,7 +3,7 @@ use crate::{
     bayesian_core::{GraphIR, NodeIR, ParamIR, PlateIR},
     graph::{Plate, PlateBounds},
     nodes::{
-        ComputeNode, GraphNode, NodeDisplay, ParamValue, RandomNode, ScalarNode, VectorNode,
+        ComputeNode, GraphNode, IntegerScalar, ParamValue, RandomNode, ScalarNode, VectorNode,
         random_node_label,
     },
 };
@@ -13,7 +13,10 @@ use std::collections::HashMap;
 pub fn compile_ir(
     rand_nodes: &Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
     compute_nodes: &Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
-    scalar_nodes: &Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
+    scalar_nodes: &Query<
+        (Entity, &ScalarNode, Has<IntegerScalar>),
+        (Without<RandomNode>, Without<ComputeNode>),
+    >,
     vector_nodes: &Query<(Entity, &VectorNode)>,
     node_ids: &Query<(Entity, &GraphNode)>,
     node_positions: &Query<(&GraphNode, &Transform), Without<Plate>>,
@@ -65,9 +68,16 @@ pub fn compile_ir(
         let params = compute
             .params
             .iter()
-            .map(|param| {
-                param_to_ir(param)
-                    .map_err(|()| format!("node {} has an unassigned parameter!", compute.label()))
+            .enumerate()
+            .map(|(index, param)| {
+                param_to_ir(param).map_err(|()| {
+                    format!(
+                        "node {} ({}) parameter {} is unassigned",
+                        node.0,
+                        compute.operation.name(),
+                        index + 1
+                    )
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         graph.nodes.insert(
@@ -79,14 +89,24 @@ pub fn compile_ir(
         );
     }
 
-    for (entity, scalar) in scalar_nodes.into_iter() {
+    for (entity, scalar, integer) in scalar_nodes.into_iter() {
         let node = node_ids
             .get(entity)
             .map_err(|_| "Node is missing its GraphNode ID")?
             .1;
-        graph
-            .nodes
-            .insert(node.0, NodeIR::Scalar { value: scalar.val });
+        graph.nodes.insert(
+            node.0,
+            if integer {
+                NodeIR::Constant {
+                    value: crate::bayesian_core::Value::observation(
+                        scalar.val,
+                        crate::bayesian_core::ValueType::INTEGER,
+                    )?,
+                }
+            } else {
+                NodeIR::Scalar { value: scalar.val }
+            },
+        );
     }
 
     for (entity, vector) in vector_nodes {

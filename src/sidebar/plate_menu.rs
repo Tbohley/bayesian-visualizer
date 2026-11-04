@@ -67,41 +67,13 @@ impl Plate {
 
         commands.entity(sidebar_entity).with_child(divider());
 
-        commands.entity(sidebar_entity).with_child((
-            Text::new("Dataset:"),
-            text_font(),
-            Node {
-                margin: px(4).bottom(),
-                ..default()
-            },
-            TextColor(NODE_NAME_COLOR),
-        ));
+        commands
+            .entity(sidebar_entity)
+            .with_child(dropdown::label("Dataset:"));
 
         //spawn context menu
         let context_menu = commands
-            .spawn((
-                Name::new("dataset_context_menu"),
-                Button,
-                Node {
-                    width: px(SIDEBAR_WIDTH * 0.75),
-                    height: px(30),
-                    border: UiRect::all(px(5)),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border_radius: BorderRadius::MAX,
-                    margin: px(4).bottom(),
-                    ..default()
-                },
-                BorderColor::all(Color::BLACK),
-                BackgroundColor(Color::BLACK),
-                children![(
-                    Pickable::IGNORE,
-                    Text::new(self.data.name.clone()),
-                    text_font(),
-                    TextColor(Color::WHITE),
-                    TextShadow::default(),
-                )],
-            ))
+            .spawn(dropdown::selector("dataset_context_menu", &self.data.name))
             .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
                 event.propagate(false);
                 println!("Clicked context menu");
@@ -121,16 +93,12 @@ impl Plate {
                     Node {
                         width: percent(100.),
                         flex_direction: FlexDirection::Column,
-                        row_gap: px(4.),
+                        row_gap: px(1.),
                         margin: px(8.).bottom(),
                         ..default()
                     },
                     children![
-                        (
-                            Text::new("Index size"),
-                            text_font(),
-                            TextColor(NODE_NAME_COLOR)
-                        ),
+                        dropdown::label("Index size"),
                         (
                             PlateNTextbox,
                             Node {
@@ -141,7 +109,7 @@ impl Plate {
                                 ..default()
                             },
                             BorderColor::from(Color::from(SLATE_300)),
-                            BackgroundColor(DARK_GREY.into()),
+                            BackgroundColor(dropdown::FIELD_SURFACE),
                             EditableText::new(self.data.n.to_string()),
                             text_font(),
                             TextColor(Color::WHITE),
@@ -167,22 +135,17 @@ impl Plate {
                 (None, Some(_)) => format!("scalar {}", graph_node.0),
                 _ => continue,
             };
-            commands.entity(sidebar_entity).with_child((
-                Text::new(label),
-                text_font(),
-                Node {
-                    margin: px(4).bottom(),
-                    ..default()
-                },
-                TextColor(NODE_NAME_COLOR),
-            ));
+            commands
+                .entity(sidebar_entity)
+                .with_child(dropdown::label(label));
 
             let mapping = self
                 .mapping
                 .get(&entity)
                 .expect("contained nodes should have a plate mapping")
                 .clone();
-            let mapping_menu = selector_button(commands, "plate_mapping_context_menu", &mapping)
+            let mapping_menu = commands
+                .spawn(dropdown::selector("plate_mapping_context_menu", &mapping))
                 .observe(
                     move |mut event: On<Pointer<Press>>, mut commands: Commands| {
                         event.propagate(false);
@@ -206,29 +169,7 @@ pub(super) fn selector_button<'a>(
     name: &'static str,
     value: &str,
 ) -> EntityCommands<'a> {
-    commands.spawn((
-        Name::new(name),
-        Button,
-        Node {
-            width: px(SIDEBAR_WIDTH * 0.75),
-            height: px(30),
-            border: UiRect::all(px(5)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: BorderRadius::MAX,
-            margin: px(4).bottom(),
-            ..default()
-        },
-        BorderColor::all(Color::BLACK),
-        BackgroundColor(Color::BLACK),
-        children![(
-            Pickable::IGNORE,
-            Text::new(value),
-            text_font(),
-            TextColor(Color::WHITE),
-            TextShadow::default(),
-        )],
-    ))
+    commands.spawn(dropdown::button(name, value))
 }
 
 fn on_select_dataset(
@@ -298,19 +239,9 @@ pub fn on_open_dataset_menu(
     let menu = commands
         .spawn((
             Name::new("dataset selector"),
-            ContextMenu,
-            ZIndex(999),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(pos.x),
-                top: px(pos.y),
-                flex_direction: FlexDirection::Column,
-                border_radius: BorderRadius::all(px(4)),
-                ..default()
-            },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
+            crate::sidebar::dropdown::panel(pos),
         ))
+        .observe(super::scroll::scroll_panel)
         .observe(on_select_dataset)
         .id();
 
@@ -379,19 +310,9 @@ pub fn on_open_plate_mapping_menu(
                 node: event.node,
                 plate: event.plate,
             },
-            ContextMenu,
-            ZIndex(999),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(event.pos.x),
-                top: px(event.pos.y),
-                flex_direction: FlexDirection::Column,
-                border_radius: BorderRadius::all(px(4)),
-                ..default()
-            },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
+            crate::sidebar::dropdown::panel(event.pos),
         ))
+        .observe(super::scroll::scroll_panel)
         .observe(on_select_plate_mapping)
         .id();
 

@@ -1,4 +1,4 @@
-use super::execution::DistributionKind;
+use super::distributions::DistributionKind;
 use super::plate_validation::NormalizedPlates;
 use super::{GraphIR, NodeIR, Value, ValueType};
 use std::{collections::HashMap, fmt};
@@ -84,11 +84,64 @@ pub(super) fn check_types(
                     .iter()
                     .map(|p| shapes[&p.from_node].value_type)
                     .collect();
+                if *operation == crate::nodes::Operation::Index && inputs.len() == 2 {
+                    if let ValueType::Vector { length, .. } = inputs[0] {
+                        if let Some(Value::Integer(index)) = constants.get(&params[1].from_node) {
+                            if *index < 0 || *index as usize >= length {
+                                return Err(at("vector index is out of range".into()));
+                            }
+                        }
+                        if let NodeIR::Random {
+                            dist_type,
+                            params: category_params,
+                        } = &graph.nodes[&params[1].from_node]
+                        {
+                            if dist_type == "Categorical" {
+                                if let ValueType::Vector {
+                                    length: categories, ..
+                                } = shapes[&category_params[0].from_node].value_type
+                                {
+                                    if categories > length {
+                                        return Err(at(
+                                            "category support exceeds the vector length".into(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                for (index, actual) in inputs.iter().copied().enumerate() {
+                    if *operation == crate::nodes::Operation::Collect
+                        && !matches!(actual, ValueType::Scalar(_))
+                    {
+                        return Err(CompilationError {
+                            parameter: Some(index),
+                            expected: Some(ValueType::Scalar(actual.element())),
+                            actual: Some(actual),
+                            ..at(
+                                "collect accepts scalar inputs; nested vectors are not supported"
+                                    .into(),
+                            )
+                        });
+                    }
+                    if operation.requires_vector() && !matches!(actual, ValueType::Vector { .. }) {
+                        return Err(CompilationError {
+                            parameter: Some(index),
+                            actual: Some(actual),
+                            ..at(format!(
+                                "{} requires a nonempty vector input",
+                                operation.name()
+                            ))
+                        });
+                    }
+                }
                 // Include expected/actual metadata for a length mismatch.
-                if let Some((_, first)) = inputs
-                    .iter()
-                    .enumerate()
-                    .find(|(_, ty)| matches!(ty, ValueType::Vector { .. }))
+                if operation.is_binary()
+                    && let Some((_, first)) = inputs
+                        .iter()
+                        .enumerate()
+                        .find(|(_, ty)| matches!(ty, ValueType::Vector { .. }))
                 {
                     for (index, actual) in inputs.iter().enumerate() {
                         if let (
@@ -123,13 +176,37 @@ pub(super) fn check_types(
                 let kind = DistributionKind::parse(dist_type, params.len()).map_err(at)?;
                 for (index, param) in params.iter().enumerate() {
                     let actual = shapes[&param.from_node].value_type;
-                    if !matches!(actual, ValueType::Scalar(_)) {
+                    if !kind.valid_parameter(index, actual) {
                         return Err(CompilationError {
                             parameter: Some(index),
-                            expected: Some(ValueType::REAL),
+                            expected: match (dist_type.as_str(), index) {
+                                ("Categorical", _) => None,
+                                ("Binomial", 0) => Some(ValueType::INTEGER),
+                                _ => Some(ValueType::REAL),
+                            },
                             actual: Some(actual),
-                            ..at(format!("{dist_type} expects a real scalar, got {actual}"))
+                            ..at(format!(
+                                "{dist_type} parameter {} requires {}; got {actual}",
+                                index + 1,
+                                match (dist_type.as_str(), index) {
+                                    ("Binomial", 0) => "an integer trial count",
+                                    ("Categorical", _) =>
+                                        "a probability vector with 1..200 elements",
+                                    _ => "a real scalar",
+                                }
+                            ))
                         });
+                    }
+                }
+                if dist_type == "Binomial" {
+                    if let Some(n) = constants.get(&params[0].from_node) {
+                        kind.create(&[n.clone(), Value::Real(0.5)]).map_err(at)?;
+                    }
+                    if let Some(p) = constants.get(&params[1].from_node) {
+                        let p = p.real_scalar().map_err(at)?;
+                        if !(0.0..=1.0).contains(&p) {
+                            return Err(at("Binomial probability must be in [0,1]".into()));
+                        }
                     }
                 }
                 if let Some(values) = params
@@ -137,18 +214,43 @@ pub(super) fn check_types(
                     .map(|p| constants.get(&p.from_node))
                     .collect::<Option<Vec<_>>>()
                 {
-                    let mut args = [0.0; 2];
-                    for (index, value) in values.iter().enumerate() {
-                        args[index] = value.real_scalar().map_err(at)?;
-                    }
-                    kind.create(args).map_err(at)?;
+                    kind.create(&values.into_iter().cloned().collect::<Vec<_>>())
+                        .map_err(at)?;
                 }
-                (ValueType::REAL, None)
+                (kind.output_type(), None)
             }
         };
         if let Some(owner) = normalized.observation_owners.get(&id) {
             let plate = &graph.plates[owner];
             for (row, &raw) in plate.data[&plate.mapping[&id]].iter().enumerate() {
+                if let NodeIR::Random { dist_type, params } = node {
+                    if (dist_type == "Categorical" || dist_type == "Binomial") && raw < 0. {
+                        return Err(at(format!(
+                            "plate {owner} row {row}: counts/categories must be nonnegative"
+                        )));
+                    }
+                    if dist_type == "Categorical" {
+                        if let ValueType::Vector { length, .. } =
+                            shapes[&params[0].from_node].value_type
+                        {
+                            if raw >= length as f64 {
+                                return Err(at(format!(
+                                    "plate {owner} row {row}: category must be in 0..{}",
+                                    length - 1
+                                )));
+                            }
+                        }
+                    }
+                    if dist_type == "Binomial" {
+                        if let Some(Value::Integer(n)) = constants.get(&params[0].from_node) {
+                            if raw > *n as f64 {
+                                return Err(at(format!(
+                                    "plate {owner} row {row}: count exceeds trials"
+                                )));
+                            }
+                        }
+                    }
+                }
                 Value::observation(raw, value_type)
                     .map_err(|error| at(format!("plate {owner} row {row}: {error}")))?;
             }

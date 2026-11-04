@@ -9,7 +9,7 @@ use crate::{
     constants::{ERR_COLOR, SAMPLE_COLOR},
     data_vis::{CloseHistogramPanel, PlateIndexSelections, SampleSelections},
     graph::{Plate, print_graph_preset},
-    nodes::{ComputeNode, GraphNode, RandomNode, ScalarNode, VectorNode},
+    nodes::{ComputeNode, GraphNode, IntegerScalar, RandomNode, ScalarNode, VectorNode},
     sidebar::SetInferenceControlsEnabled,
     ui::{ErrorToast, ShowCompilationErrorMarkers},
 };
@@ -53,7 +53,10 @@ pub fn compile(
     inference_job: Option<Res<InferenceJob>>,
     rand_nodes: Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
     compute_nodes: Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
-    scalar_nodes: Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
+    scalar_nodes: Query<
+        (Entity, &ScalarNode, Has<IntegerScalar>),
+        (Without<RandomNode>, Without<ComputeNode>),
+    >,
     vector_nodes: Query<(Entity, &VectorNode)>,
     node_ids: Query<(Entity, &GraphNode)>,
     node_positions: Query<(&GraphNode, &Transform), Without<Plate>>,

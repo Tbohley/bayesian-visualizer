@@ -1,6 +1,5 @@
 use super::link_params::*;
 use super::*;
-use crate::constants::*;
 use crate::nodes::*;
 use bevy::prelude::*;
 
@@ -33,40 +32,15 @@ impl SidebarContent for RandomNode {
         );
         commands.entity(sidebar_entity).with_child(divider());
 
-        commands.entity(sidebar_entity).with_child((
-            Text::new("Distribution:"),
-            text_font(),
-            Node {
-                margin: px(4).bottom(),
-                ..default()
-            },
-            TextColor(NODE_NAME_COLOR),
-        ));
+        commands
+            .entity(sidebar_entity)
+            .with_child(dropdown::label("Distribution:"));
 
         //spawn context menu
         let context_menu = commands
-            .spawn((
-                Name::new("distribution_context_menu"),
-                Button,
-                Node {
-                    width: px(SIDEBAR_WIDTH * 0.75),
-                    height: px(30),
-                    border: UiRect::all(px(5)),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border_radius: BorderRadius::MAX,
-                    margin: px(4).bottom(),
-                    ..default()
-                },
-                BorderColor::all(Color::BLACK),
-                BackgroundColor(Color::BLACK),
-                children![(
-                    Pickable::IGNORE,
-                    Text::new(self.dist_type.clone()),
-                    text_font(),
-                    TextColor(Color::WHITE),
-                    TextShadow::default(),
-                )],
+            .spawn(dropdown::selector(
+                "distribution_context_menu",
+                &self.dist_type,
             ))
             .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
                 // by default this event would bubble up further leading to the `CloseContextMenus`
@@ -149,26 +123,18 @@ pub fn on_open_distribution_menu(event: On<OpenDistributionMenu>, mut commands: 
     commands
         .spawn((
             Name::new("distribution selector"),
-            ContextMenu,
-            ZIndex(999),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(pos.x),
-                top: px(pos.y),
-                flex_direction: FlexDirection::Column,
-                border_radius: BorderRadius::all(px(4)),
-                ..default()
-            },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
+            crate::sidebar::dropdown::panel(pos),
             children![
                 context_item("Normal"),
                 context_item("LogNormal"),
                 context_item("Beta"),
                 context_item("Gamma"),
                 context_item("Exponential"),
-                context_item("Uniform")
+                context_item("Uniform"),
+                context_item("Binomial"),
+                context_item("Categorical")
             ],
         ))
+        .observe(super::scroll::scroll_panel)
         .observe(on_select_distribution);
 }

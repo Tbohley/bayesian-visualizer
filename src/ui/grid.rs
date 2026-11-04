@@ -55,8 +55,8 @@ pub(super) fn update_grid(
     let dot_count = ((last.x - first.x + 1) * (last.y - first.y + 1)) as usize;
     let mut positions = Vec::with_capacity(dot_count * 9);
     let mut indices = Vec::with_capacity(dot_count * 24);
-    // Dots stay about one screen pixel in radius while their spacing zooms.
-    let radius = scale;
+    // A fixed world-space radius makes dots zoom with the rest of the canvas.
+    let radius = 1.;
     for y in first.y..=last.y {
         for x in first.x..=last.x {
             let center = Vec2::new(x as f32, y as f32) * spacing;

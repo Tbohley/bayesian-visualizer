@@ -1,4 +1,6 @@
 //! Shared node components and public construction/editing entry points.
+mod operation;
+pub use operation::Operation;
 mod editing;
 pub use editing::{autofill_next_param, set_node_name, update_node_observation_colors};
 mod interaction;
@@ -40,19 +42,6 @@ pub enum NodeType {
 
 #[derive(Component)]
 pub struct NodeMode(pub NodeType);
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Operation {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Exponential,
-    Logarithm,
-    Power,
-    Sum,
-    Product,
-}
 
 #[derive(Debug, Clone)]
 pub struct ParamValue(pub &'static str, pub Option<Entity>);

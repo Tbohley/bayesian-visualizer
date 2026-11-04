@@ -50,6 +50,12 @@ pub enum PresetNode {
         elements: VectorElements,
         name: Option<&'static str>,
     },
+    Integer {
+        id: u32,
+        position: [f32; 2],
+        value: i64,
+        name: Option<&'static str>,
+    },
     Scalar {
         id: u32,
         position: [f32; 2],
@@ -63,6 +69,7 @@ impl PresetNode {
         match self {
             Self::Random { id, .. }
             | Self::Compute { id, .. }
+            | Self::Integer { id, .. }
             | Self::Scalar { id, .. }
             | Self::Vector { id, .. } => *id,
         }
@@ -72,6 +79,7 @@ impl PresetNode {
         match self {
             Self::Random { position, .. }
             | Self::Compute { position, .. }
+            | Self::Integer { position, .. }
             | Self::Scalar { position, .. }
             | Self::Vector { position, .. } => *position,
         }
@@ -80,7 +88,7 @@ impl PresetNode {
     fn parameters(&self) -> &[PresetParameter] {
         match self {
             Self::Random { parameters, .. } | Self::Compute { parameters, .. } => parameters,
-            Self::Scalar { .. } | Self::Vector { .. } => &[],
+            Self::Integer { .. } | Self::Scalar { .. } | Self::Vector { .. } => &[],
         }
     }
 }
@@ -144,19 +152,9 @@ pub fn on_open_preset_menu(event: On<OpenPresetMenu>, mut commands: Commands) {
     let menu = commands
         .spawn((
             Name::new("preset selector"),
-            ContextMenu,
-            ZIndex(999),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(event.pos.x),
-                top: px(event.pos.y),
-                flex_direction: FlexDirection::Column,
-                border_radius: BorderRadius::all(px(4)),
-                ..default()
-            },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
+            crate::sidebar::dropdown::panel(event.pos),
         ))
+        .observe(crate::sidebar::scroll::scroll_panel)
         .observe(on_choose_preset)
         .id();
 
@@ -221,7 +219,7 @@ pub fn on_request_preset_confirmation(
                 ..default()
             },
             BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
+            BackgroundColor(Color::BLACK),
         ))
         .observe(on_confirm_preset)
         .id();
@@ -262,19 +260,7 @@ fn on_confirm_preset(
 }
 
 fn menu_item(text: &str) -> impl Bundle {
-    (
-        Button,
-        Node {
-            padding: px(5).all(),
-            ..default()
-        },
-        children![(
-            Pickable::IGNORE,
-            Text::new(text.to_string()),
-            text_font(),
-            TextColor(Color::WHITE),
-        )],
-    )
+    crate::sidebar::dropdown::item(text)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -398,6 +384,11 @@ fn validate_preset(preset: &GraphPreset, datasets: &Datasets) -> Result<(), Stri
         }
     }
     for node in &preset.nodes {
+        if let PresetNode::Integer { value, .. } = node {
+            if value.unsigned_abs() > 9_007_199_254_740_991 {
+                return Err("integer constant exceeds exact display range".into());
+            }
+        }
         if let PresetNode::Vector { elements, .. } = node {
             elements
                 .value()
@@ -502,6 +493,23 @@ fn spawn_preset(
                 meshes,
                 materials,
             ),
+            PresetNode::Integer {
+                id, value, name, ..
+            } => {
+                let entity = spawn_scalar(
+                    commands,
+                    position,
+                    *id,
+                    ScalarNode {
+                        val: *value as f64,
+                        name: name.map(str::to_string),
+                    },
+                    meshes,
+                    materials,
+                );
+                commands.entity(entity).insert(IntegerScalar);
+                entity
+            }
             PresetNode::Scalar {
                 id, value, name, ..
             } => spawn_scalar(
@@ -529,9 +537,9 @@ fn spawn_preset(
                     )
                 }
                 PresetNode::Compute { .. } => EndpointShape::circle(COMPUTE_NODE_RAD),
-                PresetNode::Scalar { .. } | PresetNode::Vector { .. } => {
-                    EndpointShape::circle(SCALAR_NODE_RAD)
-                }
+                PresetNode::Integer { .. }
+                | PresetNode::Scalar { .. }
+                | PresetNode::Vector { .. } => EndpointShape::circle(SCALAR_NODE_RAD),
             },
         );
     }
@@ -568,7 +576,7 @@ fn spawn_preset(
                         compute.params = params;
                     });
             }
-            PresetNode::Scalar { .. } | PresetNode::Vector { .. } => {}
+            PresetNode::Integer { .. } | PresetNode::Scalar { .. } | PresetNode::Vector { .. } => {}
         }
     }
     for (from, to) in link_pairs {
@@ -589,18 +597,8 @@ fn spawn_preset(
     }
 }
 
-fn operation_variant(operation: &Operation) -> &'static str {
-    match operation {
-        Operation::Add => "Add",
-        Operation::Subtract => "Subtract",
-        Operation::Multiply => "Multiply",
-        Operation::Divide => "Divide",
-        Operation::Exponential => "Exponential",
-        Operation::Logarithm => "Logarithm",
-        Operation::Power => "Power",
-        Operation::Sum => "Sum",
-        Operation::Product => "Product",
-    }
+fn operation_variant(operation: &Operation) -> String {
+    format!("{operation:?}")
 }
 
 fn load_plate(
@@ -651,7 +649,10 @@ fn preset_bounds(plate: &PresetPlate) -> PlateBounds {
 pub fn print_graph_preset(
     random_nodes: &Query<(Entity, &RandomNode), (Without<ComputeNode>, Without<ScalarNode>)>,
     compute_nodes: &Query<(Entity, &ComputeNode), (Without<RandomNode>, Without<ScalarNode>)>,
-    scalar_nodes: &Query<(Entity, &ScalarNode), (Without<RandomNode>, Without<ComputeNode>)>,
+    scalar_nodes: &Query<
+        (Entity, &ScalarNode, Has<IntegerScalar>),
+        (Without<RandomNode>, Without<ComputeNode>),
+    >,
     vector_nodes: &Query<(Entity, &VectorNode)>,
     node_ids: &Query<(Entity, &GraphNode)>,
     node_positions: &Query<(&GraphNode, &Transform), Without<Plate>>,
@@ -701,11 +702,15 @@ pub fn print_graph_preset(
             position.x, position.y, operation_variant(&compute.operation), parameter_text(&compute.params)
         )));
     }
-    for (entity, scalar) in scalar_nodes {
+    for (entity, scalar, integer) in scalar_nodes {
         let Some(&id) = entity_ids.get(&entity) else {
             continue;
         };
         let position = positions.get(&id).copied().unwrap_or(Vec2::ZERO);
+        if integer {
+            nodes.push((id,format!("        PresetNode::Integer {{ id: {id}, position: [{:?}, {:?}], value: {}, name: {:?} }}",position.x,position.y,scalar.val as i64,scalar.name.as_deref())));
+            continue;
+        }
         nodes.push((
             id,
             format!(

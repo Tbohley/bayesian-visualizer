@@ -139,20 +139,48 @@ impl Handler for CheckedWarmupScore {
     fn on_sample_bool(&mut self, _: &Address, _: &dyn Distribution<bool>) -> bool {
         unreachable!("compiled graphs use f64")
     }
-    fn on_sample_u64(&mut self, _: &Address, _: &dyn Distribution<u64>) -> u64 {
-        unreachable!("compiled graphs use f64")
+    fn on_sample_u64(&mut self, addr: &Address, dist: &dyn Distribution<u64>) -> u64 {
+        let value = self.base.get_u64(addr).expect("integer latent");
+        let logp = dist.log_prob(&value);
+        self.impossible |= !logp.is_finite();
+        self.trace.log_prior += logp;
+        self.trace.choices.insert(
+            addr.clone(),
+            Choice {
+                addr: addr.clone(),
+                value: ChoiceValue::U64(value),
+                logp,
+            },
+        );
+        value
     }
-    fn on_sample_usize(&mut self, _: &Address, _: &dyn Distribution<usize>) -> usize {
-        unreachable!("compiled graphs use f64")
+    fn on_sample_usize(&mut self, addr: &Address, dist: &dyn Distribution<usize>) -> usize {
+        let value = self.base.get_usize(addr).expect("category latent");
+        let logp = dist.log_prob(&value);
+        self.impossible |= !logp.is_finite();
+        self.trace.log_prior += logp;
+        self.trace.choices.insert(
+            addr.clone(),
+            Choice {
+                addr: addr.clone(),
+                value: ChoiceValue::Usize(value),
+                logp,
+            },
+        );
+        value
     }
     fn on_observe_bool(&mut self, _: &Address, _: &dyn Distribution<bool>, _: bool) {
         unreachable!("compiled graphs use f64")
     }
-    fn on_observe_u64(&mut self, _: &Address, _: &dyn Distribution<u64>, _: u64) {
-        unreachable!("compiled graphs use f64")
+    fn on_observe_u64(&mut self, _: &Address, dist: &dyn Distribution<u64>, value: u64) {
+        let logp = dist.log_prob(&value);
+        self.impossible |= !logp.is_finite();
+        self.trace.log_likelihood += logp;
     }
-    fn on_observe_usize(&mut self, _: &Address, _: &dyn Distribution<usize>, _: usize) {
-        unreachable!("compiled graphs use f64")
+    fn on_observe_usize(&mut self, _: &Address, dist: &dyn Distribution<usize>, value: usize) {
+        let logp = dist.log_prob(&value);
+        self.impossible |= !logp.is_finite();
+        self.trace.log_likelihood += logp;
     }
     fn finish(mut self) -> Trace {
         if self.impossible {
@@ -324,15 +352,24 @@ impl InferenceRunner {
         let draw_index = self.completed_samples;
         let model_fn = || self.compiled.inference_model();
         let chain = &mut self.chains[0];
-        let (values, trace) = adaptive_single_site_mh(
-            &mut chain.rng,
-            &model_fn,
-            chain
-                .trace
-                .as_ref()
-                .expect("selected chain has completed warmup"),
-            &mut chain.adaptation,
-        );
+        let (values, trace) = if self.compiled.has_discrete() {
+            super::mixed_inference::step(
+                &mut chain.rng,
+                &self.compiled,
+                chain.trace.as_ref().unwrap(),
+                &mut chain.adaptation,
+            )
+        } else {
+            adaptive_single_site_mh(
+                &mut chain.rng,
+                &model_fn,
+                chain
+                    .trace
+                    .as_ref()
+                    .expect("selected chain has completed warmup"),
+                &mut chain.adaptation,
+            )
+        };
         chain.trace = Some(trace);
         let values: PosteriorValues = values
             .map_err(|error| format!("inference execution {} failed: {error}", draw_index + 1))?;
@@ -375,12 +412,21 @@ impl InferenceRunner {
             return Ok(InferenceStep::WarmupComplete);
         }
         let model_fn = || self.compiled.inference_model();
-        let (values, selected) = adaptive_single_site_mh(
-            &mut chain.rng,
-            &model_fn,
-            chain.trace.as_ref().unwrap(),
-            &mut chain.adaptation,
-        );
+        let (values, selected) = if self.compiled.has_discrete() {
+            super::mixed_inference::step(
+                &mut chain.rng,
+                &self.compiled,
+                chain.trace.as_ref().unwrap(),
+                &mut chain.adaptation,
+            )
+        } else {
+            adaptive_single_site_mh(
+                &mut chain.rng,
+                &model_fn,
+                chain.trace.as_ref().unwrap(),
+                &mut chain.adaptation,
+            )
+        };
         values.map_err(|error| {
             format!(
                 "warmup execution {} failed: {error}",

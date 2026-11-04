@@ -32,38 +32,13 @@ impl SidebarContent for ComputeNode {
         );
         commands.entity(sidebar_entity).with_child(divider());
 
-        commands.entity(sidebar_entity).with_child((
-            Text::new("Operation:"),
-            text_font(),
-            Node {
-                margin: px(4).bottom(),
-                ..default()
-            },
-            TextColor(NODE_NAME_COLOR),
-        ));
+        commands
+            .entity(sidebar_entity)
+            .with_child(dropdown::label("Operation:"));
         let context_menu = commands
-            .spawn((
-                Name::new("operation_context_menu"),
-                Button,
-                Node {
-                    margin: px(4).bottom(),
-                    width: px(SIDEBAR_WIDTH * 0.75),
-                    height: px(30),
-                    border: UiRect::all(px(5)),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    border_radius: BorderRadius::MAX,
-                    ..default()
-                },
-                BorderColor::all(Color::BLACK),
-                BackgroundColor(Color::BLACK),
-                children![(
-                    Pickable::IGNORE,
-                    Text::new(format!("{:?}", self.operation)),
-                    text_font(),
-                    TextColor(Color::WHITE),
-                    TextShadow::default(),
-                )],
+            .spawn(dropdown::selector(
+                "operation_context_menu",
+                self.operation.name(),
             ))
             .observe(|mut event: On<Pointer<Press>>, mut commands: Commands| {
                 event.propagate(false);
@@ -80,13 +55,19 @@ impl SidebarContent for ComputeNode {
         let mut link_labels = get_ents_and_labels(commands, node_data, &finished_links, node);
         apply_observed_scalar_labels(&mut link_labels, node_data, observed_columns);
         for (i, _param) in self.params.iter().enumerate() {
-            build_link_param_selector(
+            let row = build_link_param_selector(
                 commands,
                 link_labels.clone(),
                 self.params.clone(),
                 i,
                 &sidebar_entity,
             );
+            if self.operation == Operation::Collect {
+                collect_menu::build_input_actions(commands, row, node, i, self.params.len());
+            }
+        }
+        if self.operation == Operation::Collect {
+            collect_menu::build_add_input(commands, sidebar_entity, node);
         }
         commands.entity(sidebar_entity).with_child(divider());
     }
@@ -94,51 +75,22 @@ impl SidebarContent for ComputeNode {
 
 pub fn on_open_operation_menu(event: On<OpenOperationMenu>, mut commands: Commands) {
     commands.trigger(CloseContextMenus);
-    let pos = event.pos;
-    debug!("open context menu at: {pos}");
-
     commands
         .spawn((
             Name::new("operation selector"),
-            ContextMenu,
-            ZIndex(999),
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(pos.x),
-                top: px(pos.y),
-                flex_direction: FlexDirection::Column,
-                border_radius: BorderRadius::all(px(4)),
-                ..default()
-            },
-            BorderColor::all(Color::BLACK),
-            BackgroundColor(Color::linear_rgb(0.1, 0.1, 0.1)),
-            children![
-                context_item("Add"),
-                context_item("Subtract"),
-                context_item("Multiply"),
-                context_item("Divide"),
-                context_item("Exp"),
-                context_item("Log"),
-                context_item("Power"),
-                //context_item("Sum"),
-                //context_item("Product")
-            ],
+            crate::sidebar::dropdown::panel(event.pos),
         ))
-        .observe(on_select_operation);
-}
-
-fn operation_symbol(operation: &Operation) -> &'static str {
-    match operation {
-        Operation::Add => "+",
-        Operation::Subtract => "-",
-        Operation::Multiply => "*",
-        Operation::Divide => "/",
-        Operation::Power => "^",
-        Operation::Exponential => "exp",
-        Operation::Logarithm => "log",
-        Operation::Sum => "∑",
-        Operation::Product => "π",
-    }
+        .observe(scroll::scroll_panel)
+        .observe(on_select_operation)
+        .with_children(|menu| {
+            for operation in Operation::ALL.iter().filter(|op| !vector_only(**op)) {
+                menu.spawn(context_item(operation.name()));
+            }
+            menu.spawn(dropdown::section("Vector nodes only"));
+            for operation in Operation::ALL.iter().filter(|op| vector_only(**op)) {
+                menu.spawn(context_item(operation.name()));
+            }
+        });
 }
 
 fn on_select_operation(
@@ -165,24 +117,20 @@ fn on_select_operation(
             //set operation/label of compute node
             println!("Selected operation {}", item.0);
             let (mut compute_var, _selected_comp) = compute_vars.get_mut(entity).unwrap();
-            compute_var.operation = match item.0.as_str() {
-                "Add" => Operation::Add,
-                "Subtract" => Operation::Subtract,
-                "Multiply" => Operation::Multiply,
-                "Divide" => Operation::Divide,
-                "Power" => Operation::Power,
-                "Exp" => Operation::Exponential,
-                "Log" => Operation::Logarithm,
-                "Sum" => Operation::Sum,
-                "Product" => Operation::Product,
-                _ => Operation::Add,
+            let Some(operation) = Operation::ALL
+                .iter()
+                .copied()
+                .find(|operation| operation.name() == item.0)
+            else {
+                return;
             };
+            compute_var.operation = operation;
 
             compute_var.params = compute_params(&compute_var.operation);
             replace_node_label(
                 &mut commands,
                 entity,
-                operation_symbol(&compute_var.operation),
+                compute_var.operation.symbol(),
                 &labels,
             );
 
@@ -190,4 +138,8 @@ fn on_select_operation(
             commands.trigger(ReloadSidebar);
         }
     }
+}
+
+fn vector_only(operation: Operation) -> bool {
+    operation.requires_vector() || operation == Operation::Index
 }

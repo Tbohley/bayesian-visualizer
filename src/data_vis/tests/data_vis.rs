@@ -685,3 +685,92 @@ fn selecting_all_indices_builds_a_full_linked_layer() {
     assert_eq!(linked.len(), pool_instance_samples(&instances).len());
     assert_eq!(selections.selected_count(10, 3), 3);
 }
+
+#[test]
+fn mapped_column_distribution_opens_before_compilation_and_reads_the_current_mapping() {
+    use crate::Selected;
+    use crate::graph::{Dataset, Plate, PlateBounds};
+    use crate::sidebar::{ReloadSidebar, RequiresCompilation, reload_sidebar};
+    let mut app = App::new();
+    app.init_resource::<HistogramBinCount>()
+        .add_observer(open_histogram_panel)
+        .add_observer(reload_sidebar);
+    let node = app
+        .world_mut()
+        .spawn((
+            GraphNode(1),
+            Selected,
+            Transform::default(),
+            ScalarNode {
+                val: 0.,
+                name: Some("measurement".into()),
+            },
+        ))
+        .id();
+    let plate = app
+        .world_mut()
+        .spawn((
+            GraphNode(2),
+            Plate {
+                origin: Vec2::ZERO,
+                bounds: PlateBounds {
+                    min: Vec2::splat(-10.),
+                    max: Vec2::splat(10.),
+                },
+                data: Dataset {
+                    name: "measurements".into(),
+                    n: 3,
+                    data: HashMap::from([
+                        ("first".into(), vec![1., 2., 3.]),
+                        ("second".into(), vec![10., 20., 30.]),
+                    ]),
+                },
+                mapping: HashMap::from([(node, "first".into())]),
+            },
+        ))
+        .id();
+    app.world_mut().trigger(ReloadSidebar);
+    app.world_mut().flush();
+    let action = app
+        .world_mut()
+        .query::<(Entity, &Name)>()
+        .iter(app.world())
+        .find(|(_, name)| name.as_str() == "view_column_distribution")
+        .unwrap()
+        .0;
+    assert!(app.world().get::<RequiresCompilation>(action).is_none());
+    assert!(
+        app.world_mut()
+            .query::<&Text>()
+            .iter(app.world())
+            .any(|text| text.0 == "View distribution")
+    );
+    for (column, expected) in [("first", vec![1., 2., 3.]), ("second", vec![10., 20., 30.])] {
+        app.world_mut()
+            .get_mut::<Plate>(plate)
+            .unwrap()
+            .mapping
+            .insert(node, column.into());
+        app.world_mut().trigger(OpenHistogramPanel {
+            subject: HistogramSubject::ObservedData(1),
+            clear_toasts: false,
+        });
+        app.world_mut().flush();
+        let plot = app
+            .world_mut()
+            .query::<&HistogramPlot>()
+            .single(app.world())
+            .unwrap();
+        assert_eq!(
+            plot.samples.iter().map(|s| s.value).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(plot.plate_ids, vec![2]);
+        assert_eq!(plot.bins.iter().map(|b| b.count).sum::<f64>(), 3.);
+        let mut panels = app.world_mut().query::<(&InferenceHistogramPanel, &Node)>();
+        let (_, layout) = panels.single(app.world()).unwrap();
+        assert_eq!(layout.bottom, px(0));
+        assert!(!app.world().contains_resource::<GraphIRResource>());
+        assert!(!app.world().contains_resource::<InferenceResultResource>());
+    }
+}

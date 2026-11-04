@@ -379,10 +379,10 @@ pub(super) fn update_toolbar(
         let selected = b.action == Action::Tool(editor.tool);
         bg.0 = if !enabled {
             Color::srgb(0.91, 0.92, 0.94)
-        } else if selected {
-            Color::srgb(0.82, 0.88, 1.)
+        } else if selected || b.action == Action::NodeType {
+            Color::srgb(0.75, 0.75, 0.75)
         } else if *i != Interaction::None {
-            Color::srgb(0.89, 0.92, 0.97)
+            Color::srgb(0.85, 0.85, 0.85)
         } else {
             Color::NONE
         };

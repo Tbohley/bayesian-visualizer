@@ -89,6 +89,9 @@ impl CompiledGraph {
             full_plan: Arc::new(OnceLock::new()),
         })
     }
+    pub(super) fn has_discrete(&self) -> bool {
+        self.graph.nodes.values().any(|node| matches!(node, super::NodeIR::Random {dist_type,..} if dist_type=="Binomial" || dist_type=="Categorical"))
+    }
     pub fn node_shapes(&self) -> &HashMap<u32, NodeShape> {
         &self.shapes
     }

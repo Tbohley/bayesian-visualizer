@@ -1,11 +1,15 @@
+pub mod collect_menu;
 pub mod compute_menu;
 mod confirmation;
+pub(crate) mod dropdown;
 pub mod global;
 mod invalidation;
 pub mod link_params;
+mod observation;
 pub mod plate_menu;
 pub mod random_menu;
 pub mod scalar_menu;
+pub(crate) mod scroll;
 pub mod vector_menu;
 use crate::constants::*;
 use crate::data_vis::{HistogramSubject, OpenHistogramPanel};
@@ -157,17 +161,7 @@ pub fn context_item(text: &str) -> impl Bundle {
     (
         Name::new(format!("item-{text}")),
         ContextMenuItem(text.to_string()),
-        Button,
-        Node {
-            padding: UiRect::all(px(5)),
-            ..default()
-        },
-        children![(
-            Pickable::IGNORE,
-            Text::new(text),
-            text_font(),
-            TextColor(Color::WHITE),
-        )],
+        dropdown::item(text),
     )
 }
 
@@ -180,7 +174,8 @@ pub fn divider() -> (
         Node {
             width: px(SIDEBAR_WIDTH - 32.0),
             height: px(5.0),
-            margin: px(12).bottom(),
+            flex_shrink: 0.,
+            margin: px(8).bottom(),
             ..default()
         },
         BackgroundColor(NODE_NAME_COLOR),
@@ -194,17 +189,15 @@ pub fn add_node_name_field(commands: &mut Commands, sidebar: Entity, current_nam
             Node {
                 width: percent(100.),
                 flex_direction: FlexDirection::Column,
-                row_gap: px(4.),
-                margin: px(8.).bottom(),
+                row_gap: px(1.),
+                margin: px(6.).bottom(),
                 ..default()
             },
             Name::new("node_name_box"),
         ))
         .id();
     commands.entity(sidebar).add_child(field);
-    commands
-        .entity(field)
-        .with_child((Text::new("name"), text_font(), TextColor(NODE_NAME_COLOR)));
+    commands.entity(field).with_child(dropdown::label("Name"));
     commands.entity(field).with_child((
         NodeNameTextbox,
         Node {
@@ -215,7 +208,7 @@ pub fn add_node_name_field(commands: &mut Commands, sidebar: Entity, current_nam
             ..default()
         },
         BorderColor::from(Color::from(SLATE_300)),
-        BackgroundColor(DARK_GREY.into()),
+        BackgroundColor(dropdown::FIELD_SURFACE),
         EditableText {
             max_characters: Some(MAX_NODE_NAME_CHARS),
             visible_width: Some(MAX_NODE_NAME_CHARS as f32),
@@ -248,15 +241,12 @@ pub fn available_links(
         .iter()
         .filter(|(_, link)| link.to == Some(node))
         .count();
-    commands.entity(sidebar_entity).with_child((
-        Text::new(format!("[{incoming_count}] Incoming links")),
-        text_font(),
-        Node {
-            margin: px(4).bottom(),
-            ..default()
-        },
-        TextColor(NODE_NAME_COLOR),
-    ));
+    let noun = if incoming_count == 1 { "link" } else { "links" };
+    commands
+        .entity(sidebar_entity)
+        .with_child(dropdown::bold_label(format!(
+            "{incoming_count} Incoming {noun}"
+        )));
 }
 
 //sidebar loader, event triggered by most graph changes
@@ -270,6 +260,7 @@ pub fn reload_sidebar(
         Option<&ComputeNode>,
         Option<&VectorNode>,
     )>,
+    integer_scalars: Query<(), With<IntegerScalar>>,
     plate_nodes: Query<
         (
             Entity,
@@ -305,10 +296,13 @@ pub fn reload_sidebar(
                     height: percent(100.),
                     flex_direction: FlexDirection::Column,
                     padding: px(16).all(),
+                    overflow: Overflow::scroll_y(),
                     ..default()
                 },
                 BackgroundColor(DARK_GREY.into()),
+                ScrollPosition::default(),
             ))
+            .observe(scroll::scroll_panel)
             .observe(
                 //sidebar observes clicks to close distribution context menu
                 |_: On<Pointer<Press>>, mut commands: Commands| {
@@ -382,6 +376,14 @@ pub fn reload_sidebar(
             _ => warn!("Node has invalid or multiple node type components"),
         }
 
+        if maybe_scalar.is_some() {
+            scalar_menu::add_scalar_type_toggle(
+                &mut commands,
+                sidebar_entity,
+                entity,
+                integer_scalars.contains(entity),
+            );
+        }
         if maybe_random.is_some() || maybe_scalar.is_some() {
             if let Ok((_, _, position, _, _)) = plate_nodes.get(entity) {
                 let mut containing = plates
@@ -392,30 +394,23 @@ pub fn reload_sidebar(
                     })
                     .collect::<Vec<_>>();
                 containing.sort_by_key(|(e, _)| e.to_bits());
+                if maybe_scalar.is_some() && !containing.is_empty() {
+                    commands.entity(sidebar_entity).with_child(divider());
+                }
                 for (plate_entity, plate) in containing {
                     let mapping = plate
                         .mapping
                         .get(&entity)
                         .map(String::as_str)
                         .unwrap_or("unobserved");
-                    let label = format!("{}: {}", plate.data.name, mapping);
-                    let button = plate_menu::selector_button(
+                    observation::build(
                         &mut commands,
-                        "node_observation_selector",
-                        &label,
-                    )
-                    .observe(
-                        move |mut event: On<Pointer<Press>>, mut commands: Commands| {
-                            event.propagate(false);
-                            commands.trigger(OpenPlateMappingMenu {
-                                plate: plate_entity,
-                                node: entity,
-                                pos: event.pointer_location.position,
-                            });
-                        },
-                    )
-                    .id();
-                    commands.entity(sidebar_entity).add_child(button);
+                        sidebar_entity,
+                        entity,
+                        plate_entity,
+                        &plate.data.name,
+                        mapping,
+                    );
                 }
             }
         }
@@ -423,11 +418,14 @@ pub fn reload_sidebar(
             let node_id = node.0;
             let raw_data = commands
                 .spawn((
-                    RequiresCompilation,
+                    Name::new("view_column_distribution"),
                     Button,
                     Node {
                         width: px(SIDEBAR_WIDTH * 0.75),
-                        height: px(30),
+                        min_height: px(30),
+                        padding: UiRect::axes(px(8), px(4)),
+                        border_radius: BorderRadius::MAX,
+                        flex_shrink: 0.,
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         margin: px(4).bottom(),
@@ -436,7 +434,7 @@ pub fn reload_sidebar(
                     BackgroundColor(BUTTON_COLOR),
                     children![(
                         Pickable::IGNORE,
-                        Text::new("View mapped source data"),
+                        Text::new("View distribution"),
                         text_font(),
                         TextColor(Color::WHITE)
                     )],

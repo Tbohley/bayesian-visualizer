@@ -25,7 +25,7 @@ impl SidebarContent for ScalarNode {
                 Node {
                     width: percent(100.),
                     flex_direction: FlexDirection::Column,
-                    row_gap: px(4.),
+                    row_gap: px(1.),
                     margin: px(8.).bottom(),
                     ..default()
                 },
@@ -33,11 +33,9 @@ impl SidebarContent for ScalarNode {
             ))
             .id();
         commands.entity(sidebar_entity).add_child(value_box);
-        commands.entity(value_box).with_child((
-            Text::new("value"),
-            text_font(),
-            TextColor(NODE_NAME_COLOR),
-        ));
+        commands
+            .entity(value_box)
+            .with_child(dropdown::label("Value"));
 
         if observed {
             commands.entity(value_box).with_child((
@@ -49,7 +47,7 @@ impl SidebarContent for ScalarNode {
                     ..default()
                 },
                 BorderColor::from(Color::from(SLATE_300)),
-                BackgroundColor(DARK_GREY.into()),
+                BackgroundColor(dropdown::FIELD_SURFACE),
                 Text::new("from data"),
                 text_font(),
                 TextLayout::no_wrap(),
@@ -66,7 +64,7 @@ impl SidebarContent for ScalarNode {
                     ..default()
                 },
                 BorderColor::from(Color::from(SLATE_300)),
-                BackgroundColor(DARK_GREY.into()),
+                BackgroundColor(dropdown::FIELD_SURFACE),
                 EditableText::new(self.val.to_string()),
                 text_font(),
                 TextLayout::no_wrap(),
@@ -111,6 +109,7 @@ pub fn on_enter_clicked(
     selected_scalar: Option<Single<(Entity, &mut ScalarNode, &Selected)>>,
     selected_random: Option<Single<Entity, (With<RandomNode>, With<Selected>)>>,
     selected_vector: Option<Single<Entity, (With<VectorNode>, With<Selected>)>>,
+    integer_scalars: Query<(), With<IntegerScalar>>,
     selected_plate: Option<Single<(Entity, &mut Plate, &Selected)>>,
     labels: Query<(Entity, &NodeLabel, &ChildOf)>,
     mut commands: Commands,
@@ -150,14 +149,28 @@ pub fn on_enter_clicked(
     }
 
     // Scalar-node value behavior
-    if let Ok((mut text_input, _name)) = scalar_textboxes.get_mut(focused_entity) {
+    if let Ok((text_input, _name)) = scalar_textboxes.get_mut(focused_entity) {
         let Some(single) = selected_scalar else {
             return;
         };
         let (scalar_entity, mut scalar_node, _selected) = single.into_inner();
-        let num = text_input.value().to_string().parse::<f64>();
+        let num = if integer_scalars.contains(scalar_entity) {
+            text_input
+                .value()
+                .to_string()
+                .parse::<i64>()
+                .ok()
+                .filter(|value| value.unsigned_abs() <= 9_007_199_254_740_991)
+                .map(|value| value as f64)
+        } else {
+            text_input.value().to_string().parse::<f64>().ok()
+        };
         match num {
-            Ok(f) => {
+            Some(f)
+                if f.is_finite()
+                    && (!integer_scalars.contains(scalar_entity)
+                        || (f.fract() == 0. && f.abs() <= 9_007_199_254_740_991.)) =>
+            {
                 scalar_node.val = f;
                 let label = scalar_node
                     .name
@@ -166,9 +179,16 @@ pub fn on_enter_clicked(
                 replace_scalar_label(&mut commands, scalar_entity, label, &labels);
                 commands.trigger(ReloadSidebar);
             }
-            Err(_e) => {
-                println!("Not a valid scalar number!");
-                text_input.clear();
+            _ => {
+                commands.trigger(crate::ui::ErrorToast {
+                    text: if integer_scalars.contains(scalar_entity) {
+                        "Enter a whole integer in +/-9007199254740991."
+                    } else {
+                        "Enter a finite real number."
+                    }
+                    .into(),
+                    color: ERR_COLOR,
+                });
             }
         }
     }
@@ -191,3 +211,62 @@ pub fn on_enter_clicked(
         }
     }
 }
+
+#[derive(Event)]
+pub struct ToggleScalarType(pub Entity);
+pub(super) fn add_scalar_type_toggle(
+    commands: &mut Commands,
+    sidebar: Entity,
+    node: Entity,
+    integer: bool,
+) {
+    let button = plate_menu::selector_button(
+        commands,
+        "scalar_type_toggle",
+        if integer { "Integer" } else { "Real" },
+    )
+    .observe(
+        move |mut event: On<Pointer<Click>>, mut commands: Commands| {
+            event.propagate(false);
+            commands.trigger(ToggleScalarType(node));
+        },
+    )
+    .id();
+    commands.entity(sidebar).add_child(button);
+}
+pub fn toggle_scalar_type(
+    event: On<ToggleScalarType>,
+    mut scalars: Query<(&mut ScalarNode, Has<IntegerScalar>)>,
+    mut commands: Commands,
+    inference: Option<Res<crate::bevy_to_fugue::InferenceResultResource>>,
+) {
+    let Ok((mut scalar, integer)) = scalars.get_mut(event.0) else {
+        return;
+    };
+    if !integer
+        && (scalar.val.fract() != 0.
+            || !scalar.val.is_finite()
+            || scalar.val.abs() > 9_007_199_254_740_991.)
+    {
+        commands.trigger(crate::ui::ErrorToast {
+            text: "Integer constants must be whole numbers in the exact range +/-9007199254740991."
+                .into(),
+            color: ERR_COLOR,
+        });
+        return;
+    }
+    if global::graph_change_requires_confirmation(&mut commands, inference.as_deref(), None) {
+        return;
+    }
+    scalar.set_changed();
+    if integer {
+        commands.entity(event.0).remove::<IntegerScalar>();
+    } else {
+        commands.entity(event.0).insert(IntegerScalar);
+    }
+    commands.trigger(ReloadSidebar);
+}
+
+#[cfg(test)]
+#[path = "tests/scalar_menu.rs"]
+mod tests;

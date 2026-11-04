@@ -3,6 +3,9 @@ use crate::{constants::*, graph::on_node_drag};
 use bevy::prelude::*;
 
 #[derive(Component)]
+pub struct IntegerScalar;
+
+#[derive(Component)]
 pub struct ScalarNode {
     pub val: f64,
     pub name: Option<String>,

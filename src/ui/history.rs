@@ -8,6 +8,7 @@ enum Value {
     Random(Option<String>, String, Vec<(&'static str, Option<u32>)>),
     Compute(Operation, Vec<(&'static str, Option<u32>)>),
     Scalar(f64, Option<String>),
+    Integer(f64, Option<String>),
     Vector(VectorElements, Option<String>),
     Plate(PlateBounds, Dataset, Vec<(u32, String)>),
 }
@@ -84,13 +85,17 @@ fn capture(world: &mut World) -> Snapshot {
             .collect()
     };
     let mut snapshot = Snapshot::default();
-    for (_, id, t, r, c, s, v, p) in query.iter(world) {
+    for (entity, id, t, r, c, s, v, p) in query.iter(world) {
         let value = if let Some(r) = r {
             Value::Random(r.name.clone(), r.dist_type.clone(), params(&r.params))
         } else if let Some(c) = c {
             Value::Compute(c.operation, params(&c.params))
         } else if let Some(s) = s {
-            Value::Scalar(s.val, s.name.clone())
+            if world.get::<IntegerScalar>(entity).is_some() {
+                Value::Integer(s.val, s.name.clone())
+            } else {
+                Value::Scalar(s.val, s.name.clone())
+            }
         } else if let Some(v) = v {
             Value::Vector(v.elements.clone(), v.name.clone())
         } else if let Some(p) = p {
@@ -252,6 +257,21 @@ fn restore(world: &mut World, snapshot: &Snapshot) {
                     &mut meshes,
                     &mut materials,
                 ),
+                Value::Integer(val, name) => {
+                    let entity = spawn_scalar(
+                        &mut commands,
+                        *position,
+                        *id,
+                        ScalarNode {
+                            val: *val,
+                            name: name.clone(),
+                        },
+                        &mut meshes,
+                        &mut materials,
+                    );
+                    commands.entity(entity).insert(IntegerScalar);
+                    entity
+                }
                 Value::Plate(..) => continue,
             };
             commands

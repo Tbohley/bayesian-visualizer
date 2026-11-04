@@ -1,6 +1,9 @@
 use crate::nodes::Operation;
 use std::collections::HashMap;
+mod arithmetic;
+mod distributions;
 mod execution;
+mod mixed_inference;
 mod type_checking;
 mod value;
 pub use type_checking::{CompilationError, NodeShape};
@@ -72,3 +75,7 @@ pub struct PlateIR {
     pub data: HashMap<String, Vec<f64>>,
     pub mapping: HashMap<u32, String>,
 }
+
+#[cfg(test)]
+#[path = "tests/discrete.rs"]
+mod discrete_tests;

@@ -100,6 +100,7 @@ pub(super) fn build_weighted_histogram(
 
     let max_count = bins.iter().map(|bin| bin.count).fold(0.0, f64::max);
     Ok(Histogram {
+        kind: HistogramKind::Continuous,
         domain,
         bins,
         max_count,

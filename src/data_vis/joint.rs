@@ -71,11 +71,11 @@ pub fn open_joint_distribution_view(
         })
         .collect::<Vec<_>>();
     let bins = bin_count_setting.0.clamp(1, MAX_HISTOGRAM_BINS);
-    let x_histogram = match build_histogram(&x_values, bins) {
+    let x_histogram = match node_histogram(Some(&graph), event.x_node_id, &x_values, bins) {
         Ok(histogram) => histogram,
         Err(_) => return,
     };
-    let y_histogram = match build_histogram(&y_values, bins) {
+    let y_histogram = match node_histogram(Some(&graph), event.y_node_id, &y_values, bins) {
         Ok(histogram) => histogram,
         Err(_) => return,
     };

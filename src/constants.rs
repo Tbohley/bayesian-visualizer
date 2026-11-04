@@ -54,7 +54,7 @@ pub const PLATE_COLOR: Color = Color::srgb(0.04, 0.20, 0.48);
 pub struct Canvas;
 
 pub fn bundled_presets() -> Vec<GraphPreset> {
-    vec![
+    let mut presets = vec![
         GraphPreset {
             id: "lin_reg",
             title: "Linear Regression",
@@ -487,5 +487,7 @@ pub fn bundled_presets() -> Vec<GraphPreset> {
                 ],
             }],
         },
-    ]
+    ];
+    presets.extend(crate::graph::discrete_presets());
+    presets
 }

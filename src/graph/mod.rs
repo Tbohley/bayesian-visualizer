@@ -1,3 +1,5 @@
+mod discrete_presets;
+pub(crate) use discrete_presets::{discrete_datasets, discrete_presets};
 pub mod edge;
 pub mod load_preset;
 pub mod plate;

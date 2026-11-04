@@ -71,7 +71,10 @@ fn setup(
                 include_bytes!("../assets/data/sim_sleep_react.csv"),
             )
             .expect("prefilled data should be valid"),
-        ],
+        ]
+        .into_iter()
+        .chain(discrete_datasets())
+        .collect(),
     });
 }
 
@@ -102,9 +105,11 @@ fn main() {
         .add_observer(on_load_preset)
         .add_observer(on_trigger_close_menus)
         .add_observer(on_open_operation_menu)
+        .add_observer(sidebar::collect_menu::edit_collect_inputs)
         .add_observer(on_open_param_link_menu)
         .add_observer(autofill_next_param)
         .add_observer(set_node_name)
+        .add_observer(sidebar::scalar_menu::toggle_scalar_type)
         .add_observer(sidebar::vector_menu::apply_vector_values)
         .add_observer(toggle_reduced_view)
         .add_observer(throw_err)
@@ -117,10 +122,12 @@ fn main() {
         .add_observer(open_histogram_panel)
         .add_observer(open_joint_distribution_view)
         .add_observer(close_histogram_panel)
+        .add_systems(Update, sidebar::collect_menu::animate_drag)
         .add_systems(Startup, (setup, load_global_sidebar))
         .add_systems(
             Update,
             (
+                sidebar::dropdown::style_items,
                 on_enter_clicked,
                 sidebar::vector_menu::on_vector_enter,
                 delete_selected_node_on_backspace,

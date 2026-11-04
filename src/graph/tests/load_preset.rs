@@ -105,3 +105,63 @@ fn loading_a_vector_preset_preserves_links_types_and_plate_instances() {
         ])
     );
 }
+
+#[test]
+fn discrete_presets_load_compile_and_complete_inference() {
+    for preset in crate::graph::discrete_presets() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()))
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<ColorMaterial>>()
+            .add_observer(crate::bevy_to_fugue::compilation::compile);
+        let datasets = Datasets {
+            datasets: crate::graph::discrete_datasets(),
+        };
+        validate_preset(&preset, &datasets).unwrap();
+        let mut meshes = app.world_mut().remove_resource::<Assets<Mesh>>().unwrap();
+        let mut materials = app
+            .world_mut()
+            .remove_resource::<Assets<ColorMaterial>>()
+            .unwrap();
+        spawn_preset(
+            &preset,
+            &mut app.world_mut().commands(),
+            &mut meshes,
+            &mut materials,
+            &datasets,
+        );
+        app.world_mut().insert_resource(meshes);
+        app.world_mut().insert_resource(materials);
+        app.world_mut().flush();
+        app.world_mut().trigger(TriggerCompilation);
+        app.world_mut().flush();
+        let compiled = &app.world().resource::<GraphIRResource>().0;
+        let result = compiled.run_inference(42, 6000, 1500).unwrap();
+        assert_eq!(result.n_samples, 6000, "{}", preset.id);
+        assert!(
+            result
+                .traces
+                .iter()
+                .all(|t| t.total_log_weight().is_finite())
+        );
+        if preset.id == "coin_binomial" {
+            let mean = result.samples_by_node[&3].iter().map(|d| d[0]).sum::<f64>() / 6000.;
+            assert!(
+                (mean - 15. / 22.).abs() < 0.045,
+                "coin posterior mean {mean}"
+            );
+        } else {
+            assert_eq!(result.node_extents[&13], vec![12]);
+            let mean = result.samples_by_node[&3].iter().map(|d| d[0]).sum::<f64>() / 6000.;
+            assert!((0.1..0.65).contains(&mean), "fault rate {mean}");
+            let last = &result.samples_by_node[&13];
+            let hot = last.iter().map(|d| d[4] + d[6] + d[8] + d[11]).sum::<f64>() / (6000. * 4.);
+            let cool = last
+                .iter()
+                .map(|d| d[0] + d[1] + d[2] + d[3] + d[5] + d[7] + d[9] + d[10])
+                .sum::<f64>()
+                / (6000. * 8.);
+            assert!(hot > 0.9 && cool < 0.15, "hot {hot}, cool {cool}");
+        }
+    }
+}

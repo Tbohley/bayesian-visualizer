@@ -133,11 +133,19 @@ pub fn distribution_params() -> HashMap<String, Vec<ParamValue>> {
         ),
         (
             String::from("Gamma"),
-            vec![ParamValue("shape", None), ParamValue("scale", None)],
+            vec![ParamValue("shape", None), ParamValue("rate", None)],
         ),
         (
             String::from("Beta"),
             vec![ParamValue("alpha", None), ParamValue("beta", None)],
+        ),
+        (
+            String::from("Binomial"),
+            vec![ParamValue("trials", None), ParamValue("probability", None)],
+        ),
+        (
+            String::from("Categorical"),
+            vec![ParamValue("probabilities", None)],
         ),
         (String::from("Exponential"), vec![ParamValue("rate", None)]),
         (

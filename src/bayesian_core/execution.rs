@@ -1,14 +1,15 @@
 //! A compiled instruction plan. Deterministic work runs in a loop; only a
 //! probabilistic effect suspends execution and owns a continuation.
+use super::distributions::{DistributionKind, RuntimeDistribution};
 use super::graph_checks::PosteriorValues;
 #[cfg(test)]
 use super::graph_checks::{ModelResult, ModelValues};
 use super::plate_validation::{NormalizedPlates, projection_positions};
 use super::{CompilationError, GraphIR, NodeIR, ParamIR, Value};
 use crate::nodes::Operation;
-use fugue::{
-    Address, Beta, Distribution, Exponential, Gamma, LogNormal, Model, Normal, Uniform, pure,
-};
+use fugue::{Address, Model, pure};
+#[cfg(test)]
+use fugue::{Distribution, Normal};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -36,97 +37,34 @@ impl Source {
 
 #[derive(Clone)]
 struct Arguments {
-    values: [Source; 2],
-    len: usize,
+    values: Vec<Source>,
 }
 impl Arguments {
     fn resolve(&self, slots: &[Value]) -> Vec<Value> {
-        self.values[..self.len]
+        self.values
             .iter()
             .map(|source| source.read(slots))
             .collect()
     }
-    fn real_parameters(&self, slots: &[Value]) -> Result<[f64; 2], String> {
-        let mut result = [0.0; 2];
-        for (index, value) in self.resolve(slots).iter().enumerate() {
-            result[index] = value.real_scalar()?;
-        }
-        Ok(result)
-    }
     fn constant(&self) -> bool {
-        self.values[..self.len]
+        self.values
             .iter()
             .all(|source| matches!(source, Source::Constant(_)))
     }
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum DistributionKind {
-    Normal,
-    Uniform,
-    Beta,
-    Exponential,
-    Gamma,
-    LogNormal,
-}
-impl DistributionKind {
-    pub(super) fn parse(name: &str, arity: usize) -> Result<Self, String> {
-        let kind = match (name, arity) {
-            ("Normal", 2) => Self::Normal,
-            ("Uniform", 2) => Self::Uniform,
-            ("Beta", 2) => Self::Beta,
-            ("Exponential", 1) => Self::Exponential,
-            ("Gamma", 2) => Self::Gamma,
-            ("LogNormal", 2) => Self::LogNormal,
-            _ => {
-                return Err(format!(
-                    "wrong number of parameters or unsupported distribution {name}"
-                ));
-            }
-        };
-        Ok(kind)
-    }
-    fn name(self) -> &'static str {
-        match self {
-            Self::Normal => "Normal",
-            Self::Uniform => "Uniform",
-            Self::Beta => "Beta",
-            Self::Exponential => "Exponential",
-            Self::Gamma => "Gamma",
-            Self::LogNormal => "LogNormal",
-        }
-    }
-    pub(super) fn create(self, p: [f64; 2]) -> Result<Box<dyn Distribution<f64>>, String> {
-        macro_rules! boxed {
-            ($e:expr) => {
-                $e.map(|d| Box::new(d) as Box<dyn Distribution<f64>>)
-                    .map_err(|e| e.to_string())
-            };
-        }
-        match self {
-            Self::Normal => boxed!(Normal::new(p[0], p[1])),
-            Self::Uniform => boxed!(Uniform::new(p[0], p[1])),
-            Self::Beta => boxed!(Beta::new(p[0], p[1])),
-            Self::Exponential => boxed!(Exponential::new(p[0])),
-            Self::Gamma => boxed!(Gamma::new(p[0], p[1])),
-            Self::LogNormal => boxed!(LogNormal::new(p[0], p[1])),
-        }
-    }
-}
-
 enum DistributionSpec {
     Constant {
-        distribution: Box<dyn Distribution<f64>>,
-        parameters: [f64; 2],
-        len: usize,
+        distribution: RuntimeDistribution,
+        parameters: Vec<Value>,
     },
     Dynamic(DistributionKind, Arguments),
 }
 impl DistributionSpec {
-    fn create(&self, slots: &[Value]) -> Result<Box<dyn Distribution<f64>>, String> {
+    fn create(&self, slots: &[Value]) -> Result<RuntimeDistribution, String> {
         match self {
-            Self::Constant { distribution, .. } => Ok(distribution.clone_box()),
-            Self::Dynamic(kind, args) => kind.create(args.real_parameters(slots)?),
+            Self::Constant { distribution, .. } => Ok(distribution.clone()),
+            Self::Dynamic(kind, args) => kind.create(&args.resolve(slots)),
         }
     }
 }
@@ -143,7 +81,7 @@ enum Instruction {
         kind: DistributionKind,
         address: Address,
         output: Option<usize>,
-        observed: Option<f64>,
+        observed: Option<Value>,
     },
 }
 
@@ -200,9 +138,6 @@ impl ExecutionPlan {
                 .try_fold(1usize, |count, extent| count.checked_mul(*extent))
                 .ok_or_else(|| CompilationError::at(id, "plate instance count overflows"))?;
             let params = node_params(node);
-            if params.len() > 2 {
-                return Err(CompilationError::at(id, "too many parameters"));
-            }
             let positions = params
                 .iter()
                 .map(|p| projection_positions(&normalized.node_paths[&p.from_node], dimensions))
@@ -212,8 +147,7 @@ impl ExecutionPlan {
             for flat_index in 0..count {
                 let indices = unflatten(flat_index, &extents);
                 let mut args = Arguments {
-                    values: std::array::from_fn(|_| Source::Constant(Value::Real(0.0))),
-                    len: params.len(),
+                    values: Vec::with_capacity(params.len()),
                 };
                 for (i, param) in params.iter().enumerate() {
                     let producer_dims = &normalized.node_paths[&param.from_node];
@@ -225,7 +159,8 @@ impl ExecutionPlan {
                                 offset * normalized.extents[&producer_dims[axis]]
                                     + indices[position]
                             });
-                    args.values[i] = sources[&param.from_node][producer_index].clone();
+                    args.values
+                        .push(sources[&param.from_node][producer_index].clone());
                 }
                 let observed = if let Some(owner) = normalized.observation_owners.get(&id) {
                     let plate = &graph.plates[owner];
@@ -273,10 +208,8 @@ impl ExecutionPlan {
                                 CompilationError::at(id, format!("{e} at {}", address.0))
                             })?;
                         let distribution = if args.constant() {
-                            let parameters = args
-                                .real_parameters(&[])
-                                .map_err(|error| CompilationError::at(id, error))?;
-                            let distribution = kind.create(parameters).map_err(|e| {
+                            let parameters = args.resolve(&[]);
+                            let distribution = kind.create(&parameters).map_err(|e| {
                                 CompilationError::at(
                                     id,
                                     format!("invalid {dist_type} parameters at {}: {e}", address.0),
@@ -285,11 +218,26 @@ impl ExecutionPlan {
                             DistributionSpec::Constant {
                                 distribution,
                                 parameters,
-                                len: args.len,
                             }
                         } else {
                             DistributionSpec::Dynamic(kind, args)
                         };
+                        let observed = observed
+                            .map(|raw| Value::observation(raw, kind.output_type()))
+                            .transpose()
+                            .map_err(|e| CompilationError::at(id, e))?;
+                        if let (Some(value), DistributionSpec::Constant { distribution, .. }) =
+                            (&observed, &distribution)
+                        {
+                            if kind.output_type() == super::ValueType::INTEGER
+                                && !distribution.accepts(value)
+                            {
+                                return Err(CompilationError::at(
+                                    id,
+                                    "observation is outside the distribution support (or has zero probability)",
+                                ));
+                            }
+                        }
                         let observed = match mode {
                             Mode::Inference => observed,
                             #[cfg(test)]
@@ -305,10 +253,10 @@ impl ExecutionPlan {
                             kind,
                             address,
                             output,
-                            observed,
+                            observed: observed.clone(),
                         });
                         match (observed, output) {
-                            (Some(value), _) => Source::Constant(Value::Real(value)),
+                            (Some(value), _) => Source::Constant(value),
                             (_, Some(slot)) => Source::Slot(slot),
                             _ => unreachable!(),
                         }
@@ -334,6 +282,13 @@ impl ExecutionPlan {
     /// Shows the actual optimized instructions, including folded literals and slots.
     /// Limit console output for large plates; the header counts the complete plan.
     pub(super) fn debug_string(&self) -> String {
+        fn value_text(v: &Value) -> String {
+            match v {
+                Value::Real(v) => format!("{v:?}"),
+                Value::Integer(v) => format!("{v}"),
+                _ => format!("{v:?}"),
+            }
+        }
         fn source(s: &Source) -> String {
             match s {
                 Source::Constant(v) => format!("{v:?}"),
@@ -341,7 +296,7 @@ impl ExecutionPlan {
             }
         }
         fn args(a: &Arguments) -> String {
-            a.values[..a.len]
+            a.values
                 .iter()
                 .map(|s| source(s))
                 .collect::<Vec<_>>()
@@ -380,19 +335,18 @@ impl ExecutionPlan {
                     observed,
                 } => {
                     let parameters = match distribution {
-                        DistributionSpec::Constant {
-                            parameters, len, ..
-                        } => parameters[..*len]
+                        DistributionSpec::Constant { parameters, .. } => parameters
                             .iter()
-                            .map(|v| format!("{v:?}"))
+                            .map(value_text)
                             .collect::<Vec<_>>()
                             .join(", "),
                         DistributionSpec::Dynamic(_, a) => args(a),
                     };
                     if let Some(value) = observed {
+                        let value = value_text(value);
                         writeln!(
                             text,
-                            "observe({:?}, {}({parameters}), {value:?})",
+                            "observe({:?}, {}({parameters}), {value})",
                             address.0,
                             kind.name()
                         )
@@ -526,23 +480,63 @@ fn drive<R: Send + 'static>(
                 };
                 let addr = address.clone();
                 let output = *output;
-                if let Some(value) = *observed {
-                    return Model::ObserveF64 {
-                        addr,
-                        dist,
-                        value,
-                        k: Box::new(move |_| drive(plan, state, finish)),
-                    };
+                match (dist, observed.clone()) {
+                    (RuntimeDistribution::Real(dist), Some(Value::Real(value))) => {
+                        return Model::ObserveF64 {
+                            addr,
+                            dist,
+                            value,
+                            k: Box::new(move |_| drive(plan, state, finish)),
+                        };
+                    }
+                    (RuntimeDistribution::Count(dist), Some(Value::Integer(value))) => {
+                        return Model::ObserveU64 {
+                            addr,
+                            dist,
+                            value: value as u64,
+                            k: Box::new(move |_| drive(plan, state, finish)),
+                        };
+                    }
+                    (RuntimeDistribution::Category(dist), Some(Value::Integer(value))) => {
+                        return Model::ObserveUsize {
+                            addr,
+                            dist,
+                            value: value as usize,
+                            k: Box::new(move |_| drive(plan, state, finish)),
+                        };
+                    }
+                    (RuntimeDistribution::Real(dist), None) => {
+                        return Model::SampleF64 {
+                            addr,
+                            dist,
+                            k: Box::new(move |value| {
+                                state.values[output.unwrap()] = Value::Real(value);
+                                drive(plan, state, finish)
+                            }),
+                        };
+                    }
+                    (RuntimeDistribution::Count(dist), None) => {
+                        return Model::SampleU64 {
+                            addr,
+                            dist,
+                            k: Box::new(move |value| {
+                                state.values[output.unwrap()] = Value::Integer(value as i64);
+                                drive(plan, state, finish)
+                            }),
+                        };
+                    }
+                    (RuntimeDistribution::Category(dist), None) => {
+                        return Model::SampleUsize {
+                            addr,
+                            dist,
+                            k: Box::new(move |value| {
+                                state.values[output.unwrap()] = Value::Integer(value as i64);
+                                drive(plan, state, finish)
+                            }),
+                        };
+                    }
+                    _ => unreachable!("observation type checked at compilation"),
                 }
-                return Model::SampleF64 {
-                    addr,
-                    dist,
-                    k: Box::new(move |value| {
-                        state.values[output.expect("sample instruction has a slot")] =
-                            Value::Real(value);
-                        drive(plan, state, finish)
-                    }),
-                };
             }
         }
     }

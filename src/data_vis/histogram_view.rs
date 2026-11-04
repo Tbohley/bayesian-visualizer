@@ -35,6 +35,9 @@ pub(super) fn spawn_chart(
         ))
         .id();
     let legend_text = match subject {
+        HistogramSubject::Node(_) if histogram.kind == HistogramKind::Categorical => {
+            "Click bins to toggle categories | Blue: all samples | Green: matched samples"
+        }
         HistogramSubject::Node(_) if highlighted_histogram.is_some() => {
             "Blue: All samples | Green: Matched by linked selection"
         }
@@ -104,6 +107,7 @@ pub(super) fn spawn_chart(
     let plot = commands
         .spawn((
             HistogramPlot {
+                kind: histogram.kind,
                 domain: histogram.domain,
                 bins: histogram.bins.clone(),
                 highlighted_bins: highlighted_histogram.map(|histogram| histogram.bins.clone()),
@@ -132,6 +136,7 @@ pub(super) fn spawn_chart(
         .observe(update_histogram_brush)
         .observe(finish_histogram_brush)
         .observe(toggle_plate_index)
+        .observe(toggle_categorical_category)
         .id();
 
     commands
@@ -254,28 +259,60 @@ pub(super) fn spawn_chart(
             ..default()
         })
         .id();
-    let axis_labels = match subject {
-        HistogramSubject::PlateIndex(_) => {
-            ["0".to_string(), samples.len().saturating_sub(1).to_string()]
-        }
-        _ => [
-            format!("{:.4}", histogram.domain.min),
-            format!("{:.4}", histogram.domain.max),
-        ],
-    };
-    for label in axis_labels {
-        let text = commands
-            .spawn((
+    if histogram.kind != HistogramKind::Continuous {
+        commands.entity(axis).insert(Node {
+            width: percent(100.),
+            padding: UiRect::horizontal(px(8.)),
+            column_gap: px(2.),
+            ..default()
+        });
+        let stride = histogram.bins.len().div_ceil(12);
+        for (index, bin) in histogram.bins.iter().enumerate() {
+            commands.entity(axis).with_child((
                 Pickable::IGNORE,
-                Text::new(label),
+                Node {
+                    flex_grow: 1.,
+                    flex_basis: px(0.),
+                    min_width: px(0.),
+                    ..default()
+                },
+                Text::new(if index % stride == 0 {
+                    bin_label(bin)
+                } else {
+                    String::new()
+                }),
                 TextColor(Color::WHITE),
                 TextFont {
-                    font_size: FontSize::Px(12.0),
+                    font_size: FontSize::Px(12.),
                     ..text_font()
                 },
-            ))
-            .id();
-        commands.entity(axis).add_child(text);
+                TextLayout::justify(Justify::Center),
+            ));
+        }
+    } else {
+        let axis_labels = match subject {
+            HistogramSubject::PlateIndex(_) => {
+                ["0".to_string(), samples.len().saturating_sub(1).to_string()]
+            }
+            _ => [
+                format!("{:.4}", histogram.domain.min),
+                format!("{:.4}", histogram.domain.max),
+            ],
+        };
+        for label in axis_labels {
+            let text = commands
+                .spawn((
+                    Pickable::IGNORE,
+                    Text::new(label),
+                    TextColor(Color::WHITE),
+                    TextFont {
+                        font_size: FontSize::Px(12.0),
+                        ..text_font()
+                    },
+                ))
+                .id();
+            commands.entity(axis).add_child(text);
+        }
     }
 
     commands
@@ -374,6 +411,23 @@ fn update_histogram_tooltip(
     } else {
         ")"
     };
+    if plot.kind != HistogramKind::Continuous {
+        let total: f64 = plot.bins.iter().map(|bin| bin.count).sum();
+        text.0 = format!(
+            "{}: {} samples (P = {:.3})",
+            bin_label(bin),
+            format_count(bin.count),
+            bin.count / total
+        );
+        if let Some(selected) = plot
+            .highlighted_bins
+            .as_ref()
+            .and_then(|bins| bins.get(bin_index))
+        {
+            text.0 += &format!("; {} linked", format_count(selected.count));
+        }
+        return;
+    }
     text.0 = if let Some(highlighted_bin) = plot
         .highlighted_bins
         .as_ref()
@@ -402,6 +456,99 @@ fn hide_histogram_tooltip(
 ) {
     if let Ok(mut node) = tooltips.single_mut() {
         node.display = Display::None;
+    }
+}
+
+fn toggle_categorical_category(
+    mut event: On<Pointer<Click>>,
+    ui_scale: Res<UiScale>,
+    mut commands: Commands,
+    mut selections: Option<ResMut<SampleSelections>>,
+    plots: Query<(
+        &HistogramPlot,
+        Option<&HistogramBrushStart>,
+        &ComputedNode,
+        &ComputedUiRenderTargetInfo,
+        &UiGlobalTransform,
+    )>,
+    view: Single<&HistogramView>,
+    joint: Option<Single<&JointDistributionView>>,
+) {
+    let Ok((plot, brush, computed, target, transform)) = plots.get(event.entity) else {
+        return;
+    };
+    if plot.kind != HistogramKind::Categorical || !matches!(plot.subject, HistogramSubject::Node(_))
+    {
+        return;
+    }
+    event.propagate(false);
+    if event.button != PointerButton::Primary || brush.is_some_and(|brush| brush.dragged) {
+        return;
+    }
+    let Some(fraction) = plot_pointer_fraction(
+        event.pointer_location.position,
+        computed,
+        target,
+        transform,
+        &ui_scale,
+    ) else {
+        return;
+    };
+    let index = (fraction * plot.bins.len() as f32).floor() as usize;
+    let index = index.min(plot.bins.len().saturating_sub(1));
+    if let Some(selections) = selections.as_mut() {
+        toggle_category_bin(plot, index, selections);
+    } else {
+        let mut selections = SampleSelections::default();
+        toggle_category_bin(plot, index, &mut selections);
+        commands.insert_resource(selections);
+    }
+    commands
+        .entity(event.entity)
+        .remove::<HistogramBrushStart>();
+    reopen_histogram(&mut commands, &view);
+    reopen_joint_if_open(&mut commands, joint.map(|joint| *joint));
+}
+
+pub(super) fn toggle_category_bin(
+    plot: &HistogramPlot,
+    index: usize,
+    selections: &mut SampleSelections,
+) {
+    let HistogramSubject::Node(node_id) = plot.subject else {
+        return;
+    };
+    if plot.kind != HistogramKind::Categorical {
+        return;
+    }
+    let Some(bin) = plot.bins.get(index) else {
+        return;
+    };
+    let bounds = (bin.lower, bin.upper);
+    let selected = selections
+        .entries
+        .iter()
+        .any(|entry| entry.source.histogram_range_for(node_id) == Some(bounds));
+    if selected {
+        selections
+            .entries
+            .retain(|entry| entry.source.histogram_range_for(node_id) != Some(bounds));
+    } else {
+        selections.entries.push(SampleSelection {
+            source: SelectionSource::Histogram {
+                node_id,
+                lower: bin.lower,
+                upper: bin.upper,
+            },
+            context_plate_ids: plot.plate_ids.clone(),
+            context_instance_paths: plot.instance_paths.clone(),
+            draws_by_instance: selected_instances(
+                &plot.samples,
+                &plot.instance_paths,
+                bin.lower,
+                bin.upper,
+            ),
+        });
     }
 }
 
@@ -518,6 +665,9 @@ fn update_histogram_brush(
         return;
     };
     brush.dragged = true;
+    if plot.kind == HistogramKind::Categorical {
+        return;
+    }
     let Some(fractions) = plot_pointer_fractions(
         event.pointer_location.position,
         computed_node,
@@ -587,6 +737,11 @@ fn finish_histogram_brush(
     let Ok((plot, brush, computed_node, target, transform)) = plots.get(event.entity) else {
         return;
     };
+    // Preserve the dragged flag until the following click (or next press),
+    // so releasing a drag cannot accidentally toggle a category.
+    if plot.kind == HistogramKind::Categorical {
+        return;
+    }
     commands
         .entity(event.entity)
         .remove::<HistogramBrushStart>();
@@ -612,8 +767,16 @@ fn finish_histogram_brush(
     let lower_fraction = brush.fraction.min(fraction);
     let upper_fraction = brush.fraction.max(fraction);
     let width = computed_node.content_box().width();
-    let lower = plot.domain.value_at_plot_x(lower_fraction * width, width);
-    let upper = plot.domain.value_at_plot_x(upper_fraction * width, width);
+    let mut lower = plot.domain.value_at_plot_x(lower_fraction * width, width);
+    let mut upper = plot.domain.value_at_plot_x(upper_fraction * width, width);
+    if plot.kind != HistogramKind::Continuous {
+        let first =
+            ((lower_fraction * plot.bins.len() as f32).floor() as usize).min(plot.bins.len() - 1);
+        let last =
+            ((upper_fraction * plot.bins.len() as f32).floor() as usize).min(plot.bins.len() - 1);
+        lower = plot.bins[first].lower;
+        upper = plot.bins[last].upper;
+    }
     if let HistogramSubject::PlateIndex(plate_id) = plot.subject {
         let extent = plot.samples.len();
         let Some((start, end)) = snapped_plate_index_range(lower, upper, extent) else {
